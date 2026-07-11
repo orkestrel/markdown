@@ -6,9 +6,9 @@ import type {
 	BlockNode,
 	BlockquoteNode,
 	CodeBlockNode,
+	CodeSpanNode,
 	EmphasisNode,
 	HeadingNode,
-	InlineCodeNode,
 	InlineNode,
 	LinkNode,
 	ListNode,
@@ -90,7 +90,7 @@ export function assertEmphasisNode(node: InlineNode | undefined): EmphasisNode {
 	return node
 }
 
-export function assertCodeSpanNode(node: InlineNode | undefined): InlineCodeNode {
+export function assertCodeSpanNode(node: InlineNode | undefined): CodeSpanNode {
 	if (node === undefined || !isCodeSpanNode(node)) {
 		throw new Error(`expected codeSpan, got ${node?.element}`)
 	}

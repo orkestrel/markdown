@@ -62,7 +62,7 @@ export interface EmphasisNode {
  * markdown is parsed (code is literal), and the renderer HTML-escapes it inside a
  * `<code>` element.
  */
-export interface InlineCodeNode {
+export interface CodeSpanNode {
 	readonly element: 'codeSpan'
 	/** The verbatim code text (no inner markdown; HTML-escaped at render). */
 	readonly value: string
@@ -82,7 +82,7 @@ export interface LinkNode {
 }
 
 /** A node that can appear inside inline content (a heading / paragraph / cell / list item / link text). */
-export type InlineNode = TextNode | EmphasisNode | InlineCodeNode | LinkNode
+export type InlineNode = TextNode | EmphasisNode | CodeSpanNode | LinkNode
 
 /**
  * An ATX heading - `#` … `######`. `level` is 1–6 (the number of leading `#`),

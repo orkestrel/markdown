@@ -5,3 +5,12 @@
  * a relative / anchor / scheme-less `href` (no `scheme:` prefix) is always allowed.
  */
 export const SAFE_URL_SCHEMES: ReadonlySet<string> = new Set(['http', 'https', 'mailto', 'tel'])
+
+/**
+ * The maximum recursion depth the parser and renderer honor before degrading to
+ * literal text - bounds blockquote nesting, inline nesting (emphasis / links), and
+ * render recursion so pathological or hostile input (deeply nested blockquotes,
+ * runaway emphasis) cannot exhaust the call stack. Past this depth the parser
+ * treats the remaining content as literal text instead of recursing further.
+ */
+export const MAX_DEPTH = 64
