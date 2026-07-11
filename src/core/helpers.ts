@@ -1,10 +1,4 @@
-import type {
-	EmphasisNode,
-	InlineNode,
-	LinkNode,
-	ListItemParts,
-	TableAlign,
-} from './types.js'
+import type { EmphasisNode, InlineNode, LinkNode, ListItemParts, TableAlign } from './types.js'
 import { SAFE_URL_SCHEMES } from './constants.js'
 import { isEscapable, isQuote, isTableStart, isThematicBreak, isWhitespace } from './validators.js'
 
@@ -508,4 +502,3 @@ export function sanitizeUrl(href: string): string {
 	if (scheme && scheme[1] !== undefined && !SAFE_URL_SCHEMES.has(scheme[1].toLowerCase())) return ''
 	return escapeHtml(cleaned)
 }
-

@@ -23,7 +23,7 @@ import {
 	isWhitespace,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
-import { assertInlineNode, assertListNode, firstBlock } from '../../../setup.js'
+import { assertInlineNode, assertListNode, firstBlock } from '../../setup.js'
 
 const parser = createMarkdownParser()
 

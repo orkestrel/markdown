@@ -1,6 +1,5 @@
 import {
 	coalesceText,
-	escapeCSVCell,
 	escapeHtml,
 	extractFence,
 	extractHeading,
@@ -8,11 +7,9 @@ import {
 	leadingIndent,
 	sanitizeUrl,
 	scanCode,
-	scanCSVCell,
 	scanEmphasis,
 	scanInline,
 	scanLink,
-	serializeCSVRow,
 	splitLines,
 	splitTableRow,
 	startsBlock,
@@ -247,88 +244,5 @@ describe('sanitizeUrl', () => {
 	it('is case-insensitive on the scheme', () => {
 		expect(sanitizeUrl('JavaScript:alert(1)')).toBe('')
 		expect(sanitizeUrl('HTTPS://x.dev')).toBe('HTTPS://x.dev')
-	})
-})
-
-describe('scanCSVCell', () => {
-	it('scans up to a comma terminator (end is the next cell start)', () => {
-		expect(scanCSVCell('a,b', 0)).toEqual({ value: 'a', end: 2, terminator: 'comma' })
-	})
-
-	it('scans up to an LF break', () => {
-		expect(scanCSVCell('a\nb', 0)).toEqual({ value: 'a', end: 2, terminator: 'break' })
-	})
-
-	it('consumes a CRLF break as one terminator', () => {
-		expect(scanCSVCell('a\r\nb', 0)).toEqual({ value: 'a', end: 3, terminator: 'break' })
-	})
-
-	it('scans up to a bare-CR break', () => {
-		expect(scanCSVCell('a\rb', 0)).toEqual({ value: 'a', end: 2, terminator: 'break' })
-	})
-
-	it('ends at the end of input', () => {
-		expect(scanCSVCell('abc', 0)).toEqual({ value: 'abc', end: 3, terminator: 'end' })
-	})
-
-	it('scans an empty cell at the end of input (index === length)', () => {
-		expect(scanCSVCell('a,', 2)).toEqual({ value: '', end: 2, terminator: 'end' })
-	})
-
-	it('starts at any index offset', () => {
-		expect(scanCSVCell('a,b,c', 2)).toEqual({ value: 'b', end: 4, terminator: 'comma' })
-		expect(scanCSVCell('a,b,c', 4)).toEqual({ value: 'c', end: 5, terminator: 'end' })
-	})
-
-	it('keeps a comma inside a quoted run as content', () => {
-		expect(scanCSVCell('"b,c",d', 0)).toEqual({ value: 'b,c', end: 6, terminator: 'comma' })
-	})
-
-	it('resolves a doubled quote inside a quoted run to a literal "', () => {
-		expect(scanCSVCell('"say ""hi""",x', 0)).toEqual({
-			value: 'say "hi"',
-			end: 13,
-			terminator: 'comma',
-		})
-	})
-
-	it('keeps line breaks inside a quoted run as content (multi-line cell)', () => {
-		expect(scanCSVCell('"a\nb\r\nc",d', 0)).toEqual({
-			value: 'a\nb\r\nc',
-			end: 9,
-			terminator: 'comma',
-		})
-	})
-
-	it('joins a quoted run opened mid-cell with the surrounding content', () => {
-		expect(scanCSVCell('a"b"c,d', 0)).toEqual({ value: 'abc', end: 6, terminator: 'comma' })
-	})
-
-	it('runs an unterminated quote to the end of the input (total, no throw)', () => {
-		expect(scanCSVCell('"abc\ndef', 0)).toEqual({ value: 'abc\ndef', end: 8, terminator: 'end' })
-	})
-})
-
-describe('escapeCSVCell', () => {
-	it('passes a plain value through verbatim', () => {
-		expect(escapeCSVCell('plain')).toBe('plain')
-		expect(escapeCSVCell('')).toBe('')
-	})
-
-	it('quotes a value containing a comma / quote / line break', () => {
-		expect(escapeCSVCell('b,c')).toBe('"b,c"')
-		expect(escapeCSVCell('say "hi"')).toBe('"say ""hi"""')
-		expect(escapeCSVCell('a\nb')).toBe('"a\nb"')
-		expect(escapeCSVCell('a\rb')).toBe('"a\rb"')
-	})
-})
-
-describe('serializeCSVRow', () => {
-	it('escapes each cell and joins with a comma', () => {
-		expect(serializeCSVRow(['a', 'b,c', 'say "hi"'])).toBe('a,"b,c","say ""hi"""')
-	})
-
-	it('serializes an empty row to the empty string', () => {
-		expect(serializeCSVRow([])).toBe('')
 	})
 })

@@ -25,7 +25,7 @@ import {
 	tableAlignments,
 } from './helpers.js'
 import { isFenceClose, isQuote, isTableStart, isThematicBreak } from './validators.js'
-import { isEmptyString } from '../contracts/index.js'
+import { isEmptyString } from '@orkestrel/contract'
 
 /**
  * A zero-dependency, types-first markdown parser - turn a markdown string into a
@@ -48,9 +48,6 @@ import { isEmptyString } from '../contracts/index.js'
  *   `javascript:` / `data:` / … - is dropped to an empty `href`). Even though the
  *   docs site renders trusted guide content, escaping is unconditional (defence in
  *   depth).
- * - **Stateless + event-free.** A pure functional primitive - no buffer, no Emitter
- *   (unlike the streaming {@link NDJSONParserInterface} / {@link SSEParserInterface},
- *   it parses a whole document at once), so the same instance is freely reused.
  *
  * @example
  * ```ts

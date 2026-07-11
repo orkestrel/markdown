@@ -33,4 +33,3 @@ import { MarkdownParser } from './MarkdownParser.js'
 export function createMarkdownParser(): MarkdownParserInterface {
 	return new MarkdownParser()
 }
-
