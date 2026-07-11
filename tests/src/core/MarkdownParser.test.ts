@@ -1,4 +1,4 @@
-import type { MarkdownDocument } from '@src/core'
+import type { MarkdownDocument, TextNode } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import {
 	assertBlockquoteNode,
@@ -27,9 +27,8 @@ import { isMarkdownNode, MarkdownParser, scanInline } from '@src/core'
 // malformed markdown degrades to text, never throws, and a MAX_DEPTH recursion cap
 // (block phase, inline phase, and render) degrades pathologically deep input to a
 // single literal node rather than exhausting the call stack. Driven entirely with
-// plain inline strings — self-contained, no disk reads; the real project guides are
-// dogfooded separately by the guides-parity suite (tests/guides). The AST narrowers
-// and deep-input builders are centralized in tests/setup.ts (AGENTS §16).
+// plain inline strings — self-contained, no disk reads. The AST narrowers and
+// deep-input builders are centralized in tests/setup.ts (AGENTS §16).
 
 describe('MarkdownParser — headings', () => {
 	it('parses each ATX level (# … ######) to the right heading level', () => {
@@ -794,7 +793,7 @@ describe('MarkdownParser — render: node-level', () => {
 describe('MarkdownParser — MAX_DEPTH recursion cap (render)', () => {
 	it('renders a node at depth >= MAX_DEPTH as escaped value text, never recursing further', () => {
 		const parser = new MarkdownParser()
-		const textNode = { element: 'text' as const, value: '<x>' }
+		const textNode: TextNode = { element: 'text', value: '<x>' }
 		expect(parser.render(textNode, 64)).toBe(escapeAmp(textNode.value))
 	})
 
@@ -825,10 +824,9 @@ describe('MarkdownParser — line endings', () => {
 })
 
 describe('MarkdownParser — round-trip over a self-contained composite document', () => {
-	// One inline fixture exercising every construct the guides are built from, proving
-	// the parser handles a realistic WHOLE document (not just one construct at a time)
-	// and renders it to safe HTML — with NO disk reads. The real project guides are
-	// dogfooded through this same parser by the guides-parity suite (tests/guides).
+	// One inline fixture exercising every construct this parser supports, proving
+	// it handles a realistic WHOLE document (not just one construct at a time)
+	// and renders it to safe HTML — with NO disk reads.
 	const markdown = [
 		'# Title',
 		'',

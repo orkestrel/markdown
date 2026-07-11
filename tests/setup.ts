@@ -49,8 +49,7 @@ export const TEST_SEED = 42
 // AGENTS-forbidden; §1 / §16). Thin assert-and-narrow wrappers over `@src/core`'s
 // `is*` guards — one `assert{Element}` per guard — environment-agnostic, so they
 // sit here beside the other base helpers, shared across the MarkdownParser and
-// AST-validator unit tests; `inlineText` is additionally reused by the
-// guides-parity extractors in `setupGuides.ts`.
+// AST-validator unit tests.
 
 /** Parse `markdown` and narrow its FIRST block, asserting at least one exists. */
 export function firstBlock(parser: MarkdownParserInterface, markdown: string): BlockNode {

@@ -269,7 +269,13 @@ describe('from-unknown AST guards: rejection of non-node values', () => {
 		Symbol('x'),
 	]
 
-	for (const guard of [isInlineNode, isBlockNode, isMarkdownNode, isMarkdownDocument] as const) {
+	const guards: readonly ((value: unknown) => boolean)[] = [
+		isInlineNode,
+		isBlockNode,
+		isMarkdownNode,
+		isMarkdownDocument,
+	]
+	for (const guard of guards) {
 		it(`${guard.name} rejects null/undefined/primitives/arrays/empty object`, () => {
 			for (const value of nonNodes) {
 				expect(guard(value)).toBe(false)

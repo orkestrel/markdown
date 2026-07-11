@@ -16,13 +16,11 @@ import {
 	TEST_SEED,
 } from '../../setup.js'
 
-// The parser factories — createNDJSONParser returns a working NDJSONParserInterface,
-// createSSEParser a working SSEParserInterface, createMarkdownParser a working
-// MarkdownParserInterface, and createCSVParser a working CSVParserInterface. Full
-// buffering / malformed / never-terminated behavior lives in NDJSONParser.test.ts and
-// SSEParser.test.ts, the full AST + render behavior in MarkdownParser.test.ts, and the
-// full quoting / row-break / round-trip behavior in CSVParser.test.ts; here we assert
-// each factory hands back a usable handle.
+// This file covers createMarkdownParser (returns a working MarkdownParserInterface)
+// plus the four node-contract factories — createTextContract, createCodeSpanContract,
+// createCodeBlockContract, and createThematicBreakContract. Full parse/render behavior
+// lives in MarkdownParser.test.ts; shape-level coverage of the node contracts lives in
+// shapers.test.ts; here we assert each factory hands back a usable handle.
 
 describe('createMarkdownParser', () => {
 	it('returns a working MarkdownParserInterface (markdown → AST)', () => {
