@@ -1,6 +1,7 @@
 import type { EmphasisNode, InlineNode, LinkNode, ListItemParts, TableAlign } from './types.js'
-import { SAFE_URL_SCHEMES } from './constants.js'
+import { MAX_DEPTH, SAFE_URL_SCHEMES } from './constants.js'
 import { isEscapable, isQuote, isTableStart, isThematicBreak, isWhitespace } from './validators.js'
+import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '@orkestrel/contract'
 
 //  Markdown parsing + rendering leaves (pure, total, zero-dependency)
 //
@@ -65,7 +66,6 @@ export function extractHeading(
 	const match = /^(#{1,6})(?:\s+(.*))?$/.exec(line.trimStart())
 	if (!match || match[1] === undefined) return undefined
 	const level = match[1].length
-	if (level > 6) return undefined
 	const text = (match[2] ?? '').replace(/\s+#+\s*$/, '').trim()
 	return { level, text }
 }
@@ -87,7 +87,7 @@ export function extractFence(
 	const info = (match[2] ?? '').trim()
 	// A backtick in a backtick fence's info string is invalid (ambiguous with a span).
 	if (match[1].startsWith('`') && info.includes('`')) return undefined
-	const lang = info.length > 0 ? info.split(/\s+/)[0] : undefined
+	const lang = isNonEmptyString(info) ? info.split(/\s+/)[0] : undefined
 	return { marker: match[1], lang }
 }
 
@@ -113,7 +113,7 @@ export function extractListItem(line: string): ListItemParts | undefined {
 		const content = ordered[3] ?? ''
 		return {
 			ordered: true,
-			start: Number(ordered[2]),
+			start: parseInteger(ordered[2]) ?? 1,
 			content,
 			indent,
 			marker: line.length - content.length,
@@ -158,8 +158,8 @@ export function splitTableRow(row: string): readonly string[] {
 		}
 	}
 	cells.push(current)
-	if (cells.length > 0 && cells[0]?.trim() === '') cells.shift()
-	if (cells.length > 0 && cells[cells.length - 1]?.trim() === '') cells.pop()
+	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[0] ?? '').trim())) cells.shift()
+	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[cells.length - 1] ?? '').trim())) cells.pop()
 	return cells
 }
 
@@ -187,8 +187,9 @@ export function tableAlignments(delimiter: string): readonly TableAlign[] {
 /**
  * Whether the line at `index` starts a NEW block kind (heading / fence / thematic
  * break / blockquote / list / table) - the paragraph collector stops at such a line
- * so a block following a paragraph without a blank line still parses (the real guides
- * write a `##` heading directly under a paragraph).
+ * so a block following a paragraph without a blank line still parses (a trusted-input
+ * caller writing a `##` heading directly under a paragraph, with no intervening blank
+ * line).
  *
  * @param lines - The document's lines
  * @param index - The line index to test
@@ -298,14 +299,18 @@ export function scanCode(
  * @param source - The inline source text
  * @param start - The index of the opening `[`
  * @param to - The exclusive end of the scan window
+ * @param depth - The current inline-recursion depth (defaults to 0 at the entry point);
+ *   at {@link MAX_DEPTH} the link's text children degrade to literal text instead of
+ *   recursing further
  * @returns The parsed {@link LinkNode} + end index, or `undefined`
  */
 export function scanLink(
 	source: string,
 	start: number,
 	to: number,
+	depth = 0,
 ): { readonly node: LinkNode; readonly end: number } | undefined {
-	let depth = 0
+	let bracketDepth = 0
 	let close = -1
 	for (let index = start; index < to; index += 1) {
 		const character = source[index] ?? ''
@@ -313,10 +318,10 @@ export function scanLink(
 			index += 1
 			continue
 		}
-		if (character === '[') depth += 1
+		if (character === '[') bracketDepth += 1
 		else if (character === ']') {
-			depth -= 1
-			if (depth === 0) {
+			bracketDepth -= 1
+			if (bracketDepth === 0) {
 				close = index
 				break
 			}
@@ -342,7 +347,7 @@ export function scanLink(
 	}
 	if (parenClose === -1) return undefined
 	const href = unescapeText(source.slice(close + 2, parenClose).trim())
-	const children = scanInline(source, start + 1, close)
+	const children = scanInline(source, start + 1, close, depth + 1)
 	return { node: { element: 'link', href, children }, end: parenClose + 1 }
 }
 
@@ -356,12 +361,16 @@ export function scanLink(
  * @param source - The inline source text
  * @param start - The index of the opening marker
  * @param to - The exclusive end of the scan window
+ * @param depth - The current inline-recursion depth (defaults to 0 at the entry point);
+ *   at {@link MAX_DEPTH} the emphasis's children degrade to literal text instead of
+ *   recursing further
  * @returns The parsed {@link EmphasisNode} + end index, or `undefined`
  */
 export function scanEmphasis(
 	source: string,
 	start: number,
 	to: number,
+	depth = 0,
 ): { readonly node: EmphasisNode; readonly end: number } | undefined {
 	const marker = source[start] ?? ''
 	let run = 0
@@ -386,7 +395,11 @@ export function scanEmphasis(
 			while (index + closeRun < to && source[index + closeRun] === marker) closeRun += 1
 			if (closeRun >= run && !isWhitespace(source[index - 1] ?? '')) {
 				return {
-					node: { element: 'emphasis', strong, children: scanInline(source, openEnd, index) },
+					node: {
+						element: 'emphasis',
+						strong,
+						children: scanInline(source, openEnd, index, depth + 1),
+					},
 					end: index + run,
 				}
 			}
@@ -407,9 +420,20 @@ export function scanEmphasis(
  * @param source - The inline source text
  * @param from - The inclusive start of the scan window
  * @param to - The exclusive end of the scan window
+ * @param depth - The current inline-recursion depth (defaults to 0 at the entry point);
+ *   incremented by one on every recursive descent through {@link scanLink} /
+ *   {@link scanEmphasis}. At {@link MAX_DEPTH} the window is never scanned for markup -
+ *   it emits as a single literal text node - so pathological nesting (`[[[[…`,
+ *   `****…`) cannot exhaust the call stack.
  * @returns The parsed inline nodes (NOT yet coalesced)
  */
-export function scanInline(source: string, from: number, to: number): readonly InlineNode[] {
+export function scanInline(
+	source: string,
+	from: number,
+	to: number,
+	depth = 0,
+): readonly InlineNode[] {
+	if (depth >= MAX_DEPTH) return from < to ? [{ element: 'text', value: source.slice(from, to) }] : []
 	const nodes: InlineNode[] = []
 	let index = from
 	let pending = ''
@@ -436,7 +460,7 @@ export function scanInline(source: string, from: number, to: number): readonly I
 			}
 		}
 		if (character === '[') {
-			const link = scanLink(source, index, to)
+			const link = scanLink(source, index, to, depth)
 			if (link) {
 				flush()
 				nodes.push(link.node)
@@ -445,7 +469,7 @@ export function scanInline(source: string, from: number, to: number): readonly I
 			}
 		}
 		if (character === '*' || character === '_') {
-			const emphasis = scanEmphasis(source, index, to)
+			const emphasis = scanEmphasis(source, index, to, depth)
 			if (emphasis) {
 				flush()
 				nodes.push(emphasis.node)
@@ -481,13 +505,15 @@ export function escapeHtml(text: string): string {
 
 /**
  * Sanitize + HTML-attribute-escape a link `href` - a destination whose scheme is not
- * in {@link SAFE_URL_SCHEMES} (notably `javascript:` / `data:` / `vbscript:`) is
- * dropped to an empty string; a relative / anchor / scheme-less destination is kept;
+ * in {@link SAFE_URL_SCHEMES} (notably `javascript:` / `data:` / `vbscript:`), or that
+ * is protocol-relative (`//host/path` - inherits whatever scheme the embedding page
+ * is served over, including an unsafe one), is dropped to an empty string; a
+ * relative / anchor / scheme-less (and non-protocol-relative) destination is kept;
  * the surviving value is then HTML-escaped. Defence-in-depth against an XSS `href`,
- * even though guide content is trusted.
+ * even though the input is trusted.
  *
  * @param href - The raw link destination
- * @returns A safe, escaped `href` (empty when the scheme is unsafe)
+ * @returns A safe, escaped `href` (empty when the scheme is unsafe or protocol-relative)
  */
 export function sanitizeUrl(href: string): string {
 	// Strip every whitespace + C0/C1 control codepoint (≤ U+0020 or U+007F–U+009F)
@@ -498,6 +524,7 @@ export function sanitizeUrl(href: string): string {
 		const code = character.codePointAt(0) ?? 0
 		if (code > 0x20 && !(code >= 0x7f && code <= 0x9f)) cleaned += character
 	}
+	if (cleaned.startsWith('//')) return ''
 	const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(cleaned)
 	if (scheme && scheme[1] !== undefined && !SAFE_URL_SCHEMES.has(scheme[1].toLowerCase())) return ''
 	return escapeHtml(cleaned)
