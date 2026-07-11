@@ -1,5 +1,20 @@
-import { createMarkdownParser } from '@src/core'
+import {
+	createCodeBlockContract,
+	createCodeSpanContract,
+	createMarkdownParser,
+	createTextContract,
+	createThematicBreakContract,
+} from '@src/core'
+import { seededRandom } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
+import {
+	assertCodeBlockNode,
+	assertCodeSpanNode,
+	assertInlineNode,
+	assertParagraphNode,
+	firstBlock,
+	TEST_SEED,
+} from '../../setup.js'
 
 // The parser factories — createNDJSONParser returns a working NDJSONParserInterface,
 // createSSEParser a working SSEParserInterface, createMarkdownParser a working
@@ -46,5 +61,125 @@ describe('createMarkdownParser', () => {
 		const second = createMarkdownParser()
 
 		expect(first.render(first.parse('# A'))).toBe(second.render(second.parse('# A')))
+	})
+})
+
+// Each createXContract factory compiles its shape into a working
+// ContractInterface (AGENTS §14). Full shape behavior (guard/schema/parse/
+// generate parity) lives in shapers.test.ts — here we assert the factory
+// hands back a usable, independent contract, and that a REAL parser-produced
+// leaf node is accepted by its own contract's guard (structural, not a
+// hand-built fixture).
+
+describe('createTextContract', () => {
+	it('returns a working TextNode contract', () => {
+		const contract = createTextContract()
+
+		expect(contract.is({ element: 'text', value: 'hi' })).toBe(true)
+		expect(contract.parse({ element: 'text', value: 'hi' })).toEqual({ element: 'text', value: 'hi' })
+		expect(contract.schema.type).toBe('object')
+		expect(contract.is(contract.generate(seededRandom(TEST_SEED)))).toBe(true)
+	})
+
+	it('accepts a real parser-produced TextNode', () => {
+		const node = assertInlineNode(createMarkdownParser(), 'hello')
+		expect(createTextContract().is(node)).toBe(true)
+	})
+
+	it('returns independent instances (schema equal, not shared state)', () => {
+		const first = createTextContract()
+		const second = createTextContract()
+
+		expect(first.schema).toEqual(second.schema)
+		expect(first).not.toBe(second)
+	})
+})
+
+describe('createCodeSpanContract', () => {
+	it('returns a working CodeSpanNode contract', () => {
+		const contract = createCodeSpanContract()
+
+		expect(contract.is({ element: 'codeSpan', value: 'x' })).toBe(true)
+		expect(contract.parse({ element: 'codeSpan', value: 'x' })).toEqual({ element: 'codeSpan', value: 'x' })
+		expect(contract.schema.type).toBe('object')
+		expect(contract.is(contract.generate(seededRandom(TEST_SEED)))).toBe(true)
+	})
+
+	it('accepts a real parser-produced CodeSpanNode', () => {
+		const parser = createMarkdownParser()
+		const paragraph = assertParagraphNode(firstBlock(parser, 'a `code` b'))
+		const node = assertCodeSpanNode(paragraph.children[1])
+
+		expect(createCodeSpanContract().is(node)).toBe(true)
+	})
+
+	it('returns independent instances (schema equal, not shared state)', () => {
+		const first = createCodeSpanContract()
+		const second = createCodeSpanContract()
+
+		expect(first.schema).toEqual(second.schema)
+		expect(first).not.toBe(second)
+	})
+})
+
+describe('createCodeBlockContract', () => {
+	it('returns a working CodeBlockNode contract', () => {
+		const contract = createCodeBlockContract()
+
+		expect(contract.is({ element: 'codeBlock', code: 'x' })).toBe(true)
+		expect(contract.is({ element: 'codeBlock', code: 'x', lang: 'ts' })).toBe(true)
+		expect(contract.schema.type).toBe('object')
+		expect(contract.is(contract.generate(seededRandom(TEST_SEED)))).toBe(true)
+	})
+
+	it('accepts a real parser-produced CodeBlockNode with a language', () => {
+		const parser = createMarkdownParser()
+		const node = assertCodeBlockNode(firstBlock(parser, '```ts\nconst x = 1\n```'))
+
+		expect(node.lang).toBe('ts')
+		expect(createCodeBlockContract().is(node)).toBe(true)
+	})
+
+	it('accepts a real parser-produced CodeBlockNode without a language', () => {
+		const parser = createMarkdownParser()
+		const node = assertCodeBlockNode(firstBlock(parser, '```\nconst x = 1\n```'))
+
+		expect(node.lang).toBeUndefined()
+		expect(createCodeBlockContract().is(node)).toBe(true)
+	})
+
+	it('returns independent instances (schema equal, not shared state)', () => {
+		const first = createCodeBlockContract()
+		const second = createCodeBlockContract()
+
+		expect(first.schema).toEqual(second.schema)
+		expect(first).not.toBe(second)
+	})
+})
+
+describe('createThematicBreakContract', () => {
+	it('returns a working ThematicBreakNode contract', () => {
+		const contract = createThematicBreakContract()
+
+		expect(contract.is({ element: 'thematicBreak' })).toBe(true)
+		expect(contract.parse({ element: 'thematicBreak' })).toEqual({ element: 'thematicBreak' })
+		expect(contract.schema.type).toBe('object')
+		expect(contract.is(contract.generate(seededRandom(TEST_SEED)))).toBe(true)
+	})
+
+	it('accepts a real parser-produced ThematicBreakNode', () => {
+		const parser = createMarkdownParser()
+		const node = firstBlock(parser, '---')
+
+		expect(node.element).toBe('thematicBreak')
+		expect(createThematicBreakContract().is(node)).toBe(true)
+	})
+
+	it('returns independent instances (schema equal, not shared state)', () => {
+		const first = createThematicBreakContract()
+		const second = createThematicBreakContract()
+
+		expect(first.schema).toEqual(second.schema)
+		expect(first).not.toBe(second)
 	})
 })
