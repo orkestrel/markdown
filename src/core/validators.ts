@@ -15,6 +15,7 @@ import type {
 	ParagraphNode,
 	TableNode,
 	TextNode,
+	ThematicBreakNode,
 } from './types.js'
 import { arrayOf, isBoolean, isNumber, isString, literalOf, lazyOf, recordOf, unionOf } from '@orkestrel/contract'
 import { splitTableRow } from './helpers.js'
@@ -160,6 +161,11 @@ export function isCodeBlockNode(node: MarkdownNode): node is CodeBlockNode {
 /** Determine whether a node is a blockquote block. */
 export function isBlockquoteNode(node: MarkdownNode): node is BlockquoteNode {
 	return node.element === 'blockquote'
+}
+
+/** Determine whether a node is a thematic break (horizontal rule) block. */
+export function isThematicBreakNode(node: MarkdownNode): node is ThematicBreakNode {
+	return node.element === 'thematicBreak'
 }
 
 // === Inline guards

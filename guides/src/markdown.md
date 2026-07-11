@@ -97,6 +97,7 @@ Line/character structural predicates plus node guards, from [`validators.ts`](..
 | `isTableNode`         | function | `node: MarkdownNode`               | Narrows to `TableNode`.                                                                                          |
 | `isCodeBlockNode`     | function | `node: MarkdownNode`               | Narrows to `CodeBlockNode`.                                                                                      |
 | `isBlockquoteNode`    | function | `node: MarkdownNode`               | Narrows to `BlockquoteNode`.                                                                                     |
+| `isThematicBreakNode` | function | `node: MarkdownNode`               | Narrows to `ThematicBreakNode`.                                                                                  |
 | `isTextNode`          | function | `node: MarkdownNode`               | Narrows to `TextNode`.                                                                                           |
 | `isEmphasisNode`      | function | `node: MarkdownNode`               | Narrows to `EmphasisNode`.                                                                                       |
 | `isCodeSpanNode`      | function | `node: MarkdownNode`               | Narrows to `CodeSpanNode`.                                                                                       |
@@ -244,9 +245,8 @@ text.generate(seededRandom(42)) // deterministic seed data: { element: 'text', v
 - [`tests/src/core/MarkdownParser.test.ts`](../../tests/src/core/MarkdownParser.test.ts) — `parse` / `parseInline` / `render` behavior, incl. degrade semantics at `MAX_DEPTH` and sanitization.
 - [`tests/src/core/validators.test.ts`](../../tests/src/core/validators.test.ts) — structural predicates + per-node guards + the from-unknown AST guards (soundness on cyclic / adversarial input).
 - [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) — the pure line/block/inline scanning + escaping/sanitization leaves.
+- [`tests/src/core/shapers.test.ts`](../../tests/src/core/shapers.test.ts) — per-shape guard exactness, JSON Schema essentials, seeded generate round-trips, parse rebuilds, and bidirectional `Infer` ↔ interface type parity.
 - [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createMarkdownParser` + the compiled node contracts (`is` / `parse` / `schema` / `generate` round-trips).
-
-Note: no `shapers.test.ts` exists in this tree at time of writing — the shape declarations are exercised indirectly through `factories.test.ts`'s compiled-contract round-trips.
 
 ## See also
 

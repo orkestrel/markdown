@@ -27,6 +27,7 @@ import {
 	isTableStart,
 	isTextNode,
 	isThematicBreak,
+	isThematicBreakNode,
 	isWhitespace,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
@@ -59,6 +60,7 @@ const samples: readonly Sample[] = [
 	},
 	{ name: 'codeBlock', node: firstBlock(parser, '```\ncode\n```'), guard: isCodeBlockNode },
 	{ name: 'blockquote', node: firstBlock(parser, '> q'), guard: isBlockquoteNode },
+	{ name: 'thematicBreak', node: firstBlock(parser, '---'), guard: isThematicBreakNode },
 	{ name: 'text', node: assertInlineNode(parser, 'plain'), guard: isTextNode },
 	{ name: 'emphasis', node: assertInlineNode(parser, '*em*'), guard: isEmphasisNode },
 	{ name: 'codeSpan', node: assertInlineNode(parser, '`code`'), guard: isCodeSpanNode },
