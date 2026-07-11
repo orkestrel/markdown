@@ -1,22 +1,23 @@
 {
-	"name": "@orkestrel/contracts",
+	"name": "@orkestrel/markdown",
 	"version": "0.0.1",
-	"description": "Zero-dependency contract toolkit — type guards, combinators, parsers, and a shape DSL that compiles one contract shape into a guard, parser, JSON Schema, and generator. The foundation package of the @orkestrel line.",
+	"description": "Markdown parser toolkit — a fast, zero-surprise CommonMark-style parser with GFM tables, a typed AST, contract-backed node guards, and safe HTML rendering. Part of the @orkestrel line.",
 	"keywords": [
-		"contracts",
-		"json-schema",
-		"parsers",
-		"type-guards",
-		"typescript",
-		"validation",
-		"zero-dependency"
+		"ast",
+		"commonmark",
+		"gfm",
+		"html",
+		"markdown",
+		"markdown-parser",
+		"parser",
+		"typescript"
 	],
-	"homepage": "https://github.com/orkestrel/contracts#readme",
-	"bugs": "https://github.com/orkestrel/contracts/issues",
+	"homepage": "https://github.com/orkestrel/markdown#readme",
+	"bugs": "https://github.com/orkestrel/markdown/issues",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/orkestrel/contracts.git"
+		"url": "git+https://github.com/orkestrel/markdown.git"
 	},
 	"files": [
 		"dist",
