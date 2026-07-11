@@ -1,4 +1,4 @@
-import type { MarkdownDocument, TextNode } from '@src/core'
+import type { BlockquoteNode, MarkdownDocument, ParagraphNode, TableNode } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import {
 	assertBlockquoteNode,
@@ -791,20 +791,97 @@ describe('MarkdownParser — render: node-level', () => {
 })
 
 describe('MarkdownParser — MAX_DEPTH recursion cap (render)', () => {
-	it('renders a node at depth >= MAX_DEPTH as escaped value text, never recursing further', () => {
+	it('caps render depth on a valid, deeply nested blockquote chain (~70 levels) without throwing', () => {
 		const parser = new MarkdownParser()
-		const textNode: TextNode = { element: 'text', value: '<x>' }
-		expect(parser.render(textNode, 64)).toBe(escapeAmp(textNode.value))
+		const leaf: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'leaf' }],
+		}
+		let node: BlockquoteNode | ParagraphNode = leaf
+		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
+		expect(() => parser.render(node)).not.toThrow()
+		const html = parser.render(node)
+		// Depth caps well before the innermost leaf, so the literal 'leaf' text never
+		// reaches the rendered output.
+		expect(html).not.toContain('leaf')
 	})
 
-	it('renders a non-value node at depth >= MAX_DEPTH as an empty string', () => {
+	it('renders a fabricated node with an unknown element as an empty string (total default arm)', () => {
+		// A minimal, deliberately-loose type predicate (no `as`) that lets a
+		// structurally-invalid node reach `render` directly, bypassing the strict
+		// `isMarkdownNode` guard — exercising the switch's default arm. Narrowing
+		// happens through the helper's return type (never a conditional `expect`).
+		function isFabricatedNode(value: unknown): value is MarkdownDocument {
+			return typeof value === 'object' && value !== null
+		}
+		function narrow<T>(value: unknown, guard: (candidate: unknown) => candidate is T): T {
+			if (!guard(value)) throw new Error('fixture did not match the expected fabricated shape')
+			return value
+		}
 		const parser = new MarkdownParser()
-		expect(parser.render({ element: 'thematicBreak' }, 64)).toBe('')
+		const fabricated = narrow({ element: 'bogus' }, isFabricatedNode)
+		expect(parser.render(fabricated)).toBe('')
 	})
 
-	function escapeAmp(text: string): string {
-		return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-	}
+	it('pins the exact blockquote nesting depth MAX_DEPTH(=64) caps at for parse()', () => {
+		const parser = new MarkdownParser()
+		const document = parser.parse(buildDeepQuoteInput(100, 'too deep'))
+		let node = document.children[0]
+		let depth = 0
+		while (node !== undefined && node.element === 'blockquote') {
+			depth += 1
+			node = node.children[0]
+		}
+		// Empirically, parse() nests 64 (= MAX_DEPTH) real blockquote levels before the
+		// recursion cap degrades the remainder to a single literal paragraph.
+		expect(depth).toBe(64)
+	})
+
+	it('renders a fabricated TableNode with an out-of-set align without injecting a style attribute', () => {
+		// A minimal, deliberately-loose type predicate (no `as`) that lets a
+		// structurally-invalid `align` value (outside the clamp's literal set) reach
+		// `render` directly, bypassing the strict `isMarkdownNode` guard. Narrowing
+		// happens through the helper's return type (never a conditional `expect`).
+		function isFabricatedTable(value: unknown): value is TableNode {
+			return typeof value === 'object' && value !== null
+		}
+		function narrow<T>(value: unknown, guard: (candidate: unknown) => candidate is T): T {
+			if (!guard(value)) throw new Error('fixture did not match the expected fabricated shape')
+			return value
+		}
+		const parser = new MarkdownParser()
+		const fabricated = narrow(
+			{
+				element: 'table',
+				header: [[{ element: 'text', value: 'a' }]],
+				rows: [],
+				align: ['"onmouseover=alert(1) style="text-align:center'],
+			},
+			isFabricatedTable,
+		)
+		const html = parser.render(fabricated)
+		expect(html).not.toContain('style=')
+		expect(html).not.toContain('onmouseover')
+	})
+})
+
+describe('MarkdownParser — render: backslash-variant protocol-relative hrefs', () => {
+	it('drops backslash-variant protocol-relative hrefs to an empty attribute', () => {
+		// Markdown backslash-escaping unescapes one level (`\\` → `\`) inside the link
+		// destination before sanitizeUrl ever sees it, so each two-char prefix below
+		// needs its backslashes doubled in the markdown SOURCE to survive as a single
+		// backslash in the parsed href.
+		const parser = new MarkdownParser()
+		expect(parser.render(parser.parse('[x](\\\\\\\\evil.com)'))).toContain('href=""') // href: \\evil.com
+		expect(parser.render(parser.parse('[x](/\\\\evil.com)'))).toContain('href=""') // href: /\evil.com
+		expect(parser.render(parser.parse('[x](\\\\/evil.com)'))).toContain('href=""') // href: \/evil.com
+	})
+
+	it('keeps a single leading backslash href', () => {
+		const parser = new MarkdownParser()
+		const html = parser.render(parser.parse('[x](\\evil.com)'))
+		expect(html).toContain('href="\\evil.com"')
+	})
 })
 
 describe('MarkdownParser — line endings', () => {

@@ -498,5 +498,17 @@ describe('sanitizeUrl', () => {
 		it('drops a protocol-relative destination spoofed via stripped whitespace', () => {
 			expect(sanitizeUrl('/\t/evil.com')).toBe('')
 		})
+
+		it('drops backslash-variant protocol-relative destinations (browser-normalized)', () => {
+			expect(sanitizeUrl('\\\\evil.com')).toBe('')
+			expect(sanitizeUrl('/\\evil.com')).toBe('')
+			expect(sanitizeUrl('\\/evil.com')).toBe('')
+		})
+	})
+
+	describe('single leading slash/backslash (same-origin relative, kept)', () => {
+		it('keeps a single leading backslash destination', () => {
+			expect(sanitizeUrl('\\evil.com')).toBe('\\evil.com')
+		})
 	})
 })

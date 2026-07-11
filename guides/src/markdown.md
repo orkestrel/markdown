@@ -80,7 +80,7 @@ Declarative `ContractShape` values (from `@orkestrel/contract`) from [`shapers.t
 
 ### Validators
 
-Line/character structural predicates plus node guards, from [`validators.ts`](../../src/core/validators.ts). The structural predicates test raw strings during parsing; the `is{Element}Node` guards narrow an ALREADY-PARSED `MarkdownNode` by its `element` tag; the from-unknown guards (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) instead validate an arbitrary `unknown` value against the full node shape, composed from `@orkestrel/contract` combinators.
+Line/character structural predicates plus node guards, from [`validators.ts`](../../src/core/validators.ts). The structural predicates test raw strings during parsing; the `is{Element}Node` guards narrow an ALREADY-PARSED `MarkdownNode` by its `element` tag; the from-unknown guards (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) instead validate an arbitrary `unknown` value against the full node shape, composed from `@orkestrel/contract` combinators. Two distinct guard families: the **from-unknown boundary guards** (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) take `unknown` and validate an entire untrusted value from scratch; the **narrowing guards** (`is{Element}Node`, e.g. `isTableNode`) take an already-typed `MarkdownNode` and narrow it to one member of the union by its `element` tag — they assume the value is already a valid node shape.
 
 | Guard                 | Kind     | Narrows to / Tests                                 | Behavior                                                                                                                                                   |
 | --------------------- | -------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -130,11 +130,11 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 #### `MarkdownParserInterface`
 
-| Method        | Returns                 | Behavior                                                                                                                           |
-| ------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `parse`       | `MarkdownDocument`      | Parses a markdown string into an AST (block phase then inline phase). Never throws.                                                |
-| `parseInline` | `readonly InlineNode[]` | Parses a single line of inline content (emphasis / code / links), no block structure. Never throws.                                |
-| `render`      | `string`                | Renders a parsed `MarkdownNode` (typically a `MarkdownDocument`) to an HTML string — text + attributes escaped, `href`s sanitized. |
+| Method        | Returns                 | Behavior                                                                                                                                                                                                                                          |
+| ------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parse`       | `MarkdownDocument`      | Parses a markdown string into an AST (block phase then inline phase). Never throws.                                                                                                                                                               |
+| `parseInline` | `readonly InlineNode[]` | Parses a single line of inline content (emphasis / code / links), no block structure. Never throws.                                                                                                                                               |
+| `render`      | `string`                | Renders a parsed `MarkdownNode` (typically a `MarkdownDocument`) to an HTML string — text + attributes escaped, `href`s sanitized. Takes only the node (depth is an internal, `#`-private recursion parameter, not part of the public signature). |
 
 ## The AST model
 
@@ -162,7 +162,7 @@ Recursion in the AST is structural, not incidental: a `blockquote`'s `children` 
 
 - **Block recursion** (blockquote / list nesting, `MarkdownParser`'s private `#blocks`) — past the cap, the remaining lines collapse into **one literal paragraph** containing those lines joined by `\n`, instead of continuing to parse nested structure.
 - **Inline recursion** (`scanInline`, and the `depth` threaded through `scanLink` / `scanEmphasis`) — past the cap, the scan window is not scanned for markup at all; it emits as a **single literal text node**.
-- **Render recursion** (`MarkdownParser.render`) — past the cap, a node is not rendered structurally; it yields the HTML-escaped `value` of a node that carries one (a `TextNode`, `CodeSpanNode`, …), or an **empty string** for a node with no `value` field.
+- **Render recursion** (the public `render(node)`, which delegates to a `#`-private `#render(node, depth)` carrying the actual cap logic and every recursive call) — past the cap, a node is not rendered structurally; it yields the HTML-escaped `value` of a node that carries one (a `TextNode`, `CodeSpanNode`, …), or an **empty string** for a node with no `value` field. A table cell's inline content renders at `depth + 1` from the table's own depth (never reset to `0`), so a fabricated table-in-cell chain shares the same depth budget as everything else and cannot escape the cap. The `switch` inside `#render` also carries a `default` arm returning `''`, so a fabricated node with an `element` outside the exhaustive set (bypassing the type system, e.g. via an untyped/deserialized value) renders as an empty string instead of `undefined` — `render` is total even against a hostile `MarkdownNode`.
 
 Together these bound pathological or hostile input (deeply nested blockquotes, runaway emphasis, adversarially deep ASTs) so the parser and renderer can never exhaust the call stack.
 
@@ -172,10 +172,11 @@ Together these bound pathological or hostile input (deeply nested blockquotes, r
 
 - **Text + attribute escaping.** `escapeHtml` escapes `&` `<` `>` `"` `'` to entities on every text run and code body, so markdown content can never inject markup.
 - **`href` sanitization** (`sanitizeUrl`) — strips every whitespace and C0/C1 control codepoint from the href first (blocking `java\tscript:`-style scheme-spoofing evasions), then:
-  - a **protocol-relative** destination (`//host/path`, which inherits whatever scheme the embedding page is served over) is dropped to an empty string;
+  - a **protocol-relative** destination — `//host/path`, or a backslash variant a browser normalizes to the same effect (`\\host`, `/\host`, `\/host`; any two leading characters both drawn from `/` or `\`) — is dropped to an empty string; a **single** leading `/` or `\` is same-origin relative and is kept;
   - a destination whose scheme is **not** in `SAFE_URL_SCHEMES` (`http`, `https`, `mailto`, `tel` — notably excluding `javascript:` / `data:` / `vbscript:` / `file:`) is dropped to an empty string;
   - a relative / anchor / scheme-less (and non-protocol-relative) destination is kept;
   - the surviving value is then HTML-attribute-escaped.
+- **Table cell `align` clamping.** A table cell's `style="text-align:…"` attribute is only ever emitted when the column's `TableAlign` is the literal `'left'`, `'right'`, or `'center'` — `'none'` (or anything else a fabricated `TableNode` might carry) emits no `style` attribute at all, so the interpolated value can never escape that closed, literal set.
 
 This is defence-in-depth: `render` applies it even when a caller only ever feeds the parser trusted markdown, because `render` accepts any `MarkdownNode` — including one a caller constructed or accepted from elsewhere, not only one `parse` produced.
 

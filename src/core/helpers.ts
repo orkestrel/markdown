@@ -508,9 +508,11 @@ export function escapeHtml(text: string): string {
 /**
  * Sanitize + HTML-attribute-escape a link `href` - a destination whose scheme is not
  * in {@link SAFE_URL_SCHEMES} (notably `javascript:` / `data:` / `vbscript:`), or that
- * is protocol-relative (`//host/path` - inherits whatever scheme the embedding page
- * is served over, including an unsafe one), is dropped to an empty string; a
- * relative / anchor / scheme-less (and non-protocol-relative) destination is kept;
+ * is protocol-relative (`//host/path`, or a backslash variant a browser normalizes to
+ * the same effect - `\\host`, `/\host`, `\/host` - inherits whatever scheme the
+ * embedding page is served over, including an unsafe one), is dropped to an empty
+ * string; a relative / anchor / scheme-less (and non-protocol-relative) destination
+ * (including a SINGLE leading `/` or `\`) is kept;
  * the surviving value is then HTML-escaped. Defence-in-depth against an XSS `href`,
  * even though the input is trusted.
  *
@@ -526,7 +528,7 @@ export function sanitizeUrl(href: string): string {
 		const code = character.codePointAt(0) ?? 0
 		if (code > 0x20 && !(code >= 0x7f && code <= 0x9f)) cleaned += character
 	}
-	if (cleaned.startsWith('//')) return ''
+	if (/^[/\\]{2}/.exec(cleaned)) return ''
 	const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(cleaned)
 	if (scheme && scheme[1] !== undefined && !SAFE_URL_SCHEMES.has(scheme[1].toLowerCase())) return ''
 	return escapeHtml(cleaned)

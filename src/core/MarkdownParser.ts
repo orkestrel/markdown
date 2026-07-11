@@ -70,55 +70,8 @@ export class MarkdownParser implements MarkdownParserInterface {
 		return coalesceText(scanInline(text, 0, text.length))
 	}
 
-	render(node: MarkdownNode, depth = 0): string {
-		if (depth >= MAX_DEPTH)
-			return 'value' in node && typeof node.value === 'string' ? escapeHtml(node.value) : ''
-		switch (node.element) {
-			case 'document':
-				return node.children.map((child) => this.render(child, depth + 1)).join('\n')
-			case 'heading':
-				return `<h${node.level}>${this.#renderInline(node.children, depth)}</h${node.level}>`
-			case 'paragraph':
-				return `<p>${this.#renderInline(node.children, depth)}</p>`
-			case 'thematicBreak':
-				return '<hr>'
-			case 'blockquote':
-				return `<blockquote>\n${node.children.map((child) => this.render(child, depth + 1)).join('\n')}\n</blockquote>`
-			case 'codeBlock': {
-				const open =
-					node.lang === undefined ? '<code>' : `<code class="language-${escapeHtml(node.lang)}">`
-				return `<pre>${open}${escapeHtml(node.code)}</code></pre>`
-			}
-			case 'list': {
-				const items = node.items.map((item) => this.render(item, depth + 1)).join('\n')
-				if (!node.ordered) return `<ul>\n${items}\n</ul>`
-				const start = node.start !== 1 ? ` start="${node.start}"` : ''
-				return `<ol${start}>\n${items}\n</ol>`
-			}
-			case 'listItem':
-				return `<li>${this.#renderItem(node.children, depth)}</li>`
-			case 'table': {
-				const head = `<tr>${node.header.map((cell, column) => this.#renderCell('th', cell, node.align[column])).join('')}</tr>`
-				const body = node.rows
-					.map(
-						(row) =>
-							`<tr>${row.map((cell, column) => this.#renderCell('td', cell, node.align[column])).join('')}</tr>`,
-					)
-					.join('\n')
-				const bodyHtml = isNonEmptyArray(node.rows) ? `\n<tbody>\n${body}\n</tbody>` : ''
-				return `<table>\n<thead>\n${head}\n</thead>${bodyHtml}\n</table>`
-			}
-			case 'text':
-				return escapeHtml(node.value)
-			case 'emphasis':
-				return node.strong
-					? `<strong>${this.#renderInline(node.children, depth + 1)}</strong>`
-					: `<em>${this.#renderInline(node.children, depth + 1)}</em>`
-			case 'codeSpan':
-				return `<code>${escapeHtml(node.value)}</code>`
-			case 'link':
-				return `<a href="${sanitizeUrl(node.href)}">${this.#renderInline(node.children, depth + 1)}</a>`
-		}
+	render(node: MarkdownNode): string {
+		return this.#render(node, 0)
 	}
 
 	//  Block phase (markdown lines → block AST)
@@ -280,17 +233,74 @@ export class MarkdownParser implements MarkdownParserInterface {
 
 	//  Render phase (AST node → safe HTML string)
 
+	#render(node: MarkdownNode, depth: number): string {
+		if (depth >= MAX_DEPTH)
+			return 'value' in node && typeof node.value === 'string' ? escapeHtml(node.value) : ''
+		switch (node.element) {
+			case 'document':
+				return node.children.map((child) => this.#render(child, depth + 1)).join('\n')
+			case 'heading':
+				return `<h${node.level}>${this.#renderInline(node.children, depth)}</h${node.level}>`
+			case 'paragraph':
+				return `<p>${this.#renderInline(node.children, depth)}</p>`
+			case 'thematicBreak':
+				return '<hr>'
+			case 'blockquote':
+				return `<blockquote>\n${node.children.map((child) => this.#render(child, depth + 1)).join('\n')}\n</blockquote>`
+			case 'codeBlock': {
+				const open =
+					node.lang === undefined ? '<code>' : `<code class="language-${escapeHtml(node.lang)}">`
+				return `<pre>${open}${escapeHtml(node.code)}</code></pre>`
+			}
+			case 'list': {
+				const items = node.items.map((item) => this.#render(item, depth + 1)).join('\n')
+				if (!node.ordered) return `<ul>\n${items}\n</ul>`
+				const start = node.start !== 1 ? ` start="${node.start}"` : ''
+				return `<ol${start}>\n${items}\n</ol>`
+			}
+			case 'listItem':
+				return `<li>${this.#renderItem(node.children, depth)}</li>`
+			case 'table': {
+				const head = `<tr>${node.header.map((cell, column) => this.#renderCell('th', cell, node.align[column], depth)).join('')}</tr>`
+				const body = node.rows
+					.map(
+						(row) =>
+							`<tr>${row.map((cell, column) => this.#renderCell('td', cell, node.align[column], depth)).join('')}</tr>`,
+					)
+					.join('\n')
+				const bodyHtml = isNonEmptyArray(node.rows) ? `\n<tbody>\n${body}\n</tbody>` : ''
+				return `<table>\n<thead>\n${head}\n</thead>${bodyHtml}\n</table>`
+			}
+			case 'text':
+				return escapeHtml(node.value)
+			case 'emphasis':
+				return node.strong
+					? `<strong>${this.#renderInline(node.children, depth + 1)}</strong>`
+					: `<em>${this.#renderInline(node.children, depth + 1)}</em>`
+			case 'codeSpan':
+				return `<code>${escapeHtml(node.value)}</code>`
+			case 'link':
+				return `<a href="${sanitizeUrl(node.href)}">${this.#renderInline(node.children, depth + 1)}</a>`
+			default:
+				return ''
+		}
+	}
+
 	#renderInline(nodes: readonly InlineNode[], depth: number): string {
-		return nodes.map((node) => this.render(node, depth + 1)).join('')
+		return nodes.map((node) => this.#render(node, depth + 1)).join('')
 	}
 
 	#renderCell(
 		tag: 'th' | 'td',
 		cell: readonly InlineNode[],
 		align: TableAlign | undefined,
+		depth: number,
 	): string {
-		const style = align !== undefined && align !== 'none' ? ` style="text-align:${align}"` : ''
-		return `<${tag}${style}>${this.#renderInline(cell, 0)}</${tag}>`
+		const style =
+			align === 'left' || align === 'right' || align === 'center'
+				? ` style="text-align:${align}"`
+				: ''
+		return `<${tag}${style}>${this.#renderInline(cell, depth + 1)}</${tag}>`
 	}
 
 	#renderItem(children: readonly BlockNode[], depth: number): string {
@@ -299,6 +309,6 @@ export class MarkdownParser implements MarkdownParserInterface {
 			if (only !== undefined && only.element === 'paragraph')
 				return this.#renderInline(only.children, depth)
 		}
-		return children.map((child) => this.render(child, depth + 1)).join('\n')
+		return children.map((child) => this.#render(child, depth + 1)).join('\n')
 	}
 }
