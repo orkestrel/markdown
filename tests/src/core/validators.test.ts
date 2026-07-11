@@ -7,6 +7,7 @@
 import {
 	createMarkdownParser,
 	MarkdownNode,
+	isBlankLine,
 	isBlockNode,
 	isBlockquoteNode,
 	isCodeBlockNode,
@@ -73,6 +74,15 @@ describe('line predicates', () => {
 		expect(isWhitespace('\t')).toBe(true)
 		expect(isWhitespace('\n')).toBe(true)
 		expect(isWhitespace('x')).toBe(false)
+	})
+
+	it('recognizes blank lines (empty or whitespace-only)', () => {
+		expect(isBlankLine('')).toBe(true)
+		expect(isBlankLine('  ')).toBe(true)
+		expect(isBlankLine('\t')).toBe(true)
+		expect(isBlankLine(' \t ')).toBe(true)
+		expect(isBlankLine('a')).toBe(false)
+		expect(isBlankLine(' a ')).toBe(false)
 	})
 
 	it('recognizes markdown punctuation as escapable', () => {

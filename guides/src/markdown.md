@@ -86,6 +86,7 @@ Line/character structural predicates plus node guards, from [`validators.ts`](..
 | --------------------- | -------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `isWhitespace`        | function | `character: string`                | `true` for space / tab / newline — the emphasis flanking rule's space test.                                     |
 | `isEscapable`         | function | `character: string`                | `true` for a character a leading backslash can escape (ASCII markdown punctuation).                             |
+| `isBlankLine`         | function | `line: string`                     | `true` when `line` is empty or contains only whitespace — the markdown blank-line rule used to separate paragraphs, skip gaps, and end list continuations. |
 | `isQuote`             | function | `line: string`                     | `true` when `line` opens a blockquote (`>` optionally indented up to 3 spaces).                                 |
 | `isFenceClose`        | function | `(line: string, marker: string)`   | `true` when `line` closes a fence opened by `marker` (same character, run at least as long).                    |
 | `isFenceWhitespace`   | function | `character: string \| undefined`   | `true` for a regex-`\s`-equivalent whitespace character (fence-close padding).                                  |

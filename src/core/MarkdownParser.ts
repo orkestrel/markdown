@@ -24,9 +24,9 @@ import {
 	stripQuote,
 	tableAlignments,
 } from './helpers.js'
-import { isFenceClose, isQuote, isTableStart, isThematicBreak } from './validators.js'
+import { isBlankLine, isFenceClose, isQuote, isTableStart, isThematicBreak } from './validators.js'
 import { MAX_DEPTH } from './constants.js'
-import { isEmptyString, isNonEmptyArray } from '@orkestrel/contract'
+import { isNonEmptyArray } from '@orkestrel/contract'
 
 /**
  * A zero-dependency, types-first markdown parser - turn a markdown string into a
@@ -132,7 +132,7 @@ export class MarkdownParser implements MarkdownParserInterface {
 		let index = 0
 		while (index < lines.length) {
 			const line = lines[index] ?? ''
-			if (isEmptyString(line)) {
+			if (isBlankLine(line)) {
 				index += 1
 				continue
 			}
@@ -191,7 +191,7 @@ export class MarkdownParser implements MarkdownParserInterface {
 			const paragraph: string[] = []
 			while (
 				index < lines.length &&
-				!isEmptyString(lines[index] ?? '') &&
+				!isBlankLine(lines[index] ?? '') &&
 				!(isNonEmptyArray(paragraph) && startsBlock(lines, index))
 			) {
 				paragraph.push((lines[index] ?? '').trim())
@@ -216,7 +216,7 @@ export class MarkdownParser implements MarkdownParserInterface {
 		let index = start + 2
 		while (
 			index < lines.length &&
-			!isEmptyString(lines[index] ?? '') &&
+			!isBlankLine(lines[index] ?? '') &&
 			(lines[index] ?? '').includes('|')
 		) {
 			const cells = splitTableRow(lines[index] ?? '')
@@ -250,11 +250,11 @@ export class MarkdownParser implements MarkdownParserInterface {
 			index += 1
 			while (index < lines.length) {
 				const next = lines[index] ?? ''
-				if (isEmptyString(next)) {
+				if (isBlankLine(next)) {
 					const after = lines[index + 1] ?? ''
 					if (
 						index + 1 < lines.length &&
-						!isEmptyString(after) &&
+						!isBlankLine(after) &&
 						leadingIndent(after) >= continuation
 					) {
 						itemLines.push('')

@@ -17,7 +17,17 @@ import type {
 	TextNode,
 	ThematicBreakNode,
 } from './types.js'
-import { arrayOf, isBoolean, isNumber, isString, literalOf, lazyOf, recordOf, unionOf } from '@orkestrel/contract'
+import {
+	arrayOf,
+	isBoolean,
+	isEmptyString,
+	isNumber,
+	isString,
+	literalOf,
+	lazyOf,
+	recordOf,
+	unionOf,
+} from '@orkestrel/contract'
 import { splitTableRow } from './helpers.js'
 
 // AGENTS section 14: guards are total. This file owns two predicate families:
@@ -46,6 +56,18 @@ export function isWhitespace(character: string): boolean {
  */
 export function isEscapable(character: string): boolean {
 	return /[\\`*_{}[\]()#+\-.!>~|]/.test(character)
+}
+
+/**
+ * Whether `line` is blank - empty, or containing only whitespace - the markdown
+ * definition of a blank line that block parsing uses to separate paragraphs, skip
+ * gaps, and end list continuations.
+ *
+ * @param line - The candidate line
+ * @returns `true` when the line is blank
+ */
+export function isBlankLine(line: string): boolean {
+	return isEmptyString(line.trim())
 }
 
 /**
