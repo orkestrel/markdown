@@ -34,14 +34,22 @@ afterEach(() => {
 	vi.restoreAllMocks()
 })
 
+// ── Deterministic randomness ──────────────────────────────────────────────────
+// The single house seed for tests that need generated/random input (contract
+// `.generate(random)` calls, fuzz-style fixtures). Suites call
+// `seededRandom(TEST_SEED)` directly to get a fresh, deterministic
+// `RandomFunction` — keeping the seed centralized here means every suite that
+// wants determinism uses the same starting point.
+export const TEST_SEED = 42
+
 // ── MarkdownParser AST assertions ─────────────────────────────────────────────
 // Assert a parsed node IS a given element kind — throwing if not — and return it
 // narrowed, so a test reads the typed node (`assertHeading(block).level`,
 // `assertLink(node).href`) without an `as` or an `if`-guarded `expect` (both
-// AGENTS-forbidden; §1 / §16). Thin assert-and-narrow wrappers over the parsers
-// module's `is*` validators — one `assert{Element}` per guard — environment-agnostic,
-// so they sit here beside the other base helpers, shared by the MarkdownParser unit
-// test and the parser-validators test; `inlineText` is additionally reused by the
+// AGENTS-forbidden; §1 / §16). Thin assert-and-narrow wrappers over `@src/core`'s
+// `is*` guards — one `assert{Element}` per guard — environment-agnostic, so they
+// sit here beside the other base helpers, shared across the MarkdownParser and
+// AST-validator unit tests; `inlineText` is additionally reused by the
 // guides-parity extractors in `setupGuides.ts`.
 
 /** Parse `markdown` and narrow its FIRST block, asserting at least one exists. */
@@ -120,4 +128,90 @@ export function inlineText(nodes: readonly InlineNode[]): string {
 			isTextNode(node) || isCodeSpanNode(node) ? node.value : inlineText(node.children),
 		)
 		.join('')
+}
+
+// ── Adversarial values for guard-totality tests ───────────────────────────────
+// The `isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`
+// guards must be total — return `false`, never throw — for any `unknown` input,
+// including hostile shapes a real parser would never emit. These builders
+// produce exactly those shapes.
+
+/**
+ * An emphasis-like record whose `children` array contains a reference cycle
+ * (the array holds the record itself). Exercises guard totality against
+ * cyclic input without relying on structural recursion blowing the stack.
+ */
+export function buildCyclicNode(): unknown {
+	const node: { element: string; children: unknown[] } = { element: 'emphasis', children: [] }
+	node.children.push(node)
+	return node
+}
+
+/**
+ * An object shaped like a markdown node whose `element` property is a getter
+ * that throws when read. Exercises guard totality against input that throws
+ * mid-inspection rather than returning a plain value.
+ */
+export function buildHostileNode(): unknown {
+	return {
+		get element(): string {
+			throw new Error('hostile getter')
+		},
+		get children(): unknown {
+			throw new Error('hostile getter')
+		},
+	}
+}
+
+/**
+ * An emphasis-like inline chain nested `levels` deep, each level's `children`
+ * holding exactly the next level, with a text-like record at the innermost
+ * leaf. For stack-safety tests on inline guards/traversal.
+ */
+export function buildDeepInlineNode(levels: number): unknown {
+	let node: unknown = { element: 'text', value: 'leaf' }
+	for (let depth = 0; depth < levels; depth += 1) {
+		node = { element: 'emphasis', children: [node] }
+	}
+	return node
+}
+
+/**
+ * A blockquote-like block chain nested `levels` deep, each level's `children`
+ * holding exactly the next level, with a paragraph-like record at the
+ * innermost leaf. For stack-safety tests on block guards/traversal.
+ */
+export function buildDeepBlockNode(levels: number): unknown {
+	let node: unknown = { element: 'paragraph', children: [] }
+	for (let depth = 0; depth < levels; depth += 1) {
+		node = { element: 'blockquote', children: [node] }
+	}
+	return node
+}
+
+// ── Deep markdown source for parser stack-safety tests ────────────────────────
+// Plain string builders producing markdown input nested `levels` deep, for
+// asserting the parser degrades gracefully (never throws) past `MAX_DEPTH`.
+
+/** Markdown source with `levels` leading `>` blockquote markers before `text`. */
+export function buildDeepQuoteInput(levels: number, text = 'leaf'): string {
+	return `${'> '.repeat(levels)}${text}`
+}
+
+/** Markdown source for an `levels`-deep nested list, one indent per level. */
+export function buildDeepListInput(levels: number, text = 'leaf'): string {
+	const lines: string[] = []
+	for (let depth = 0; depth < levels; depth += 1) {
+		lines.push(`${'  '.repeat(depth)}- ${depth === levels - 1 ? text : ''}`)
+	}
+	return lines.join('\n')
+}
+
+/** Markdown source with `levels` nested `*emphasis*`/`[link](` inline markers around `text`. */
+export function buildDeepEmphasisInput(levels: number, text = 'leaf'): string {
+	let source = text
+	for (let depth = 0; depth < levels; depth += 1) {
+		source = depth % 2 === 0 ? `*${source}*` : `[${source}](url)`
+	}
+	return source
 }
