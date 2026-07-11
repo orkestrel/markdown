@@ -1,0 +1,72 @@
+{
+	"name": "@orkestrel/contracts",
+	"version": "0.0.1",
+	"description": "Zero-dependency contract toolkit — type guards, combinators, parsers, and a shape DSL that compiles one contract shape into a guard, parser, JSON Schema, and generator. The foundation package of the @orkestrel line.",
+	"keywords": [
+		"contracts",
+		"json-schema",
+		"parsers",
+		"type-guards",
+		"typescript",
+		"validation",
+		"zero-dependency"
+	],
+	"homepage": "https://github.com/orkestrel/contracts#readme",
+	"bugs": "https://github.com/orkestrel/contracts/issues",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/orkestrel/contracts.git"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"type": "module",
+	"sideEffects": false,
+	"main": "./dist/src/core/index.js",
+	"types": "./dist/src/core/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/src/core/index.d.ts",
+			"import": "./dist/src/core/index.js",
+			"default": "./dist/src/core/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "node -e \"try{require('node:fs').rmSync('dist',{recursive:true,force:true})}catch{}\"",
+		"copy": "node -e \"const fs=require('node:fs'),p=require('node:path'),a=process.argv[1],b=process.argv[2];fs.mkdirSync(p.dirname(b),{recursive:true});fs.cpSync(a,b,{force:true});console.log('Copied: '+a+' to '+b)\"",
+		"tmp:txt": "node -e \"const fs=require('node:fs'),p=require('node:path');function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const f=p.join(d,e.name);if(e.isDirectory()){walk(f)}else if(!e.name.endsWith('.md')&&!e.name.endsWith('.txt')){const t=f+'.txt';if(!fs.existsSync(t)){fs.renameSync(f,t)}else{console.warn('Skipping '+f+' — target exists: '+t)}}}}try{walk('tmp')}catch(e){if(e.code!=='ENOENT')throw e}\"",
+		"lint": "oxlint --config .oxlintrc.json --fix .",
+		"check": "tsc --noEmit --project tsconfig.json",
+		"check:src": "npm run check:src:core",
+		"check:src:core": "tsc --noEmit -p configs/src/tsconfig.core.json",
+		"format": "oxfmt --config .oxfmtrc.json --write .",
+		"format:check": "oxfmt --config .oxfmtrc.json --check .",
+		"lint:check": "oxlint --config .oxlintrc.json .",
+		"test": "npm run test:src",
+		"test:src": "vitest run --config vite.config.ts --reporter=dot --project src:core",
+		"build": "npm run clean && npm run build:src",
+		"build:src": "npm run build:src:core",
+		"build:src:core": "vite build --config configs/src/vite.core.config.ts && tsc -p configs/src/tsconfig.core.json",
+		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run check:src && npm run build && npm test"
+	},
+	"devDependencies": {
+		"@types/node": "^26.1.1",
+		"oxfmt": "^0.58.0",
+		"oxlint": "^1.73.0",
+		"typescript": "^6.0.3",
+		"vite": "^8.1.4",
+		"vitest": "^4.1.10"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"dependencies": {
+		"@orkestrel/contract": "^0.0.1"
+	}
+}
