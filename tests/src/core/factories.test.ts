@@ -76,7 +76,10 @@ describe('createTextContract', () => {
 		const contract = createTextContract()
 
 		expect(contract.is({ element: 'text', value: 'hi' })).toBe(true)
-		expect(contract.parse({ element: 'text', value: 'hi' })).toEqual({ element: 'text', value: 'hi' })
+		expect(contract.parse({ element: 'text', value: 'hi' })).toEqual({
+			element: 'text',
+			value: 'hi',
+		})
 		expect(contract.schema.type).toBe('object')
 		expect(contract.is(contract.generate(seededRandom(TEST_SEED)))).toBe(true)
 	})
@@ -100,7 +103,10 @@ describe('createCodeSpanContract', () => {
 		const contract = createCodeSpanContract()
 
 		expect(contract.is({ element: 'codeSpan', value: 'x' })).toBe(true)
-		expect(contract.parse({ element: 'codeSpan', value: 'x' })).toEqual({ element: 'codeSpan', value: 'x' })
+		expect(contract.parse({ element: 'codeSpan', value: 'x' })).toEqual({
+			element: 'codeSpan',
+			value: 'x',
+		})
 		expect(contract.schema.type).toBe('object')
 		expect(contract.is(contract.generate(seededRandom(TEST_SEED)))).toBe(true)
 	})

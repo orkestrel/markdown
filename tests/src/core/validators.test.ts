@@ -232,9 +232,7 @@ describe('from-unknown AST guards: acceptance against a real parsed document', (
 		expect(isBlockNode(paragraph)).toBe(false)
 
 		// pull the rich paragraph's inline children (emphasis / strong / codeSpan / link)
-		const richParagraph = document.children.find(
-			(block): boolean => block.element === 'paragraph',
-		)
+		const richParagraph = document.children.find((block): boolean => block.element === 'paragraph')
 		if (richParagraph === undefined || !('children' in richParagraph)) {
 			throw new Error('expected a paragraph with children')
 		}

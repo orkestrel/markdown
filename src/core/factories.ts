@@ -1,5 +1,11 @@
 import type { ContractInterface } from '@orkestrel/contract'
-import type { CodeBlockNode, CodeSpanNode, MarkdownParserInterface, TextNode, ThematicBreakNode } from './types.js'
+import type {
+	CodeBlockNode,
+	CodeSpanNode,
+	MarkdownParserInterface,
+	TextNode,
+	ThematicBreakNode,
+} from './types.js'
 import { createContract } from '@orkestrel/contract'
 import { MarkdownParser } from './MarkdownParser.js'
 import { codeBlockShape, codeSpanShape, textShape, thematicBreakShape } from './shapers.js'

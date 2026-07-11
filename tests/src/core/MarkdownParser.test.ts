@@ -595,15 +595,12 @@ describe('MarkdownParser — total / malformed input never throws', () => {
 		// structural shape is guaranteed accepted) — that is acceptable; only a throw is
 		// a failure. When the guard DOES accept the shape, render must also not throw.
 		const hostile = buildDeepBlockNode(10_000)
-		let accepted = false
+		expect(() => isMarkdownNode(hostile)).not.toThrow()
+		const parser = new MarkdownParser()
 		expect(() => {
-			accepted = isMarkdownNode(hostile)
+			if (isMarkdownNode(hostile)) parser.render(hostile)
+			// else: guard rejected the extreme-depth chain — acceptable, render is skipped.
 		}).not.toThrow()
-		if (accepted && isMarkdownNode(hostile)) {
-			const parser = new MarkdownParser()
-			expect(() => parser.render(hostile)).not.toThrow()
-		}
-		// else: guard rejected the extreme-depth chain — acceptable, render is skipped.
 	})
 })
 
@@ -650,9 +647,7 @@ describe('MarkdownParser — parseInline (the inline phase)', () => {
 describe('MarkdownParser — MAX_DEPTH recursion cap (inline phase)', () => {
 	it('scanInline at depth >= MAX_DEPTH yields a single literal text node covering the window', () => {
 		const source = '*text with markup*'
-		expect(scanInline(source, 0, source.length, 64)).toEqual([
-			{ element: 'text', value: source },
-		])
+		expect(scanInline(source, 0, source.length, 64)).toEqual([{ element: 'text', value: source }])
 	})
 
 	it('scanInline at depth >= MAX_DEPTH returns an empty array for an empty window', () => {

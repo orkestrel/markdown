@@ -10,103 +10,103 @@ Markdown here is two separate, pure, total operations over one shared AST. `pars
 
 The full node shape and parser contract, from [`types.ts`](../../src/core/types.ts). `element` is the discriminant every node carries; block nodes carry document structure, inline nodes carry the inline content of a heading / paragraph / list item / table cell.
 
-| Type                      | Kind      | Shape                                                                                                                          |
-| ------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `TableAlign`               | type      | `'none' \| 'left' \| 'right' \| 'center'` — a GFM table column's declared alignment.                                            |
-| `ListItemParts`            | interface | `{ ordered, start, content, indent, marker }` — the block phase's parsed list-item-line result.                                |
-| `TextNode`                 | interface | `{ element: 'text', value: string }` — a plain-text inline leaf (escapes resolved, not yet HTML-escaped).                      |
-| `EmphasisNode`             | interface | `{ element: 'emphasis', strong: boolean, children: readonly InlineNode[] }` — `*em*` / `**strong**`.                           |
-| `CodeSpanNode`             | interface | `{ element: 'codeSpan', value: string }` — `` `code` ``, verbatim (no inner markdown).                                         |
-| `LinkNode`                 | interface | `{ element: 'link', href: string, children: readonly InlineNode[] }` — `[text](href)`.                                        |
-| `InlineNode`               | type      | `TextNode \| EmphasisNode \| CodeSpanNode \| LinkNode` — anything that can appear inside inline content.                       |
-| `HeadingNode`              | interface | `{ element: 'heading', level: number, children: readonly InlineNode[] }` — an ATX heading, `level` 1–6.                        |
-| `ParagraphNode`            | interface | `{ element: 'paragraph', children: readonly InlineNode[] }`.                                                                    |
-| `ListItemNode`             | interface | `{ element: 'listItem', children: readonly BlockNode[] }` — one item of a `ListNode`.                                          |
-| `ListNode`                 | interface | `{ element: 'list', ordered: boolean, start: number, items: readonly ListItemNode[] }`.                                        |
-| `TableNode`                | interface | `{ element: 'table', header, rows, align }` — a GFM table; `header`/`rows` are inline-content cells, `align` per-column.        |
-| `CodeBlockNode`            | interface | `{ element: 'codeBlock', lang?: string, code: string }` — a fenced code block, verbatim (no inner markdown).                   |
-| `BlockquoteNode`           | interface | `{ element: 'blockquote', children: readonly BlockNode[] }` — `>`-prefixed lines, de-quoted and re-parsed as blocks.           |
-| `ThematicBreakNode`        | interface | `{ element: 'thematicBreak' }` — a horizontal rule; carries no fields beyond its discriminant.                                  |
-| `BlockNode`                | type      | `HeadingNode \| ParagraphNode \| ListNode \| TableNode \| CodeBlockNode \| BlockquoteNode \| ThematicBreakNode`.                |
-| `MarkdownDocument`         | interface | `{ element: 'document', children: readonly BlockNode[] }` — the AST root `MarkdownParserInterface.parse` returns.              |
-| `MarkdownNode`             | type      | `MarkdownDocument \| BlockNode \| ListItemNode \| InlineNode` — the exhaustive set the renderer's `switch` covers.              |
-| `MarkdownParserInterface`  | interface | `{ parse, parseInline, render }` — see [`## Methods`](#methods) below.                                                          |
+| Type                      | Kind      | Shape                                                                                                                    |
+| ------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `TableAlign`              | type      | `'none' \| 'left' \| 'right' \| 'center'` — a GFM table column's declared alignment.                                     |
+| `ListItemParts`           | interface | `{ ordered, start, content, indent, marker }` — the block phase's parsed list-item-line result.                          |
+| `TextNode`                | interface | `{ element: 'text', value: string }` — a plain-text inline leaf (escapes resolved, not yet HTML-escaped).                |
+| `EmphasisNode`            | interface | `{ element: 'emphasis', strong: boolean, children: readonly InlineNode[] }` — `*em*` / `**strong**`.                     |
+| `CodeSpanNode`            | interface | `{ element: 'codeSpan', value: string }` — `` `code` ``, verbatim (no inner markdown).                                   |
+| `LinkNode`                | interface | `{ element: 'link', href: string, children: readonly InlineNode[] }` — `[text](href)`.                                   |
+| `InlineNode`              | type      | `TextNode \| EmphasisNode \| CodeSpanNode \| LinkNode` — anything that can appear inside inline content.                 |
+| `HeadingNode`             | interface | `{ element: 'heading', level: number, children: readonly InlineNode[] }` — an ATX heading, `level` 1–6.                  |
+| `ParagraphNode`           | interface | `{ element: 'paragraph', children: readonly InlineNode[] }`.                                                             |
+| `ListItemNode`            | interface | `{ element: 'listItem', children: readonly BlockNode[] }` — one item of a `ListNode`.                                    |
+| `ListNode`                | interface | `{ element: 'list', ordered: boolean, start: number, items: readonly ListItemNode[] }`.                                  |
+| `TableNode`               | interface | `{ element: 'table', header, rows, align }` — a GFM table; `header`/`rows` are inline-content cells, `align` per-column. |
+| `CodeBlockNode`           | interface | `{ element: 'codeBlock', lang?: string, code: string }` — a fenced code block, verbatim (no inner markdown).             |
+| `BlockquoteNode`          | interface | `{ element: 'blockquote', children: readonly BlockNode[] }` — `>`-prefixed lines, de-quoted and re-parsed as blocks.     |
+| `ThematicBreakNode`       | interface | `{ element: 'thematicBreak' }` — a horizontal rule; carries no fields beyond its discriminant.                           |
+| `BlockNode`               | type      | `HeadingNode \| ParagraphNode \| ListNode \| TableNode \| CodeBlockNode \| BlockquoteNode \| ThematicBreakNode`.         |
+| `MarkdownDocument`        | interface | `{ element: 'document', children: readonly BlockNode[] }` — the AST root `MarkdownParserInterface.parse` returns.        |
+| `MarkdownNode`            | type      | `MarkdownDocument \| BlockNode \| ListItemNode \| InlineNode` — the exhaustive set the renderer's `switch` covers.       |
+| `MarkdownParserInterface` | interface | `{ parse, parseInline, render }` — see [`## Methods`](#methods) below.                                                   |
 
 ### Constants
 
 From [`constants.ts`](../../src/core/constants.ts).
 
-| Constant           | Kind  | Behavior                                                                                                                                                                    |
-| ------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SAFE_URL_SCHEMES`  | const | `ReadonlySet<string>` — `{'http', 'https', 'mailto', 'tel'}`, frozen, lower-case. Any other scheme (`javascript:`, `data:`, `vbscript:`, `file:`, …) is dropped at render. |
-| `MAX_DEPTH`         | const | `64` — the recursion cap the block phase, inline phase, and renderer all honor before degrading to literal text (§ [Depth degrade semantics](#depth-degrade-semantics)). |
+| Constant           | Kind  | Behavior                                                                                                                                                                   |
+| ------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SAFE_URL_SCHEMES` | const | `ReadonlySet<string>` — `{'http', 'https', 'mailto', 'tel'}`, frozen, lower-case. Any other scheme (`javascript:`, `data:`, `vbscript:`, `file:`, …) is dropped at render. |
+| `MAX_DEPTH`        | const | `64` — the recursion cap the block phase, inline phase, and renderer all honor before degrading to literal text (§ [Depth degrade semantics](#depth-degrade-semantics)).   |
 
 ### Helpers
 
 Pure, total, zero-dependency parsing + rendering leaves from [`helpers.ts`](../../src/core/helpers.ts) — the functional core `MarkdownParser`'s methods compose (AGENTS §5). Every function is unit-testable in isolation; malformed input degrades to text, never throws.
 
-| Helper             | Kind     | Signature                                                                                    | Behavior                                                                                                                          |
-| ------------------ | -------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `splitLines`        | function | `(markdown: string) => readonly string[]`                                                     | Normalizes `\r\n` / `\r` to `\n` and splits into lines; a single trailing newline yields no final empty line.                     |
-| `leadingIndent`     | function | `(line: string) => number`                                                                    | Count of leading space/tab characters (a tab counts as one).                                                                      |
-| `extractHeading`    | function | `(line: string) => { level: number, text: string } \| undefined`                              | Parses an ATX heading line (`#`…`######`); `undefined` when not a heading.                                                        |
-| `extractFence`      | function | `(line: string) => { marker: string, lang: string \| undefined } \| undefined`                | Parses a fenced-code opening line (`` ``` `` / `~~~`, optional info string); `undefined` when not a fence opener.                 |
-| `extractListItem`   | function | `(line: string) => ListItemParts \| undefined`                                                | Parses a bullet (`-`/`*`/`+`) or ordinal (`1.`/`1)`) list-item line; `undefined` when not a list item.                            |
-| `stripQuote`        | function | `(line: string) => string`                                                                    | Strips one level of `>` blockquote marker (plus one optional space).                                                              |
-| `splitTableRow`     | function | `(row: string) => readonly string[]`                                                          | Splits a GFM table row into cells; outer pipes optional, `\|` escaped inside a cell is literal.                                   |
-| `tableAlignments`   | function | `(delimiter: string) => readonly TableAlign[]`                                                | Derives per-column alignment from a GFM delimiter row.                                                                            |
-| `startsBlock`       | function | `(lines: readonly string[], index: number) => boolean`                                        | Whether the line at `index` starts a NEW block kind — stops paragraph collection without a blank-line separator.                  |
-| `unescapeText`      | function | `(text: string) => string`                                                                    | Resolves backslash escapes (`\*` → `*`) to their literal characters.                                                              |
-| `coalesceText`      | function | `(nodes: readonly InlineNode[]) => readonly InlineNode[]`                                     | Merges adjacent text nodes into one.                                                                                              |
-| `scanCode`          | function | `(source, start, to) => { value: string, end: number } \| undefined`                          | Scans an inline code span (matching backtick-run closer); `undefined` when unterminated.                                         |
-| `scanLink`          | function | `(source, start, to, depth = 0) => { node: LinkNode, end: number } \| undefined`               | Scans `[text](href)`; `undefined` when the shape doesn't hold. `depth` gates the text-children recursion at `MAX_DEPTH`.          |
-| `scanEmphasis`      | function | `(source, start, to, depth = 0) => { node: EmphasisNode, end: number } \| undefined`           | Scans `*em*` / `**strong**`; `undefined` when no valid closer exists. `depth` gates the children recursion at `MAX_DEPTH`.        |
-| `scanInline`        | function | `(source: string, from: number, to: number, depth = 0) => readonly InlineNode[]`               | The recursive inline-scanning engine (emphasis / link text recurse through it); linear-time, no backtracking. See [depth degrade](#depth-degrade-semantics). |
-| `escapeHtml`        | function | `(text: string) => string`                                                                    | HTML-escapes `&` `<` `>` `"` `'` to entities.                                                                                     |
-| `sanitizeUrl`       | function | `(href: string) => string`                                                                    | Sanitizes + attribute-escapes a link `href` (§ [Sanitization policy](#sanitization-policy)).                                      |
+| Helper            | Kind     | Signature                                                                            | Behavior                                                                                                                                                     |
+| ----------------- | -------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `splitLines`      | function | `(markdown: string) => readonly string[]`                                            | Normalizes `\r\n` / `\r` to `\n` and splits into lines; a single trailing newline yields no final empty line.                                                |
+| `leadingIndent`   | function | `(line: string) => number`                                                           | Count of leading space/tab characters (a tab counts as one).                                                                                                 |
+| `extractHeading`  | function | `(line: string) => { level: number, text: string } \| undefined`                     | Parses an ATX heading line (`#`…`######`); `undefined` when not a heading.                                                                                   |
+| `extractFence`    | function | `(line: string) => { marker: string, lang: string \| undefined } \| undefined`       | Parses a fenced-code opening line (` ``` ` / `~~~`, optional info string); `undefined` when not a fence opener.                                              |
+| `extractListItem` | function | `(line: string) => ListItemParts \| undefined`                                       | Parses a bullet (`-`/`*`/`+`) or ordinal (`1.`/`1)`) list-item line; `undefined` when not a list item.                                                       |
+| `stripQuote`      | function | `(line: string) => string`                                                           | Strips one level of `>` blockquote marker (plus one optional space).                                                                                         |
+| `splitTableRow`   | function | `(row: string) => readonly string[]`                                                 | Splits a GFM table row into cells; outer pipes optional, `\|` escaped inside a cell is literal.                                                              |
+| `tableAlignments` | function | `(delimiter: string) => readonly TableAlign[]`                                       | Derives per-column alignment from a GFM delimiter row.                                                                                                       |
+| `startsBlock`     | function | `(lines: readonly string[], index: number) => boolean`                               | Whether the line at `index` starts a NEW block kind — stops paragraph collection without a blank-line separator.                                             |
+| `unescapeText`    | function | `(text: string) => string`                                                           | Resolves backslash escapes (`\*` → `*`) to their literal characters.                                                                                         |
+| `coalesceText`    | function | `(nodes: readonly InlineNode[]) => readonly InlineNode[]`                            | Merges adjacent text nodes into one.                                                                                                                         |
+| `scanCode`        | function | `(source, start, to) => { value: string, end: number } \| undefined`                 | Scans an inline code span (matching backtick-run closer); `undefined` when unterminated.                                                                     |
+| `scanLink`        | function | `(source, start, to, depth = 0) => { node: LinkNode, end: number } \| undefined`     | Scans `[text](href)`; `undefined` when the shape doesn't hold. `depth` gates the text-children recursion at `MAX_DEPTH`.                                     |
+| `scanEmphasis`    | function | `(source, start, to, depth = 0) => { node: EmphasisNode, end: number } \| undefined` | Scans `*em*` / `**strong**`; `undefined` when no valid closer exists. `depth` gates the children recursion at `MAX_DEPTH`.                                   |
+| `scanInline`      | function | `(source: string, from: number, to: number, depth = 0) => readonly InlineNode[]`     | The recursive inline-scanning engine (emphasis / link text recurse through it); linear-time, no backtracking. See [depth degrade](#depth-degrade-semantics). |
+| `escapeHtml`      | function | `(text: string) => string`                                                           | HTML-escapes `&` `<` `>` `"` `'` to entities.                                                                                                                |
+| `sanitizeUrl`     | function | `(href: string) => string`                                                           | Sanitizes + attribute-escapes a link `href` (§ [Sanitization policy](#sanitization-policy)).                                                                 |
 
 ### Shapers
 
 Declarative `ContractShape` values (from `@orkestrel/contract`) from [`shapers.ts`](../../src/core/shapers.ts) — one shape compiles into a guard, coercing parser, JSON Schema, and seeded generator (the compilers live in `@orkestrel/contract`, invoked here via `createContract` in `factories.ts`). Only the NON-recursive node types shape here; any type whose fields recurse into `BlockNode` / `InlineNode` / `MarkdownNode` stays guard-only (`validators.ts`, via `lazyOf`) — see [Relationship with @orkestrel/contract](#relationship-with-orkestrelcontract).
 
-| Shaper                | Kind     | Builds                                                                                             |
-| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
-| `textShape`            | const    | The shape of a `TextNode` — `{ element: 'text', value: string }`.                                    |
-| `codeSpanShape`        | const    | The shape of a `CodeSpanNode` — `{ element: 'codeSpan', value: string }`.                            |
-| `codeBlockShape`       | const    | The shape of a `CodeBlockNode` — `{ element: 'codeBlock', lang?: string, code: string }`.             |
-| `thematicBreakShape`   | const    | The shape of a `ThematicBreakNode` — `{ element: 'thematicBreak' }`, no fields beyond the discriminant. |
-| `tableAlignShape`      | const    | The shape of a `TableAlign` literal — `'none' \| 'left' \| 'right' \| 'center'`.                     |
-| `listItemPartsShape`   | const    | The shape of `ListItemParts` — fully non-recursive, every field shapes directly.                     |
+| Shaper               | Kind  | Builds                                                                                                  |
+| -------------------- | ----- | ------------------------------------------------------------------------------------------------------- |
+| `textShape`          | const | The shape of a `TextNode` — `{ element: 'text', value: string }`.                                       |
+| `codeSpanShape`      | const | The shape of a `CodeSpanNode` — `{ element: 'codeSpan', value: string }`.                               |
+| `codeBlockShape`     | const | The shape of a `CodeBlockNode` — `{ element: 'codeBlock', lang?: string, code: string }`.               |
+| `thematicBreakShape` | const | The shape of a `ThematicBreakNode` — `{ element: 'thematicBreak' }`, no fields beyond the discriminant. |
+| `tableAlignShape`    | const | The shape of a `TableAlign` literal — `'none' \| 'left' \| 'right' \| 'center'`.                        |
+| `listItemPartsShape` | const | The shape of `ListItemParts` — fully non-recursive, every field shapes directly.                        |
 
 ### Validators
 
 Line/character structural predicates plus node guards, from [`validators.ts`](../../src/core/validators.ts). The structural predicates test raw strings during parsing; the `is{Element}Node` guards narrow an ALREADY-PARSED `MarkdownNode` by its `element` tag; the from-unknown guards (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) instead validate an arbitrary `unknown` value against the full node shape, composed from `@orkestrel/contract` combinators.
 
-| Guard                | Kind     | Narrows to / Tests                | Behavior                                                                                                        |
-| --------------------- | -------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `isWhitespace`        | function | `character: string`                | `true` for space / tab / newline — the emphasis flanking rule's space test.                                     |
-| `isEscapable`         | function | `character: string`                | `true` for a character a leading backslash can escape (ASCII markdown punctuation).                             |
-| `isBlankLine`         | function | `line: string`                     | `true` when `line` is empty or contains only whitespace — the markdown blank-line rule used to separate paragraphs, skip gaps, and end list continuations. |
-| `isQuote`             | function | `line: string`                     | `true` when `line` opens a blockquote (`>` optionally indented up to 3 spaces).                                 |
-| `isFenceClose`        | function | `(line: string, marker: string)`   | `true` when `line` closes a fence opened by `marker` (same character, run at least as long).                    |
-| `isFenceWhitespace`   | function | `character: string \| undefined`   | `true` for a regex-`\s`-equivalent whitespace character (fence-close padding).                                  |
-| `isThematicBreak`     | function | `line: string`                     | `true` for 3+ of the same `-`/`*`/`_` marker (optionally space-separated) and nothing else.                     |
-| `isTableStart`        | function | `(header: string, delimiter: string \| undefined)` | `true` when the pair opens a GFM table (delimiter row of `:?-+:?` cells).                        |
-| `isHeadingNode`       | function | `node: MarkdownNode`               | Narrows to `HeadingNode` — `node.element === 'heading'`.                                                        |
-| `isParagraphNode`     | function | `node: MarkdownNode`               | Narrows to `ParagraphNode`.                                                                                      |
-| `isListNode`          | function | `node: MarkdownNode`               | Narrows to `ListNode`.                                                                                           |
-| `isTableNode`         | function | `node: MarkdownNode`               | Narrows to `TableNode`.                                                                                          |
-| `isCodeBlockNode`     | function | `node: MarkdownNode`               | Narrows to `CodeBlockNode`.                                                                                      |
-| `isBlockquoteNode`    | function | `node: MarkdownNode`               | Narrows to `BlockquoteNode`.                                                                                     |
-| `isThematicBreakNode` | function | `node: MarkdownNode`               | Narrows to `ThematicBreakNode`.                                                                                  |
-| `isTextNode`          | function | `node: MarkdownNode`               | Narrows to `TextNode`.                                                                                           |
-| `isEmphasisNode`      | function | `node: MarkdownNode`               | Narrows to `EmphasisNode`.                                                                                       |
-| `isCodeSpanNode`      | function | `node: MarkdownNode`               | Narrows to `CodeSpanNode`.                                                                                       |
-| `isLinkNode`          | function | `node: MarkdownNode`               | Narrows to `LinkNode`.                                                                                           |
-| `isInlineNode`        | const    | `Guard<InlineNode>`                | Total from-unknown guard: text / emphasis / code span / link, recursively validated via `lazyOf`.               |
-| `isBlockNode`         | const    | `Guard<BlockNode>`                 | Total from-unknown guard: heading / paragraph / list / table / code block / blockquote / thematic break.        |
-| `isMarkdownNode`      | const    | `Guard<MarkdownNode>`               | Total from-unknown guard: the document root, a block node, a list item, or an inline node.                      |
-| `isMarkdownDocument`  | const    | `Guard<MarkdownDocument>`          | Total from-unknown guard: `{ element: 'document', children: readonly BlockNode[] }`.                            |
+| Guard                 | Kind     | Narrows to / Tests                                 | Behavior                                                                                                                                                   |
+| --------------------- | -------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `isWhitespace`        | function | `character: string`                                | `true` for space / tab / newline — the emphasis flanking rule's space test.                                                                                |
+| `isEscapable`         | function | `character: string`                                | `true` for a character a leading backslash can escape (ASCII markdown punctuation).                                                                        |
+| `isBlankLine`         | function | `line: string`                                     | `true` when `line` is empty or contains only whitespace — the markdown blank-line rule used to separate paragraphs, skip gaps, and end list continuations. |
+| `isQuote`             | function | `line: string`                                     | `true` when `line` opens a blockquote (`>` optionally indented up to 3 spaces).                                                                            |
+| `isFenceClose`        | function | `(line: string, marker: string)`                   | `true` when `line` closes a fence opened by `marker` (same character, run at least as long).                                                               |
+| `isFenceWhitespace`   | function | `character: string \| undefined`                   | `true` for a regex-`\s`-equivalent whitespace character (fence-close padding).                                                                             |
+| `isThematicBreak`     | function | `line: string`                                     | `true` for 3+ of the same `-`/`*`/`_` marker (optionally space-separated) and nothing else.                                                                |
+| `isTableStart`        | function | `(header: string, delimiter: string \| undefined)` | `true` when the pair opens a GFM table (delimiter row of `:?-+:?` cells).                                                                                  |
+| `isHeadingNode`       | function | `node: MarkdownNode`                               | Narrows to `HeadingNode` — `node.element === 'heading'`.                                                                                                   |
+| `isParagraphNode`     | function | `node: MarkdownNode`                               | Narrows to `ParagraphNode`.                                                                                                                                |
+| `isListNode`          | function | `node: MarkdownNode`                               | Narrows to `ListNode`.                                                                                                                                     |
+| `isTableNode`         | function | `node: MarkdownNode`                               | Narrows to `TableNode`.                                                                                                                                    |
+| `isCodeBlockNode`     | function | `node: MarkdownNode`                               | Narrows to `CodeBlockNode`.                                                                                                                                |
+| `isBlockquoteNode`    | function | `node: MarkdownNode`                               | Narrows to `BlockquoteNode`.                                                                                                                               |
+| `isThematicBreakNode` | function | `node: MarkdownNode`                               | Narrows to `ThematicBreakNode`.                                                                                                                            |
+| `isTextNode`          | function | `node: MarkdownNode`                               | Narrows to `TextNode`.                                                                                                                                     |
+| `isEmphasisNode`      | function | `node: MarkdownNode`                               | Narrows to `EmphasisNode`.                                                                                                                                 |
+| `isCodeSpanNode`      | function | `node: MarkdownNode`                               | Narrows to `CodeSpanNode`.                                                                                                                                 |
+| `isLinkNode`          | function | `node: MarkdownNode`                               | Narrows to `LinkNode`.                                                                                                                                     |
+| `isInlineNode`        | const    | `Guard<InlineNode>`                                | Total from-unknown guard: text / emphasis / code span / link, recursively validated via `lazyOf`.                                                          |
+| `isBlockNode`         | const    | `Guard<BlockNode>`                                 | Total from-unknown guard: heading / paragraph / list / table / code block / blockquote / thematic break.                                                   |
+| `isMarkdownNode`      | const    | `Guard<MarkdownNode>`                              | Total from-unknown guard: the document root, a block node, a list item, or an inline node.                                                                 |
+| `isMarkdownDocument`  | const    | `Guard<MarkdownDocument>`                          | Total from-unknown guard: `{ element: 'document', children: readonly BlockNode[] }`.                                                                       |
 
 ### `MarkdownParser`
 
@@ -116,13 +116,13 @@ The implementing class of `MarkdownParserInterface`, from [`MarkdownParser.ts`](
 
 From [`factories.ts`](../../src/core/factories.ts).
 
-| Factory                        | Kind     | Signature                                        | Behavior                                                                                     |
-| -------------------------------- | -------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `createMarkdownParser`           | function | `() => MarkdownParserInterface`                     | Creates a stateless `MarkdownParser` handle.                                                 |
-| `createTextContract`             | function | `() => ContractInterface<TextNode>`                 | Compiles `textShape` into a guard / parser / schema / generator bundle.                      |
-| `createCodeSpanContract`         | function | `() => ContractInterface<CodeSpanNode>`             | Compiles `codeSpanShape` into a guard / parser / schema / generator bundle.                  |
-| `createCodeBlockContract`        | function | `() => ContractInterface<CodeBlockNode>`            | Compiles `codeBlockShape` into a guard / parser / schema / generator bundle.                 |
-| `createThematicBreakContract`    | function | `() => ContractInterface<ThematicBreakNode>`        | Compiles `thematicBreakShape` into a guard / parser / schema / generator bundle.              |
+| Factory                       | Kind     | Signature                                    | Behavior                                                                         |
+| ----------------------------- | -------- | -------------------------------------------- | -------------------------------------------------------------------------------- |
+| `createMarkdownParser`        | function | `() => MarkdownParserInterface`              | Creates a stateless `MarkdownParser` handle.                                     |
+| `createTextContract`          | function | `() => ContractInterface<TextNode>`          | Compiles `textShape` into a guard / parser / schema / generator bundle.          |
+| `createCodeSpanContract`      | function | `() => ContractInterface<CodeSpanNode>`      | Compiles `codeSpanShape` into a guard / parser / schema / generator bundle.      |
+| `createCodeBlockContract`     | function | `() => ContractInterface<CodeBlockNode>`     | Compiles `codeBlockShape` into a guard / parser / schema / generator bundle.     |
+| `createThematicBreakContract` | function | `() => ContractInterface<ThematicBreakNode>` | Compiles `thematicBreakShape` into a guard / parser / schema / generator bundle. |
 
 ## Methods
 
@@ -130,11 +130,11 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 #### `MarkdownParserInterface`
 
-| Method        | Returns                    | Behavior                                                                                                                            |
-| ------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `parse`       | `MarkdownDocument`           | Parses a markdown string into an AST (block phase then inline phase). Never throws.                                                |
-| `parseInline` | `readonly InlineNode[]`      | Parses a single line of inline content (emphasis / code / links), no block structure. Never throws.                                |
-| `render`      | `string`                     | Renders a parsed `MarkdownNode` (typically a `MarkdownDocument`) to an HTML string — text + attributes escaped, `href`s sanitized. |
+| Method        | Returns                 | Behavior                                                                                                                           |
+| ------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `parse`       | `MarkdownDocument`      | Parses a markdown string into an AST (block phase then inline phase). Never throws.                                                |
+| `parseInline` | `readonly InlineNode[]` | Parses a single line of inline content (emphasis / code / links), no block structure. Never throws.                                |
+| `render`      | `string`                | Renders a parsed `MarkdownNode` (typically a `MarkdownDocument`) to an HTML string — text + attributes escaped, `href`s sanitized. |
 
 ## The AST model
 

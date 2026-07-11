@@ -71,7 +71,8 @@ export class MarkdownParser implements MarkdownParserInterface {
 	}
 
 	render(node: MarkdownNode, depth = 0): string {
-		if (depth >= MAX_DEPTH) return 'value' in node && typeof node.value === 'string' ? escapeHtml(node.value) : ''
+		if (depth >= MAX_DEPTH)
+			return 'value' in node && typeof node.value === 'string' ? escapeHtml(node.value) : ''
 		switch (node.element) {
 			case 'document':
 				return node.children.map((child) => this.render(child, depth + 1)).join('\n')

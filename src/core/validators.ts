@@ -8,7 +8,6 @@ import type {
 	HeadingNode,
 	InlineNode,
 	LinkNode,
-	ListItemNode,
 	ListNode,
 	MarkdownDocument,
 	MarkdownNode,

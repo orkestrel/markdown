@@ -159,7 +159,8 @@ export function splitTableRow(row: string): readonly string[] {
 	}
 	cells.push(current)
 	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[0] ?? '').trim())) cells.shift()
-	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[cells.length - 1] ?? '').trim())) cells.pop()
+	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[cells.length - 1] ?? '').trim()))
+		cells.pop()
 	return cells
 }
 
@@ -433,7 +434,8 @@ export function scanInline(
 	to: number,
 	depth = 0,
 ): readonly InlineNode[] {
-	if (depth >= MAX_DEPTH) return from < to ? [{ element: 'text', value: source.slice(from, to) }] : []
+	if (depth >= MAX_DEPTH)
+		return from < to ? [{ element: 'text', value: source.slice(from, to) }] : []
 	const nodes: InlineNode[] = []
 	let index = from
 	let pending = ''

@@ -1,4 +1,11 @@
-import { booleanShape, integerShape, literalShape, objectShape, optionalShape, stringShape } from '@orkestrel/contract'
+import {
+	booleanShape,
+	integerShape,
+	literalShape,
+	objectShape,
+	optionalShape,
+	stringShape,
+} from '@orkestrel/contract'
 
 // AGENTS section 14 / 4.6.1: shapers are `ContractShape` VALUES, not functions
 // or types - a JSON-Schema blueprint the compilers (factories.ts) turn into a
