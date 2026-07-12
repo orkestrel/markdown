@@ -345,7 +345,7 @@ export const isMarkdownNode: Guard<MarkdownNode> = unionOf(
 
 /**
  * Determine whether an arbitrary value is a valid {@link MarkdownDocument} -
- * the parsed-AST root {@link MarkdownParserInterface.parse} returns, recursively
+ * the parsed-AST root {@link parseDocument} returns, recursively
  * validated.
  *
  * @remarks

@@ -1,17 +1,38 @@
-import type { EmphasisNode, InlineNode, LinkNode, ListItemParts, TableAlign } from './types.js'
+import type {
+	BlockNode,
+	EmphasisNode,
+	InlineNode,
+	LinkNode,
+	ListItemNode,
+	ListItemParts,
+	MarkdownDocument,
+	MarkdownHandlers,
+	MarkdownNode,
+	MarkdownRewriteHandler,
+	TableAlign,
+	TableNode,
+} from './types.js'
 import { MAX_DEPTH, SAFE_URL_SCHEMES } from './constants.js'
-import { isEscapable, isQuote, isTableStart, isThematicBreak, isWhitespace } from './validators.js'
+import {
+	isBlockNode,
+	isEscapable,
+	isInlineNode,
+	isQuote,
+	isTableStart,
+	isThematicBreak,
+	isWhitespace,
+} from './validators.js'
 import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '@orkestrel/contract'
 
 //  Markdown parsing + rendering leaves (pure, total, zero-dependency)
 //
-// The pure leaf primitives the {@link MarkdownParser} composes: the line / block
+// The pure leaf primitives {@link parseDocument} composes: the line / block
 // scanners (headings, fences, list items, table rows, quotes, thematic breaks), the
 // inline `scan*` engine (emphasis / links / code with backslash escapes), and the HTML
 // escaping + URL-sanitization the renderer leans on. Every function is PURE, TOTAL, and
 // referentially transparent - malformed input degrades to text, never throws (AGENTS
 // §14) - so each is unit-tested in isolation. The ORCHESTRATION that threads these
-// together (the block / inline / render recursion) lives in MarkdownParser's methods,
+// together (the block / inline / render recursion) lives in parsers.ts's functions,
 // not here (AGENTS §5): a helper is a functional-core leaf, a method is the
 // composition. Inline scanning is index-based (no backtracking regex) so it is
 // linear-time - no ReDoS on adversarial input.
@@ -532,4 +553,590 @@ export function sanitizeUrl(href: string): string {
 	const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(cleaned)
 	if (scheme && scheme[1] !== undefined && !SAFE_URL_SCHEMES.has(scheme[1].toLowerCase())) return ''
 	return escapeHtml(cleaned)
+}
+
+/**
+ * Render a {@link MarkdownNode} (typically a {@link MarkdownDocument}) to a safe HTML
+ * string - the recursive AST → HTML engine (headings, paragraphs, lists, GFM tables,
+ * fenced code, blockquotes, links, emphasis, inline code), escaping every text run and
+ * sanitizing every link `href`.
+ *
+ * @remarks
+ * Total: never throws. At {@link MAX_DEPTH} a value-bearing node (`text` / `codeSpan`)
+ * degrades to its escaped `value`; any other node degrades to `''` instead of
+ * recursing further, so pathologically deep input cannot exhaust the call stack. The
+ * recursive engine and its per-shape sub-steps (inline concatenation, table cell,
+ * tight list-item) are nested inner functions - the only exported surface is
+ * `renderHTML` itself.
+ *
+ * @param node - The AST node to render (a full document, or any sub-node)
+ * @returns The rendered, XSS-safe HTML string
+ *
+ * @example
+ * ```ts
+ * renderHTML({ element: 'document', children: [
+ *   { element: 'heading', level: 1, children: [{ element: 'text', value: 'Hi' }] },
+ * ] })
+ * // '<h1>Hi</h1>'
+ * ```
+ */
+export function renderHTML(node: MarkdownNode): string {
+	function render(current: MarkdownNode, depth: number): string {
+		if (depth >= MAX_DEPTH)
+			return 'value' in current && typeof current.value === 'string'
+				? escapeHtml(current.value)
+				: ''
+		switch (current.element) {
+			case 'document':
+				return current.children.map((child) => render(child, depth + 1)).join('\n')
+			case 'heading':
+				return `<h${current.level}>${renderInline(current.children, depth)}</h${current.level}>`
+			case 'paragraph':
+				return `<p>${renderInline(current.children, depth)}</p>`
+			case 'thematicBreak':
+				return '<hr>'
+			case 'blockquote':
+				return `<blockquote>\n${current.children.map((child) => render(child, depth + 1)).join('\n')}\n</blockquote>`
+			case 'codeBlock': {
+				const open =
+					current.lang === undefined
+						? '<code>'
+						: `<code class="language-${escapeHtml(current.lang)}">`
+				return `<pre>${open}${escapeHtml(current.code)}</code></pre>`
+			}
+			case 'list': {
+				const items = current.items.map((item) => render(item, depth + 1)).join('\n')
+				if (!current.ordered) return `<ul>\n${items}\n</ul>`
+				const start = current.start !== 1 ? ` start="${current.start}"` : ''
+				return `<ol${start}>\n${items}\n</ol>`
+			}
+			case 'listItem':
+				return `<li>${renderItem(current.children, depth)}</li>`
+			case 'table': {
+				const head = `<tr>${current.header.map((cell, column) => renderCell('th', cell, current.align[column], depth)).join('')}</tr>`
+				const body = current.rows
+					.map(
+						(row) =>
+							`<tr>${row.map((cell, column) => renderCell('td', cell, current.align[column], depth)).join('')}</tr>`,
+					)
+					.join('\n')
+				const bodyHtml = isNonEmptyArray(current.rows) ? `\n<tbody>\n${body}\n</tbody>` : ''
+				return `<table>\n<thead>\n${head}\n</thead>${bodyHtml}\n</table>`
+			}
+			case 'text':
+				return escapeHtml(current.value)
+			case 'emphasis':
+				return current.strong
+					? `<strong>${renderInline(current.children, depth + 1)}</strong>`
+					: `<em>${renderInline(current.children, depth + 1)}</em>`
+			case 'codeSpan':
+				return `<code>${escapeHtml(current.value)}</code>`
+			case 'link':
+				return `<a href="${sanitizeUrl(current.href)}">${renderInline(current.children, depth + 1)}</a>`
+			default:
+				return ''
+		}
+	}
+
+	function renderInline(nodes: readonly InlineNode[], depth: number): string {
+		return nodes.map((child) => render(child, depth + 1)).join('')
+	}
+
+	function renderCell(
+		tag: 'th' | 'td',
+		cell: readonly InlineNode[],
+		align: TableAlign | undefined,
+		depth: number,
+	): string {
+		const style =
+			align === 'left' || align === 'right' || align === 'center'
+				? ` style="text-align:${align}"`
+				: ''
+		return `<${tag}${style}>${renderInline(cell, depth + 1)}</${tag}>`
+	}
+
+	function renderItem(children: readonly BlockNode[], depth: number): string {
+		if (children.length === 1) {
+			const only = children[0]
+			if (only !== undefined && only.element === 'paragraph') return renderInline(only.children, depth)
+		}
+		return children.map((child) => render(child, depth + 1)).join('\n')
+	}
+
+	return render(node, 0)
+}
+
+/**
+ * Render a {@link MarkdownNode} to its CANONICAL markdown source - the inverse
+ * projection of `renderHTML`, and the serializer a `parse(renderMarkdown(doc))`
+ * round-trip is built on. Canonical forms: `*em*` / `**strong**` (underscore emphasis
+ * normalizes to asterisks), `- ` bullets, `N. ` sequential ordinals (from the list's
+ * `start`), `---` thematic breaks, fenced code blocks (backtick run widened past any
+ * 3+ backtick run inside the body), ATX headings, `> `-prefixed blockquote lines, GFM
+ * tables (1-space-padded cells, `\|`-escaped pipes, an alignment delimiter row), and
+ * `[text](href)` links. A `text` node's literal content is backslash-escaped wherever
+ * it would otherwise re-parse as markup (AGENTS §14 parse↔render soundness).
+ *
+ * @remarks
+ * Total: never throws. At {@link MAX_DEPTH} a value-bearing node degrades to its
+ * escaped `value`; any other node degrades to `''`. Blocks are joined by exactly one
+ * blank line; a document with zero blocks renders `''`.
+ *
+ * @param node - The AST node to render (a full document, or any sub-node)
+ * @returns The canonical markdown source
+ *
+ * @example
+ * ```ts
+ * renderMarkdown({ element: 'document', children: [
+ *   { element: 'heading', level: 2, children: [{ element: 'text', value: 'Hi' }] },
+ * ] })
+ * // '## Hi'
+ * ```
+ */
+export function renderMarkdown(node: MarkdownNode): string {
+	function escapeText(value: string): string {
+		let out = ''
+		for (let index = 0; index < value.length; index += 1) {
+			const character = value[index] ?? ''
+			const atLineStart = index === 0 || value[index - 1] === '\n'
+			if (
+				character === '\\' ||
+				character === '*' ||
+				character === '_' ||
+				character === '`' ||
+				character === '[' ||
+				character === ']'
+			) {
+				out += `\\${character}`
+				continue
+			}
+			if (atLineStart) {
+				if (character === '#' || character === '>') {
+					out += `\\${character}`
+					continue
+				}
+				if ((character === '-' || character === '+') && (value[index + 1] ?? ' ') === ' ') {
+					out += `\\${character}`
+					continue
+				}
+				if (/[0-9]/.test(character)) {
+					let end = index
+					while (end < value.length && /[0-9]/.test(value[end] ?? '')) end += 1
+					const marker = value[end]
+					if ((marker === '.' || marker === ')') && value[end + 1] === ' ') {
+						out += `${value.slice(index, end)}\\${marker}`
+						index = end
+						continue
+					}
+				}
+			}
+			out += character
+		}
+		return out
+	}
+
+	function fenceFor(body: string, minimum: number): string {
+		let longest = 0
+		let run = 0
+		for (const character of body) {
+			if (character === '`') {
+				run += 1
+				longest = Math.max(longest, run)
+			} else {
+				run = 0
+			}
+		}
+		return '`'.repeat(Math.max(minimum, longest + 1))
+	}
+
+	function renderInline(nodes: readonly InlineNode[], depth: number): string {
+		return nodes.map((child) => render(child, depth + 1)).join('')
+	}
+
+	function renderBlocks(blocks: readonly BlockNode[], depth: number): string {
+		return blocks.map((block) => render(block, depth + 1)).join('\n\n')
+	}
+
+	function renderItem(item: ListItemNode, marker: string, depth: number): string {
+		const body = renderBlocks(item.children, depth + 1)
+		const pad = ' '.repeat(marker.length)
+		return body
+			.split('\n')
+			.map((line, index) => (index === 0 ? marker + line : line === '' ? '' : pad + line))
+			.join('\n')
+	}
+
+	function renderCell(cell: readonly InlineNode[], depth: number): string {
+		return renderInline(cell, depth + 1).replace(/\|/g, '\\|')
+	}
+
+	function renderTable(current: TableNode, depth: number): string {
+		const columns = current.header.length
+		const headerRow = `| ${current.header.map((cell) => renderCell(cell, depth)).join(' | ')} |`
+		const delimiterRow = `| ${current.align
+			.map((align) => {
+				if (align === 'left') return ':--'
+				if (align === 'right') return '--:'
+				if (align === 'center') return ':-:'
+				return '---'
+			})
+			.join(' | ')} |`
+		const bodyRows = current.rows.map((row) => {
+			const cells: string[] = []
+			for (let column = 0; column < columns; column += 1) {
+				const cell = row[column]
+				cells.push(cell === undefined ? '' : renderCell(cell, depth))
+			}
+			return `| ${cells.join(' | ')} |`
+		})
+		return [headerRow, delimiterRow, ...bodyRows].join('\n')
+	}
+
+	function render(current: MarkdownNode, depth: number): string {
+		if (depth >= MAX_DEPTH)
+			return 'value' in current && typeof current.value === 'string'
+				? escapeText(current.value)
+				: ''
+		switch (current.element) {
+			case 'document':
+				return renderBlocks(current.children, depth)
+			case 'heading':
+				return `${'#'.repeat(current.level)} ${renderInline(current.children, depth)}`
+			case 'paragraph':
+				return renderInline(current.children, depth)
+			case 'thematicBreak':
+				return '---'
+			case 'blockquote': {
+				const inner = renderBlocks(current.children, depth)
+				return inner
+					.split('\n')
+					.map((line) => (line === '' ? '>' : `> ${line}`))
+					.join('\n')
+			}
+			case 'codeBlock': {
+				const fence = fenceFor(current.code, 3)
+				const lang = current.lang === undefined ? '' : current.lang
+				return `${fence}${lang}\n${current.code}\n${fence}`
+			}
+			case 'list': {
+				let ordinal = current.start
+				const items = current.items.map((item) => {
+					const marker = current.ordered ? `${ordinal++}. ` : '- '
+					return renderItem(item, marker, depth)
+				})
+				return items.join('\n')
+			}
+			case 'listItem':
+				return renderBlocks(current.children, depth)
+			case 'table':
+				return renderTable(current, depth)
+			case 'text':
+				return escapeText(current.value)
+			case 'emphasis': {
+				const marker = current.strong ? '**' : '*'
+				return `${marker}${renderInline(current.children, depth)}${marker}`
+			}
+			case 'codeSpan': {
+				const fence = fenceFor(current.value, 1)
+				const pad =
+					current.value.startsWith('`') ||
+					current.value.endsWith('`') ||
+					(current.value.length > 0 && current.value.trim() === '')
+						? ' '
+						: ''
+				return `${fence}${pad}${current.value}${pad}${fence}`
+			}
+			case 'link':
+				return `[${renderInline(current.children, depth)}](${current.href})`
+			default:
+				return ''
+		}
+	}
+
+	return render(node, 0)
+}
+
+/**
+ * Depth-first, pre-order, root-inclusive traversal of a {@link MarkdownNode} - yields
+ * the node itself, then recurses into its children (block children, list items, table
+ * header/row cells' inline nodes) in walk order.
+ *
+ * @remarks
+ * Total: never throws. Descent stops at {@link MAX_DEPTH} (the node at the cap is
+ * still yielded; its children are not) so pathologically deep input cannot exhaust
+ * the call stack.
+ *
+ * @param node - The AST node to walk (a full document, or any sub-node)
+ * @returns A generator yielding every visited node, pre-order
+ *
+ * @example
+ * ```ts
+ * const doc = { element: 'document', children: [{ element: 'thematicBreak' }] } as const
+ * [...walkNodes(doc)].map((node) => node.element) // ['document', 'thematicBreak']
+ * ```
+ */
+export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
+	function* walk(current: MarkdownNode, depth: number): Generator<MarkdownNode> {
+		yield current
+		if (depth >= MAX_DEPTH) return
+		switch (current.element) {
+			case 'document':
+			case 'heading':
+			case 'paragraph':
+			case 'blockquote':
+			case 'listItem':
+			case 'emphasis':
+			case 'link':
+				for (const child of current.children) yield* walk(child, depth + 1)
+				return
+			case 'list':
+				for (const item of current.items) yield* walk(item, depth + 1)
+				return
+			case 'table':
+				for (const cell of current.header) for (const inline of cell) yield* walk(inline, depth + 1)
+				for (const row of current.rows)
+					for (const cell of row) for (const inline of cell) yield* walk(inline, depth + 1)
+				return
+			default:
+				return
+		}
+	}
+	yield* walk(node, 0)
+}
+
+/**
+ * Fold a {@link MarkdownNode} into a `T` via a total catamorphism - children are
+ * folded first (post-order), then the node's own {@link MarkdownHandler} is invoked
+ * with the already-folded children.
+ *
+ * @remarks
+ * **Table contract.** A {@link TableNode} has no single `children` array - its cells
+ * live in `header` (one inline-node list per column) and `rows` (a list of such
+ * rows). The `table` handler receives the folded cells as a FLAT `readonly T[]` in
+ * walk order - every header cell's fold (column order), then every body row's cells'
+ * folds (row order, then column order) - and reads `node.header` / `node.rows` off
+ * the table node itself to recover row/column structure.
+ *
+ * Total: never throws. At `depth >= {@link MAX_DEPTH}` the node's handler is invoked
+ * with an empty children list instead of recursing further.
+ *
+ * @param node - The AST node to fold
+ * @param handlers - The total {@link MarkdownHandlers} table, one handler per element
+ * @param depth - The starting recursion depth (pass `0` at the entry point)
+ * @returns The folded `T`
+ *
+ * @example
+ * ```ts
+ * const countHandlers: MarkdownHandlers<number> = {
+ *   document: (_, children) => children.reduce((a, b) => a + b, 1),
+ *   // ...one handler per element, each summing its folded children
+ * }
+ * foldNode(document, countHandlers, 0) // total node count
+ * ```
+ */
+export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, depth: number): T {
+	function dispatch(current: MarkdownNode, children: readonly T[]): T {
+		switch (current.element) {
+			case 'document':
+				return handlers.document(current, children)
+			case 'heading':
+				return handlers.heading(current, children)
+			case 'paragraph':
+				return handlers.paragraph(current, children)
+			case 'thematicBreak':
+				return handlers.thematicBreak(current, children)
+			case 'blockquote':
+				return handlers.blockquote(current, children)
+			case 'codeBlock':
+				return handlers.codeBlock(current, children)
+			case 'list':
+				return handlers.list(current, children)
+			case 'listItem':
+				return handlers.listItem(current, children)
+			case 'table':
+				return handlers.table(current, children)
+			case 'text':
+				return handlers.text(current, children)
+			case 'emphasis':
+				return handlers.emphasis(current, children)
+			case 'codeSpan':
+				return handlers.codeSpan(current, children)
+			case 'link':
+				return handlers.link(current, children)
+		}
+	}
+
+	function childNodes(current: MarkdownNode): readonly MarkdownNode[] {
+		switch (current.element) {
+			case 'document':
+			case 'heading':
+			case 'paragraph':
+			case 'blockquote':
+			case 'listItem':
+			case 'emphasis':
+			case 'link':
+				return current.children
+			case 'list':
+				return current.items
+			case 'table': {
+				const header = current.header.flatMap((cell) => cell)
+				const rows = current.rows.flatMap((row) => row.flatMap((cell) => cell))
+				return [...header, ...rows]
+			}
+			default:
+				return []
+		}
+	}
+
+	function fold(current: MarkdownNode, level: number): T {
+		if (level >= MAX_DEPTH) return dispatch(current, [])
+		const children = childNodes(current).map((child) => fold(child, level + 1))
+		return dispatch(current, children)
+	}
+
+	return fold(node, depth)
+}
+
+/**
+ * Rewrite a {@link MarkdownDocument} bottom-up (copy-on-write) - each node's children
+ * are rewritten first (post-order), then `rewrite` is applied to the node itself; the
+ * document ROOT is never passed to `rewrite` (the `element: 'document'` invariant
+ * always holds). A table's inline cells and a list's items ARE rewritten.
+ *
+ * @remarks
+ * Never mutates `document` - every level is rebuilt into a fresh object/array, even
+ * when `rewrite` returns its input unchanged. When `rewrite` returns a node whose
+ * `element` does not fit the slot it was called for (a block slot handed a
+ * non-{@link BlockNode}, an inline slot handed a non-{@link InlineNode}, a list-item
+ * slot handed a non-`listItem`), the ill-fitting result is discarded and the
+ * freshly-rebuilt (unrewritten-at-this-level) node is kept instead - `rewriteDocument`
+ * stays total and never produces a structurally invalid document.
+ *
+ * @param document - The document AST to rewrite
+ * @param rewrite - The bottom-up {@link MarkdownRewriteHandler}
+ * @returns A new, rewritten {@link MarkdownDocument}
+ *
+ * @example
+ * ```ts
+ * rewriteDocument(document, (node) =>
+ *   node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
+ * )
+ * ```
+ */
+export function rewriteDocument(
+	document: MarkdownDocument,
+	rewrite: MarkdownRewriteHandler,
+): MarkdownDocument {
+	function rewriteInline(node: InlineNode): InlineNode {
+		const rebuilt = rebuildInline(node)
+		const result = rewrite(rebuilt)
+		return isInlineNode(result) ? result : rebuilt
+	}
+
+	function rewriteBlock(node: BlockNode): BlockNode {
+		const rebuilt = rebuildBlock(node)
+		const result = rewrite(rebuilt)
+		return isBlockNode(result) ? result : rebuilt
+	}
+
+	function rewriteItem(item: ListItemNode): ListItemNode {
+		const rebuilt: ListItemNode = { element: 'listItem', children: item.children.map(rewriteBlock) }
+		const result = rewrite(rebuilt)
+		return result.element === 'listItem' ? result : rebuilt
+	}
+
+	function rebuildInline(node: InlineNode): InlineNode {
+		switch (node.element) {
+			case 'emphasis':
+				return { ...node, children: node.children.map(rewriteInline) }
+			case 'link':
+				return { ...node, children: node.children.map(rewriteInline) }
+			case 'text':
+			case 'codeSpan':
+				return node
+		}
+	}
+
+	function rebuildBlock(node: BlockNode): BlockNode {
+		switch (node.element) {
+			case 'heading':
+				return { ...node, children: node.children.map(rewriteInline) }
+			case 'paragraph':
+				return { ...node, children: node.children.map(rewriteInline) }
+			case 'blockquote':
+				return { ...node, children: node.children.map(rewriteBlock) }
+			case 'list':
+				return { ...node, items: node.items.map(rewriteItem) }
+			case 'table':
+				return {
+					...node,
+					header: node.header.map((cell) => cell.map(rewriteInline)),
+					rows: node.rows.map((row) => row.map((cell) => cell.map(rewriteInline))),
+				}
+			case 'codeBlock':
+			case 'thematicBreak':
+				return node
+		}
+	}
+
+	return { element: 'document', children: document.children.map(rewriteBlock) }
+}
+
+/**
+ * Concatenate the `value` / `code` content of every descendant text / code-span /
+ * code-block node under `node`, in walk order - the plain-text projection of an AST
+ * (search indexing, word counts, a text-only preview).
+ *
+ * @remarks
+ * Total: never throws. Descent stops at {@link MAX_DEPTH} (contributes `''` past the
+ * cap instead of recursing further).
+ *
+ * @param node - The AST node to flatten (a full document, or any sub-node)
+ * @returns The concatenated text content
+ *
+ * @example
+ * ```ts
+ * flattenText({ element: 'paragraph', children: [
+ *   { element: 'text', value: 'a ' },
+ *   { element: 'codeSpan', value: 'b' },
+ * ] })
+ * // 'a b'
+ * ```
+ */
+export function flattenText(node: MarkdownNode): string {
+	function flatten(current: MarkdownNode, depth: number): string {
+		if (depth >= MAX_DEPTH) return ''
+		switch (current.element) {
+			case 'text':
+				return current.value
+			case 'codeSpan':
+				return current.value
+			case 'codeBlock':
+				return current.code
+			case 'document':
+			case 'heading':
+			case 'paragraph':
+			case 'blockquote':
+			case 'listItem':
+			case 'emphasis':
+			case 'link':
+				return current.children.map((child) => flatten(child, depth + 1)).join('')
+			case 'list':
+				return current.items.map((item) => flatten(item, depth + 1)).join('')
+			case 'table': {
+				const header = current.header
+					.map((cell) => cell.map((inline) => flatten(inline, depth + 1)).join(''))
+					.join('')
+				const rows = current.rows
+					.map((row) => row.map((cell) => cell.map((inline) => flatten(inline, depth + 1)).join('')).join(''))
+					.join('')
+				return header + rows
+			}
+			case 'thematicBreak':
+				return ''
+			default:
+				return ''
+		}
+	}
+	return flatten(node, 0)
 }

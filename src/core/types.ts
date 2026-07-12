@@ -1,6 +1,6 @@
 //  Markdown AST
 //
-// A {@link MarkdownParser} parses a markdown document into a typed AST - a
+// A {@link MarkdownInterface} parses a markdown document into a typed AST - a
 // discriminated union of node values keyed by their `element` (the axis that
 // varies, AGENTS §4.4: never `kind` / `type`). The AST is the primary contract
 // (render-agnostic, exhaustively testable); the renderer is a separate, downstream
@@ -180,7 +180,7 @@ export type BlockNode =
 
 /**
  * The root of a parsed markdown AST - the ordered block children of the whole
- * document. The value {@link MarkdownParserInterface.parse} returns.
+ * document. The value {@link MarkdownInterface.document} holds.
  */
 export interface MarkdownDocument {
 	readonly element: 'document'
@@ -196,28 +196,82 @@ export interface MarkdownDocument {
 export type MarkdownNode = MarkdownDocument | BlockNode | ListItemNode | InlineNode
 
 /**
- * A pure, total markdown parser: turn a markdown string into a typed
- * {@link MarkdownDocument} AST, and (separately) render an AST to an HTML string.
+ * A fold handler for one AST element - receives the node and its children
+ * ALREADY folded to `T`, and produces the node's own `T`. The building block of a
+ * {@link MarkdownHandlers} catamorphism table.
+ */
+export type MarkdownHandler<TNode, T> = (node: TNode, children: readonly T[]) => T
+
+/**
+ * The total catamorphism table for {@link MarkdownInterface.fold} - one
+ * {@link MarkdownHandler} per AST element, keyed by its `element` discriminant. Every
+ * key is required: a fold is total over the AST, so there is no element it can skip.
+ */
+export interface MarkdownHandlers<T> {
+	/** Folds a {@link MarkdownDocument} root from its already-folded block children. */
+	readonly document: MarkdownHandler<MarkdownDocument, T>
+	/** Folds a {@link HeadingNode} from its already-folded inline children. */
+	readonly heading: MarkdownHandler<HeadingNode, T>
+	/** Folds a {@link ParagraphNode} from its already-folded inline children. */
+	readonly paragraph: MarkdownHandler<ParagraphNode, T>
+	/** Folds a {@link ThematicBreakNode} (leaf - always called with an empty children list). */
+	readonly thematicBreak: MarkdownHandler<ThematicBreakNode, T>
+	/** Folds a {@link BlockquoteNode} from its already-folded block children. */
+	readonly blockquote: MarkdownHandler<BlockquoteNode, T>
+	/** Folds a {@link CodeBlockNode} (leaf - always called with an empty children list). */
+	readonly codeBlock: MarkdownHandler<CodeBlockNode, T>
+	/** Folds a {@link ListNode} from its already-folded item children. */
+	readonly list: MarkdownHandler<ListNode, T>
+	/** Folds a {@link ListItemNode} from its already-folded block children. */
+	readonly listItem: MarkdownHandler<ListItemNode, T>
+	/** Folds a {@link TableNode} (leaf - always called with an empty children list). */
+	readonly table: MarkdownHandler<TableNode, T>
+	/** Folds a {@link TextNode} (leaf - always called with an empty children list). */
+	readonly text: MarkdownHandler<TextNode, T>
+	/** Folds an {@link EmphasisNode} from its already-folded inline children. */
+	readonly emphasis: MarkdownHandler<EmphasisNode, T>
+	/** Folds a {@link CodeSpanNode} (leaf - always called with an empty children list). */
+	readonly codeSpan: MarkdownHandler<CodeSpanNode, T>
+	/** Folds a {@link LinkNode} from its already-folded inline children. */
+	readonly link: MarkdownHandler<LinkNode, T>
+}
+
+/**
+ * A copy-on-write node rewrite applied bottom-up by {@link MarkdownInterface.map} -
+ * receives one node (its own children already rewritten) and returns its
+ * replacement (the same node, unchanged, or a new node).
+ */
+export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
+
+/**
+ * A stateful, parsed markdown document: the typed {@link MarkdownDocument} AST plus
+ * the query, rewrite, and fold operations over it.
  *
  * @remarks
- * - **Two phases.** `parse` runs a block phase (headings / paragraphs / lists /
- *   GFM tables / fenced code / blockquotes / thematic breaks) then an inline phase
- *   (emphasis / inline code / links) over each block's text, producing the AST. The
- *   AST is the contract; `render` is a SEPARATE downstream projection to HTML.
- * - **Total.** Neither method ever throws - malformed markdown degrades to text (an
- *   unterminated emphasis stays literal, a broken table falls back to a paragraph),
- *   never a crash.
- * - **Render is safe.** `render` HTML-escapes all text + attribute values and
- *   sanitizes link `href`s (an unsafe scheme - `javascript:`, `data:`, … - is
- *   dropped), so even hostile content cannot inject markup or script.
- * - **`parseInline`** parses a single line of inline content (no block structure) -
- *   the inline phase exposed for a caller that already has block-free text.
+ * - **Immutable.** {@link MarkdownInterface.map} never mutates the stored AST - it
+ *   returns a NEW {@link MarkdownInterface} instance; the document root invariant
+ *   (`element: 'document'`) always holds.
+ * - **Traversal order.** `find` / `filter` / `reduce` / the default iterator walk the
+ *   AST depth-first, pre-order, root-inclusive; `stream` is shallow - only the
+ *   document's direct block children.
  */
-export interface MarkdownParserInterface {
-	/** Parse a markdown string into a {@link MarkdownDocument} AST (block then inline phase). Never throws. */
-	parse(markdown: string): MarkdownDocument
-	/** Parse a single line of inline content (emphasis / code / links) into inline nodes. Never throws. */
-	parseInline(text: string): readonly InlineNode[]
-	/** Render a parsed {@link MarkdownNode} (typically a {@link MarkdownDocument}) to an HTML string - text + href escaped / sanitized. */
-	render(node: MarkdownNode): string
+export interface MarkdownInterface extends Iterable<MarkdownNode> {
+	/** The stored {@link MarkdownDocument} AST root. */
+	readonly document: MarkdownDocument
+	/** Finds the first node (depth-first, pre-order) narrowed by a type guard. */
+	find<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): T | undefined
+	/** Finds the first node (depth-first, pre-order) matching a predicate. */
+	find(predicate: (node: MarkdownNode) => boolean): MarkdownNode | undefined
+	/** Collects every node (depth-first, pre-order) narrowed by a type guard. */
+	filter<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): readonly T[]
+	/** Collects every node (depth-first, pre-order) matching a predicate. */
+	filter(predicate: (node: MarkdownNode) => boolean): readonly MarkdownNode[]
+	/** Rewrites the AST bottom-up (copy-on-write) and returns a new {@link MarkdownInterface}. */
+	map(rewrite: MarkdownRewriteHandler): MarkdownInterface
+	/** Folds the AST depth-first, pre-order into an accumulator. */
+	reduce<T>(callback: (accumulator: T, node: MarkdownNode) => T, initial: T): T
+	/** Runs a total catamorphism over the document using a {@link MarkdownHandlers} table. */
+	fold<T>(handlers: MarkdownHandlers<T>): T
+	/** Lazily yields the document's top-level block nodes (shallow, source order). */
+	stream(): Generator<BlockNode>
 }
