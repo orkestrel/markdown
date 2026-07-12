@@ -292,7 +292,7 @@ const linked = shouted.map((node) =>
 	node.element === 'link' ? { ...node, href: `${node.href}?ref=guide` } : node,
 )
 
-renderMarkdown(linked.document) // 'See [ONE](https://a.dev?ref=guide) and [TWO](https://b.dev?ref=guide).'
+renderMarkdown(linked.document) // 'SEE [ONE](https://a.dev?ref=guide) AND [TWO](https://b.dev?ref=guide).'
 ```
 
 Each `map` call returns a NEW `MarkdownInterface` — the original `markdown` is never mutated, so a

@@ -804,10 +804,13 @@ export function renderMarkdown(node: MarkdownNode): string {
 			case 'heading': {
 				const text = renderInline(current.children, depth)
 				// A trailing `#` run reads back as an ATX closing sequence on reparse -
-				// escape the FIRST `#` of that run so it can't be stripped.
-				const escaped = text.replace(/(\s*)(#+)$/, (_match, lead: string, hashes: string) => {
+				// escape the FIRST `#` of that run so it can't be stripped. Only fire when
+				// the char preceding the run isn't a backslash - escapeText already escapes
+				// a line-start `#`, and re-escaping it here would double-escape (`## #` -> text
+				// "#" -> escapeText "\#" -> would become "\\#" and break round-trip).
+				const escaped = text.replace(/(^|[^\\])(#+)$/, (_match, pre: string, hashes: string) => {
 					const first = hashes[0] ?? ''
-					return `${lead}\\${first}${hashes.slice(1)}`
+					return `${pre}\\${first}${hashes.slice(1)}`
 				})
 				return `${'#'.repeat(current.level)} ${escaped}`
 			}

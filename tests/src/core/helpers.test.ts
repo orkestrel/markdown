@@ -869,6 +869,33 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
 	})
 
+	it('round-trips a heading whose inline text is a single `#`', () => {
+		const document = parseDocument('## #')
+		const heading = document.children[0]
+		expect(heading?.element === 'heading' ? flattenText(heading) : undefined).toBe('#')
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
+	it('round-trips a heading whose inline text is a `#` run', () => {
+		const document = parseDocument('## ##')
+		const heading = document.children[0]
+		expect(heading?.element === 'heading' ? flattenText(heading) : undefined).toBe('##')
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
+	it('round-trips a heading with a word followed by a trailing `#` run', () => {
+		const document = parseDocument('# a \\##')
+		const heading = document.children[0]
+		expect(heading?.element === 'heading' ? flattenText(heading) : undefined).toBe('a ##')
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
 	it('round-trips a link href containing an escaped closing paren', () => {
 		const document = parseDocument('[x](a\\)b)')
 		const paragraph = document.children[0]
