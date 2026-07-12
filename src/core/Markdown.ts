@@ -85,9 +85,41 @@ export class Markdown implements MarkdownInterface {
 		return foldNode(this.#document, handlers, 0)
 	}
 
-	/** Lazily yields the document's top-level block nodes (shallow, source order). */
-	*stream(): Generator<BlockNode> {
-		yield* this.#document.children
+	/**
+	 * A web-standard {@link ReadableStream} over the document's top-level block nodes
+	 * (shallow, source order) - a fresh, pull-based source per call: one block is
+	 * enqueued per `pull`, so a slow reader's backpressure is respected. Cancellable,
+	 * async-iterable wherever the platform supports it (Node, Deno), and pipeable
+	 * through any {@link TransformStream} / {@link WritableStream}.
+	 *
+	 * @example
+	 * ```ts
+	 * // universal - works in every ReadableStream-supporting environment
+	 * const reader = markdown.stream().getReader()
+	 * for (let result = await reader.read(); !result.done; result = await reader.read()) {
+	 *   console.log(result.value) // one BlockNode
+	 * }
+	 *
+	 * // Node / Deno / Firefox support async iteration of ReadableStream natively;
+	 * // other environments should use the reader loop above instead.
+	 * for await (const block of markdown.stream()) {
+	 *   console.log(block)
+	 * }
+	 * ```
+	 */
+	stream(): ReadableStream<BlockNode> {
+		const blocks = this.#document.children
+		let index = 0
+		return new ReadableStream<BlockNode>({
+			pull(controller) {
+				if (index < blocks.length) {
+					controller.enqueue(blocks[index])
+					index += 1
+				} else {
+					controller.close()
+				}
+			},
+		})
 	}
 
 	/** Iterates every node (depth-first, pre-order, root-inclusive). */

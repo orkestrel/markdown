@@ -33,7 +33,7 @@ The full node shape and workspace contract, from [`types.ts`](../../src/core/typ
 | `MarkdownHandler<TNode, T>` | type      | `(node: TNode, children: readonly T[]) => T` — one catamorphism step; the building block of a `MarkdownHandlers` table.                                                                                                        |
 | `MarkdownHandlers<T>`       | interface | One `MarkdownHandler` per AST element (`document`, `heading`, `paragraph`, `thematicBreak`, `blockquote`, `codeBlock`, `list`, `listItem`, `table`, `text`, `emphasis`, `codeSpan`, `link`) — the total table `fold` requires. |
 | `MarkdownRewriteHandler`    | type      | `(node: MarkdownNode) => MarkdownNode` — a bottom-up, copy-on-write node rewrite for `map`.                                                                                                                                    |
-| `MarkdownInterface`         | interface | `extends Iterable<MarkdownNode>, AsyncIterable<MarkdownNode>` — `{ document, find, filter, map, reduce, fold, stream }` — see [`## Methods`](#methods) below.                                                                  |
+| `MarkdownInterface`         | interface | `extends Iterable<MarkdownNode>, AsyncIterable<MarkdownNode>` — `{ document, find, filter, map, reduce, fold, stream }`, `stream(): ReadableStream<BlockNode>` — see [`## Methods`](#methods) below.                           |
 
 ### Constants
 
@@ -151,14 +151,14 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 #### `MarkdownInterface`
 
-| Method   | Returns                                   | Behavior                                                                                                                                     |
-| -------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `find`   | `T \| MarkdownNode \| undefined`          | Finds the first node (depth-first, pre-order), narrowed by a type guard or matched by a predicate. `undefined` when nothing matches.         |
-| `filter` | `readonly T[] \| readonly MarkdownNode[]` | Collects every node (depth-first, pre-order), narrowed by a type guard or matched by a predicate.                                            |
-| `map`    | `MarkdownInterface`                       | Rewrites the AST bottom-up (copy-on-write) via a `MarkdownRewriteHandler` and returns a NEW `MarkdownInterface`; never mutates the original. |
-| `reduce` | `T`                                       | Folds the AST depth-first, pre-order into an accumulator via a plain reducer callback.                                                       |
-| `fold`   | `T`                                       | Runs a total catamorphism over the document using a `MarkdownHandlers<T>` table (one handler per AST element).                               |
-| `stream` | `Generator<BlockNode>`                    | Lazily yields the document's top-level block nodes only (shallow, source order) — NOT a deep traversal.                                      |
+| Method   | Returns                                   | Behavior                                                                                                                                                                                                                                                                                              |
+| -------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `find`   | `T \| MarkdownNode \| undefined`          | Finds the first node (depth-first, pre-order), narrowed by a type guard or matched by a predicate. `undefined` when nothing matches.                                                                                                                                                                  |
+| `filter` | `readonly T[] \| readonly MarkdownNode[]` | Collects every node (depth-first, pre-order), narrowed by a type guard or matched by a predicate.                                                                                                                                                                                                     |
+| `map`    | `MarkdownInterface`                       | Rewrites the AST bottom-up (copy-on-write) via a `MarkdownRewriteHandler` and returns a NEW `MarkdownInterface`; never mutates the original.                                                                                                                                                          |
+| `reduce` | `T`                                       | Folds the AST depth-first, pre-order into an accumulator via a plain reducer callback.                                                                                                                                                                                                                |
+| `fold`   | `T`                                       | Runs a total catamorphism over the document using a `MarkdownHandlers<T>` table (one handler per AST element).                                                                                                                                                                                        |
+| `stream` | `ReadableStream<BlockNode>`               | A fresh, web-standard, pull-based stream over the document's top-level block nodes only (shallow, source order) — NOT a deep traversal. One block is enqueued per `pull`, so a slow consumer's backpressure is respected; cancellable, and pipeable through any `TransformStream` / `WritableStream`. |
 
 ## The AST model
 
@@ -343,14 +343,26 @@ markdown.fold(toHTML) // '<h1>Hi</h1>'
 
 ### Shallow streaming with `stream()`
 
+`stream()` returns a web-standard `ReadableStream<BlockNode>` — a fresh, pull-based stream every
+call (one block enqueued per `pull`, so a slow reader's backpressure is respected). Two equivalent
+ways to consume it:
+
 ```ts
 import { Markdown } from '@src/core'
 
 const markdown = new Markdown('# Title\n\nFirst.\n\nSecond.')
 
+// universal — a reader loop works in every ReadableStream-supporting environment
+const reader = markdown.stream().getReader()
 const tops: string[] = []
-for (const block of markdown.stream()) tops.push(block.element) // shallow — top-level blocks only
+for (let result = await reader.read(); !result.done; result = await reader.read()) {
+	tops.push(result.value.element) // shallow — top-level blocks only
+}
 // tops: ['heading', 'paragraph', 'paragraph']
+
+// Node / Deno / Firefox support native async iteration of ReadableStream
+const topsAsync: string[] = []
+for await (const block of markdown.stream()) topsAsync.push(block.element)
 ```
 
 ### Sync deep iteration
@@ -375,7 +387,8 @@ async function writeAll(writer: { write(chunk: string): void }): Promise<void> {
 	for await (const node of markdown) writer.write(node.element) // one microtask per node
 }
 
-// `for await…of` also works over `stream()` — a sync `Generator` is a valid `for await` target too.
+// `for await…of` also works over `stream()` — `ReadableStream` is natively async-iterable in
+// Node / Deno / Firefox. Environments without that support use the reader loop above instead.
 async function streamAll(writer: { write(chunk: string): void }): Promise<void> {
 	for await (const block of markdown.stream()) writer.write(block.element)
 }

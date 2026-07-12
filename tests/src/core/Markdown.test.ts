@@ -1,4 +1,5 @@
 import type {
+	BlockNode,
 	BlockquoteNode,
 	MarkdownDocument,
 	MarkdownHandlers,
@@ -8,6 +9,17 @@ import type {
 import { describe, expect, it } from 'vitest'
 import { buildDeepQuoteInput, firstBlock } from '../../setup.js'
 import { Markdown, isHeadingNode, isMarkdownDocument, isTextNode } from '@src/core'
+
+// Reads a ReadableStream to completion via its reader, in order - the universal
+// (reader-based) consumption form, used across this suite's stream() assertions.
+async function collectStream<T>(stream: ReadableStream<T>): Promise<T[]> {
+	const reader = stream.getReader()
+	const values: T[] = []
+	for (let result = await reader.read(); !result.done; result = await reader.read()) {
+		values.push(result.value)
+	}
+	return values
+}
 
 // The Markdown CLASS — the stateful wrapper around a parsed MarkdownDocument AST,
 // exposing query (find/filter/reduce/iteration), rewrite (map), fold, and streaming
@@ -267,24 +279,77 @@ describe('Markdown — fold', () => {
 })
 
 describe('Markdown — stream', () => {
-	it('yields exactly the document children, in order', () => {
+	it('returns a web-standard ReadableStream', () => {
 		const markdown = new Markdown('# Title\n\npara\n\n---')
-		expect([...markdown.stream()]).toEqual(markdown.document.children)
+		expect(markdown.stream()).toBeInstanceOf(ReadableStream)
 	})
 
-	it('is lazy — one item can be taken without exhausting the generator', () => {
+	it('yields exactly the document children, in order, via a reader loop', async () => {
+		const markdown = new Markdown('# Title\n\npara\n\n---')
+		const reader = markdown.stream().getReader()
+		const blocks: BlockNode[] = []
+		for (let result = await reader.read(); !result.done; result = await reader.read()) {
+			blocks.push(result.value)
+		}
+		expect(blocks).toEqual(markdown.document.children)
+	})
+
+	it('reports done after the last block, with no extra values', async () => {
+		const markdown = new Markdown('# Title')
+		const reader = markdown.stream().getReader()
+		await reader.read()
+		const final = await reader.read()
+		expect(final).toEqual({ done: true, value: undefined })
+	})
+
+	it('is pull-based — a single read yields exactly one block without exhausting the rest', async () => {
 		const markdown = new Markdown('# a\n\n# b\n\n# c')
-		const generator = markdown.stream()
-		const first = generator.next()
+		const reader = markdown.stream().getReader()
+		const first = await reader.read()
 		expect(first.done).toBe(false)
-		expect(first.value.element).toBe('heading')
+		expect(first.value?.element).toBe('heading')
+		await reader.cancel()
+
+		const replay = [...(await collectStream(markdown.stream()))]
+		expect(replay).toHaveLength(3)
 	})
 
-	it('is shallow — yields top-level block nodes only, not their descendants', () => {
+	it('cancel() mid-stream resolves and further reads report done', async () => {
+		const markdown = new Markdown('# a\n\n# b\n\n# c')
+		const reader = markdown.stream().getReader()
+		await reader.read()
+		await expect(reader.cancel()).resolves.toBeUndefined()
+		await expect(reader.read()).resolves.toEqual({ done: true, value: undefined })
+	})
+
+	it('each call returns a distinct, fully replayable stream', async () => {
+		const markdown = new Markdown('# Title\n\npara\n\n---')
+		const first = await collectStream(markdown.stream())
+		const second = await collectStream(markdown.stream())
+		expect(first).toEqual(markdown.document.children)
+		expect(second).toEqual(markdown.document.children)
+	})
+
+	it('is shallow — yields top-level block nodes only, not their descendants', async () => {
 		const markdown = new Markdown('# Title with **bold**')
-		const blocks = [...markdown.stream()]
+		const blocks = await collectStream(markdown.stream())
 		expect(blocks).toHaveLength(1)
 		expect(blocks[0]?.element).toBe('heading')
+	})
+
+	it('pipes through a TransformStream to a mapped, collected array', async () => {
+		const markdown = new Markdown('# Title\n\npara\n\n---')
+		const toElementName = new TransformStream<BlockNode, string>({
+			transform(block, controller) {
+				controller.enqueue(block.element)
+			},
+		})
+		const reader = markdown.stream().pipeThrough(toElementName).getReader()
+		const names: string[] = []
+		for (let result = await reader.read(); !result.done; result = await reader.read()) {
+			names.push(result.value)
+		}
+		expect(names).toEqual(['heading', 'paragraph', 'thematicBreak'])
 	})
 })
 
@@ -332,7 +397,7 @@ describe('Markdown — async iteration', () => {
 		expect(await countNodes(markdown)).toBe([...markdown].length)
 	})
 
-	it('for await…of over stream() yields the top-level blocks (sync-generator fallback semantics)', async () => {
+	it('for await…of over stream() yields the top-level blocks (native ReadableStream async iteration)', async () => {
 		const markdown = new Markdown('# Title\n\npara\n\n---')
 		const blocks: string[] = []
 		for await (const block of markdown.stream()) blocks.push(block.element)

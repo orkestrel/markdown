@@ -260,6 +260,12 @@ export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
  * - **Traversal order.** `find` / `filter` / `reduce` / the default iterator walk the
  *   AST depth-first, pre-order, root-inclusive; `stream` is shallow - only the
  *   document's direct block children.
+ * - **`stream`.** Returns a web-standard {@link ReadableStream} over the top-level
+ *   blocks - a fresh, pull-based source per call: exactly one block is enqueued per
+ *   `pull`, so a slow consumer's backpressure is respected and no work happens ahead
+ *   of demand. Cancellable via the returned stream's own `cancel()`, async-iterable
+ *   wherever the platform supports it (Node, Deno, and browsers that ship the
+ *   proposal), and pipeable through any {@link TransformStream} / {@link WritableStream}.
  * - **Dual iteration.** `MarkdownInterface` is both {@link Iterable} and
  *   {@link AsyncIterable} over the same {@link MarkdownNode} sequence - a sync
  *   `for (const node of markdown)` and an async `for await (const node of markdown)`
@@ -284,6 +290,10 @@ export interface MarkdownInterface extends Iterable<MarkdownNode>, AsyncIterable
 	reduce<T>(callback: (accumulator: T, node: MarkdownNode) => T, initial: T): T
 	/** Runs a total catamorphism over the document using a {@link MarkdownHandlers} table. */
 	fold<T>(handlers: MarkdownHandlers<T>): T
-	/** Lazily yields the document's top-level block nodes (shallow, source order). */
-	stream(): Generator<BlockNode>
+	/**
+	 * A web-standard {@link ReadableStream} over the document's top-level block nodes
+	 * (shallow, source order) - a lazy, pull-based, backpressure-respecting source. A
+	 * fresh, independently-replayable stream every call; never mutates the document.
+	 */
+	stream(): ReadableStream<BlockNode>
 }
