@@ -1,9 +1,12 @@
 import {
 	createCodeBlockContract,
 	createCodeSpanContract,
-	createMarkdownParser,
+	createMarkdown,
 	createTextContract,
 	createThematicBreakContract,
+	parseDocument,
+	parseInline,
+	renderHTML,
 } from '@src/core'
 import { seededRandom } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
@@ -16,25 +19,24 @@ import {
 	TEST_SEED,
 } from '../../setup.js'
 
-// This file covers createMarkdownParser (returns a working MarkdownParserInterface)
+// This file covers createMarkdown (returns a working MarkdownInterface)
 // plus the four node-contract factories — createTextContract, createCodeSpanContract,
 // createCodeBlockContract, and createThematicBreakContract. Full parse/render behavior
-// lives in MarkdownParser.test.ts; shape-level coverage of the node contracts lives in
+// lives in Markdown.test.ts; shape-level coverage of the node contracts lives in
 // shapers.test.ts; here we assert each factory hands back a usable handle.
 
-describe('createMarkdownParser', () => {
-	it('returns a working MarkdownParserInterface (markdown → AST)', () => {
-		const parser = createMarkdownParser()
-		const document = parser.parse('# Title\n\nA **bold** word.')
+describe('createMarkdown', () => {
+	it('returns a working MarkdownInterface (markdown → AST)', () => {
+		const markdown = createMarkdown('# Title\n\nA **bold** word.')
 
-		expect(document.element).toBe('document')
-		expect(document.children[0]?.element).toBe('heading')
-		expect(document.children[1]?.element).toBe('paragraph')
+		expect(markdown.document.element).toBe('document')
+		expect(markdown.document.children[0]?.element).toBe('heading')
+		expect(markdown.document.children[1]?.element).toBe('paragraph')
 	})
 
 	it('renders an AST to safe HTML (text escaped, href sanitized)', () => {
-		const parser = createMarkdownParser()
-		const html = parser.render(parser.parse('[x](javascript:alert(1)) <b>'))
+		const markdown = createMarkdown('[x](javascript:alert(1)) <b>')
+		const html = renderHTML(markdown.document)
 
 		expect(html).toContain('<a href="">x</a>')
 		expect(html).toContain('&lt;b&gt;')
@@ -42,23 +44,29 @@ describe('createMarkdownParser', () => {
 	})
 
 	it('parses inline content alone via parseInline', () => {
-		const parser = createMarkdownParser()
-		const nodes = parser.parseInline('a `code` and *em*')
+		const nodes = parseInline('a `code` and *em*')
 
 		expect(nodes.map((node) => node.element)).toEqual(['text', 'codeSpan', 'text', 'emphasis'])
 	})
 
 	it('is total — malformed markdown degrades without throwing', () => {
-		const parser = createMarkdownParser()
-
-		expect(() => parser.render(parser.parse('**[`'))).not.toThrow()
+		expect(() => renderHTML(createMarkdown('**[`').document)).not.toThrow()
 	})
 
 	it('hands back independent handles (stateless reuse is consistent)', () => {
-		const first = createMarkdownParser()
-		const second = createMarkdownParser()
+		const first = createMarkdown('# A')
+		const second = createMarkdown('# A')
 
-		expect(first.render(first.parse('# A'))).toBe(second.render(second.parse('# A')))
+		expect(renderHTML(first.document)).toBe(renderHTML(second.document))
+	})
+
+	it('accepts an already-parsed MarkdownDocument and returns independent instances', () => {
+		const document = parseDocument('# A')
+		const first = createMarkdown(document)
+		const second = createMarkdown(document)
+
+		expect(first.document).toEqual(second.document)
+		expect(first).not.toBe(second)
 	})
 })
 
@@ -83,7 +91,7 @@ describe('createTextContract', () => {
 	})
 
 	it('accepts a real parser-produced TextNode', () => {
-		const node = assertInlineNode(createMarkdownParser(), 'hello')
+		const node = assertInlineNode('hello')
 		expect(createTextContract().is(node)).toBe(true)
 	})
 
@@ -110,8 +118,7 @@ describe('createCodeSpanContract', () => {
 	})
 
 	it('accepts a real parser-produced CodeSpanNode', () => {
-		const parser = createMarkdownParser()
-		const paragraph = assertParagraphNode(firstBlock(parser, 'a `code` b'))
+		const paragraph = assertParagraphNode(firstBlock('a `code` b'))
 		const node = assertCodeSpanNode(paragraph.children[1])
 
 		expect(createCodeSpanContract().is(node)).toBe(true)
@@ -137,16 +144,14 @@ describe('createCodeBlockContract', () => {
 	})
 
 	it('accepts a real parser-produced CodeBlockNode with a language', () => {
-		const parser = createMarkdownParser()
-		const node = assertCodeBlockNode(firstBlock(parser, '```ts\nconst x = 1\n```'))
+		const node = assertCodeBlockNode(firstBlock('```ts\nconst x = 1\n```'))
 
 		expect(node.lang).toBe('ts')
 		expect(createCodeBlockContract().is(node)).toBe(true)
 	})
 
 	it('accepts a real parser-produced CodeBlockNode without a language', () => {
-		const parser = createMarkdownParser()
-		const node = assertCodeBlockNode(firstBlock(parser, '```\nconst x = 1\n```'))
+		const node = assertCodeBlockNode(firstBlock('```\nconst x = 1\n```'))
 
 		expect(node.lang).toBeUndefined()
 		expect(createCodeBlockContract().is(node)).toBe(true)
@@ -172,8 +177,7 @@ describe('createThematicBreakContract', () => {
 	})
 
 	it('accepts a real parser-produced ThematicBreakNode', () => {
-		const parser = createMarkdownParser()
-		const node = firstBlock(parser, '---')
+		const node = firstBlock('---')
 
 		expect(node.element).toBe('thematicBreak')
 		expect(createThematicBreakContract().is(node)).toBe(true)

@@ -5,7 +5,6 @@
 // shape. Every guard is total and returns false for non-matches (AGENTS section 14).
 
 import {
-	createMarkdownParser,
 	MarkdownNode,
 	isBlankLine,
 	isBlockNode,
@@ -30,6 +29,7 @@ import {
 	isThematicBreak,
 	isThematicBreakNode,
 	isWhitespace,
+	parseDocument,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import {
@@ -42,8 +42,6 @@ import {
 	firstBlock,
 } from '../../setup.js'
 
-const parser = createMarkdownParser()
-
 interface Sample {
 	readonly name: string
 	readonly node: MarkdownNode
@@ -51,21 +49,21 @@ interface Sample {
 }
 
 const samples: readonly Sample[] = [
-	{ name: 'heading', node: firstBlock(parser, '# H'), guard: isHeadingNode },
-	{ name: 'paragraph', node: firstBlock(parser, 'text'), guard: isParagraphNode },
-	{ name: 'list', node: firstBlock(parser, '- a'), guard: isListNode },
+	{ name: 'heading', node: firstBlock('# H'), guard: isHeadingNode },
+	{ name: 'paragraph', node: firstBlock('text'), guard: isParagraphNode },
+	{ name: 'list', node: firstBlock('- a'), guard: isListNode },
 	{
 		name: 'table',
-		node: firstBlock(parser, '| a | b |\n| --- | --- |\n| 1 | 2 |'),
+		node: firstBlock('| a | b |\n| --- | --- |\n| 1 | 2 |'),
 		guard: isTableNode,
 	},
-	{ name: 'codeBlock', node: firstBlock(parser, '```\ncode\n```'), guard: isCodeBlockNode },
-	{ name: 'blockquote', node: firstBlock(parser, '> q'), guard: isBlockquoteNode },
-	{ name: 'thematicBreak', node: firstBlock(parser, '---'), guard: isThematicBreakNode },
-	{ name: 'text', node: assertInlineNode(parser, 'plain'), guard: isTextNode },
-	{ name: 'emphasis', node: assertInlineNode(parser, '*em*'), guard: isEmphasisNode },
-	{ name: 'codeSpan', node: assertInlineNode(parser, '`code`'), guard: isCodeSpanNode },
-	{ name: 'link', node: assertInlineNode(parser, '[t](https://example.com)'), guard: isLinkNode },
+	{ name: 'codeBlock', node: firstBlock('```\ncode\n```'), guard: isCodeBlockNode },
+	{ name: 'blockquote', node: firstBlock('> q'), guard: isBlockquoteNode },
+	{ name: 'thematicBreak', node: firstBlock('---'), guard: isThematicBreakNode },
+	{ name: 'text', node: assertInlineNode('plain'), guard: isTextNode },
+	{ name: 'emphasis', node: assertInlineNode('*em*'), guard: isEmphasisNode },
+	{ name: 'codeSpan', node: assertInlineNode('`code`'), guard: isCodeSpanNode },
+	{ name: 'link', node: assertInlineNode('[t](https://example.com)'), guard: isLinkNode },
 ]
 
 describe('line predicates', () => {
@@ -177,8 +175,8 @@ describe('parser AST validators', () => {
 	}
 
 	it('stays total across the container nodes no guard covers', () => {
-		const document = parser.parse('# H')
-		const item = assertListNode(firstBlock(parser, '- a')).items[0]
+		const document = parseDocument('# H')
+		const item = assertListNode(firstBlock('- a')).items[0]
 		if (item === undefined) throw new Error('expected a list item')
 		for (const { guard } of samples) {
 			expect(guard(document)).toBe(false)
@@ -209,7 +207,7 @@ describe('from-unknown AST guards: acceptance against a real parsed document', (
 		'---',
 	].join('\n')
 
-	const document = parser.parse(richSource)
+	const document = parseDocument(richSource)
 
 	it('accepts the whole document as a MarkdownDocument', () => {
 		expect(isMarkdownDocument(document)).toBe(true)
@@ -226,7 +224,7 @@ describe('from-unknown AST guards: acceptance against a real parsed document', (
 	})
 
 	it('accepts inline children of the paragraph as InlineNode and MarkdownNode, never as BlockNode', () => {
-		const paragraph = assertInlineNode(parser, 'plain')
+		const paragraph = assertInlineNode('plain')
 		expect(isInlineNode(paragraph)).toBe(true)
 		expect(isMarkdownNode(paragraph)).toBe(true)
 		expect(isBlockNode(paragraph)).toBe(false)
@@ -244,7 +242,7 @@ describe('from-unknown AST guards: acceptance against a real parsed document', (
 	})
 
 	it('accepts a list item as a MarkdownNode but not as a BlockNode or InlineNode', () => {
-		const list = assertListNode(firstBlock(parser, '- a\n- b'))
+		const list = assertListNode(firstBlock('- a\n- b'))
 		const item = list.items[0]
 		if (item === undefined) throw new Error('expected a list item')
 		expect(isMarkdownNode(item)).toBe(true)
@@ -414,7 +412,7 @@ describe('parse <-> guard consistency', () => {
 	})
 
 	it('the document root satisfies isMarkdownDocument and isMarkdownNode together', () => {
-		const document = parser.parse('# H\n\ntext')
+		const document = parseDocument('# H\n\ntext')
 		expect(isMarkdownDocument(document)).toBe(true)
 		expect(isMarkdownNode(document)).toBe(true)
 		expect(isBlockNode(document)).toBe(false)
