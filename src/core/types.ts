@@ -257,8 +257,8 @@ export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
  * - **Immutable.** {@link MarkdownInterface.map} never mutates the stored AST - it
  *   returns a NEW {@link MarkdownInterface} instance; the document root invariant
  *   (`element: 'document'`) always holds.
- * - **Traversal order.** `find` / `filter` / `reduce` / the default iterator walk the
- *   AST depth-first, pre-order, root-inclusive; `stream` is shallow - only the
+ * - **Traversal order.** `walk` / `find` / `filter` / `reduce` walk the AST
+ *   depth-first, pre-order, root-inclusive; `stream` is shallow - only the
  *   document's direct block children.
  * - **`stream`.** Returns a web-standard {@link ReadableStream} over the top-level
  *   blocks - a fresh, pull-based source per call: exactly one block is enqueued per
@@ -266,16 +266,24 @@ export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
  *   of demand. Cancellable via the returned stream's own `cancel()`, async-iterable
  *   wherever the platform supports it (Node, Deno, and browsers that ship the
  *   proposal), and pipeable through any {@link TransformStream} / {@link WritableStream}.
- * - **Dual iteration.** `MarkdownInterface` is both {@link Iterable} and
- *   {@link AsyncIterable} over the same {@link MarkdownNode} sequence - a sync
- *   `for (const node of markdown)` and an async `for await (const node of markdown)`
- *   walk the identical depth-first, pre-order, root-inclusive order. The async form
- *   yields one node per microtask, so a long document cooperates with the event loop
- *   and composes naturally with other async pipelines.
+ * - **The seven-method surface.** `document` (the AST root), `walk` (the deep
+ *   traversal), `find` / `filter` / `reduce` (queries built on `walk`), `map` (the
+ *   bottom-up rewrite), `fold` (the total catamorphism), and `stream` (the shallow,
+ *   backpressured top-level source).
  */
-export interface MarkdownInterface extends Iterable<MarkdownNode>, AsyncIterable<MarkdownNode> {
+export interface MarkdownInterface {
 	/** The stored {@link MarkdownDocument} AST root. */
 	readonly document: MarkdownDocument
+	/**
+	 * THE deep traversal - a lazy, depth-first, pre-order, root-inclusive
+	 * {@link Generator} over every {@link MarkdownNode} in the document. The sync
+	 * `for (const node of markdown.walk())` surface is also consumable by
+	 * `for await (const node of markdown.walk())` (JavaScript accepts a sync
+	 * iterable in a `for await`), so async pipelines need no separate iterator.
+	 * Contrast with {@link stream}: `walk` is deep, every-node, and sync; `stream`
+	 * is shallow (top-level blocks only) and backpressure-respecting.
+	 */
+	walk(): Generator<MarkdownNode>
 	/** Finds the first node (depth-first, pre-order) narrowed by a type guard. */
 	find<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): T | undefined
 	/** Finds the first node (depth-first, pre-order) matching a predicate. */

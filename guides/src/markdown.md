@@ -33,7 +33,7 @@ The full node shape and workspace contract, from [`types.ts`](../../src/core/typ
 | `MarkdownHandler<TNode, T>` | type      | `(node: TNode, children: readonly T[]) => T` — one catamorphism step; the building block of a `MarkdownHandlers` table.                                                                                                        |
 | `MarkdownHandlers<T>`       | interface | One `MarkdownHandler` per AST element (`document`, `heading`, `paragraph`, `thematicBreak`, `blockquote`, `codeBlock`, `list`, `listItem`, `table`, `text`, `emphasis`, `codeSpan`, `link`) — the total table `fold` requires. |
 | `MarkdownRewriteHandler`    | type      | `(node: MarkdownNode) => MarkdownNode` — a bottom-up, copy-on-write node rewrite for `map`.                                                                                                                                    |
-| `MarkdownInterface`         | interface | `extends Iterable<MarkdownNode>, AsyncIterable<MarkdownNode>` — `{ document, find, filter, map, reduce, fold, stream }`, `stream(): ReadableStream<BlockNode>` — see [`## Methods`](#methods) below.                           |
+| `MarkdownInterface`         | interface | `{ document, walk, find, filter, map, reduce, fold, stream }`, `stream(): ReadableStream<BlockNode>` — see [`## Methods`](#methods) below.                                                                                     |
 
 ### Constants
 
@@ -131,7 +131,7 @@ Line/character structural predicates plus node guards, from [`validators.ts`](..
 
 ### `Markdown`
 
-The implementing class of `MarkdownInterface`, from [`Markdown.ts`](../../src/core/Markdown.ts). A stateful, parsed markdown workspace: constructed from a markdown `string` (runs `parseDocument`) or an already-parsed `MarkdownDocument` (adopted AS-IS, not re-validated). Exposes its AST through the `readonly document` member (documented here in Surface prose, per the `ContractInterface` precedent, alongside its `Symbol.iterator` and `Symbol.asyncIterator` — all three are part of the documented surface even though they carry no row in the [`## Methods`](#methods) table below, which lists only call-signature members). Both iterators walk the same depth-first, pre-order, root-inclusive sequence — `for (const node of markdown)` synchronously, `for await (const node of markdown)` asynchronously (one node per microtask), so a genuine async generator composes naturally with `for await…of` and other async pipelines. Immutable — `map` never mutates the stored AST, it returns a new `Markdown`. See [`## Methods`](#methods) for its public call-signature surface.
+The implementing class of `MarkdownInterface`, from [`Markdown.ts`](../../src/core/Markdown.ts). A stateful, parsed markdown workspace: constructed from a markdown `string` (runs `parseDocument`) or an already-parsed `MarkdownDocument` (adopted AS-IS, not re-validated). Exposes its AST through the `readonly document` member (documented here in Surface prose, per the `ContractInterface` precedent, alongside `walk` — both are part of the documented surface even though `document` carries no row in the [`## Methods`](#methods) table below, which lists only call-signature members). `walk` is the deep traversal — a lazy, depth-first, pre-order, root-inclusive generator over every node; its sync `for (const node of markdown.walk())` surface is also consumable by `for await (const node of markdown.walk())` (JavaScript accepts a sync iterable in a `for await`), so an async pipeline needs no separate iterator. Contrast with `stream`: `walk` is deep (every node) and sync; `stream` is shallow (top-level blocks only) and backpressure-respecting. Immutable — `map` never mutates the stored AST, it returns a new `Markdown`. See [`## Methods`](#methods) for its public call-signature surface.
 
 ### Factories
 
@@ -147,12 +147,13 @@ From [`factories.ts`](../../src/core/factories.ts).
 
 ## Methods
 
-The public methods of each behavioral interface — one table per type, keyed by its backticked name (AGENTS §22). The `readonly document` member, `Symbol.iterator`, and `Symbol.asyncIterator` are Surface-documented above, not listed here — this table lists exactly `MarkdownInterface`'s call-signature members.
+The public methods of each behavioral interface — one table per type, keyed by its backticked name (AGENTS §22). The `readonly document` member is Surface-documented above, not listed here — this table lists exactly `MarkdownInterface`'s call-signature members.
 
 #### `MarkdownInterface`
 
 | Method   | Returns                                   | Behavior                                                                                                                                                                                                                                                                                              |
 | -------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `walk`   | `Generator<MarkdownNode>`                 | THE deep traversal — a lazy, depth-first, pre-order, root-inclusive generator over every node. The sync `for…of` surface is also consumable by `for await…of` (no separate async iterator needed).                                                                                                    |
 | `find`   | `T \| MarkdownNode \| undefined`          | Finds the first node (depth-first, pre-order), narrowed by a type guard or matched by a predicate. `undefined` when nothing matches.                                                                                                                                                                  |
 | `filter` | `readonly T[] \| readonly MarkdownNode[]` | Collects every node (depth-first, pre-order), narrowed by a type guard or matched by a predicate.                                                                                                                                                                                                     |
 | `map`    | `MarkdownInterface`                       | Rewrites the AST bottom-up (copy-on-write) via a `MarkdownRewriteHandler` and returns a NEW `MarkdownInterface`; never mutates the original.                                                                                                                                                          |
@@ -373,7 +374,7 @@ import { Markdown } from '@src/core'
 const markdown = new Markdown('# Title\n\nA **bold** word.')
 
 const all: string[] = []
-for (const node of markdown) all.push(node.element) // deep, depth-first, pre-order
+for (const node of markdown.walk()) all.push(node.element) // deep, depth-first, pre-order
 ```
 
 ### Async iteration with `for await…of`
@@ -384,7 +385,7 @@ import { Markdown } from '@src/core'
 const markdown = new Markdown('# Title\n\nA **bold** word.')
 
 async function writeAll(writer: { write(chunk: string): void }): Promise<void> {
-	for await (const node of markdown) writer.write(node.element) // one microtask per node
+	for await (const node of markdown.walk()) writer.write(node.element) // sync generator, for-await composes fine
 }
 
 // `for await…of` also works over `stream()` — `ReadableStream` is natively async-iterable in
@@ -394,9 +395,10 @@ async function streamAll(writer: { write(chunk: string): void }): Promise<void> 
 }
 ```
 
-Both `Symbol.iterator` and `Symbol.asyncIterator` walk the SAME depth-first, pre-order, root-inclusive
-sequence — the async form composes naturally with any async pipeline (a stream writer, a queue) without
-first collecting the whole traversal into memory.
+`walk()` is a single lazy, sync generator over every node (deep, depth-first, pre-order,
+root-inclusive) — a `for await…of` over it composes naturally with any async pipeline (a stream
+writer, a queue) without first collecting the whole traversal into memory or needing a separate
+async iterator.
 
 ### Standalone writers and traversal on a bare node
 
@@ -478,7 +480,7 @@ text.is(fixture) // true — guard / generator stay in lockstep
 
 ## Tests
 
-- [`tests/src/core/Markdown.test.ts`](../../tests/src/core/Markdown.test.ts) — `find` / `filter` / `map` / `reduce` / `fold` / `stream` / iteration behavior, construction from a string vs. an already-parsed document.
+- [`tests/src/core/Markdown.test.ts`](../../tests/src/core/Markdown.test.ts) — `walk` / `find` / `filter` / `map` / `reduce` / `fold` / `stream` behavior, construction from a string vs. an already-parsed document.
 - [`tests/src/core/parsers.test.ts`](../../tests/src/core/parsers.test.ts) — `parseDocument` / `parseInline` / `parseBlocks` / `collectTable` / `collectList`, incl. degrade semantics at `MAX_DEPTH`.
 - [`tests/src/core/validators.test.ts`](../../tests/src/core/validators.test.ts) — structural predicates + per-node guards + the from-unknown AST guards (soundness on cyclic / adversarial input).
 - [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) — the pure line/block/inline scanning leaves, `renderHTML` / `renderMarkdown` / `walkNodes` / `foldNode` / `rewriteDocument` / `flattenText`, and sanitization.

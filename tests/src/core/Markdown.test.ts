@@ -172,10 +172,10 @@ describe('Markdown — map', () => {
 })
 
 describe('Markdown — reduce', () => {
-	it('the node count matches the spread-iteration length', () => {
+	it('the node count matches the walk() spread length', () => {
 		const markdown = new Markdown('# Title\n\npara with **bold** text')
 		const count = markdown.reduce((accumulator) => accumulator + 1, 0)
-		expect(count).toBe([...markdown].length)
+		expect(count).toBe([...markdown.walk()].length)
 	})
 
 	it('accumulates in depth-first pre-order for a known small document', () => {
@@ -353,16 +353,16 @@ describe('Markdown — stream', () => {
 	})
 })
 
-describe('Markdown — iteration', () => {
+describe('Markdown — walk', () => {
 	it('the first yielded element is the document root itself', () => {
 		const markdown = new Markdown('# Title')
-		const [first] = [...markdown]
+		const [first] = [...markdown.walk()]
 		expect(first).toBe(markdown.document)
 	})
 
 	it('matches a hand-walked depth-first pre-order sequence for a known document', () => {
 		const markdown = new Markdown('# Title\n\npara')
-		expect([...markdown].map((node) => node.element)).toEqual([
+		expect([...markdown.walk()].map((node) => node.element)).toEqual([
 			'document',
 			'heading',
 			'text',
@@ -374,27 +374,47 @@ describe('Markdown — iteration', () => {
 	it('works with for…of', () => {
 		const markdown = new Markdown('# Title')
 		const elements: string[] = []
-		for (const node of markdown) elements.push(node.element)
+		for (const node of markdown.walk()) elements.push(node.element)
 		expect(elements).toEqual(['document', 'heading', 'text'])
+	})
+
+	it('is lazy — taking one node does not force the rest of the traversal', () => {
+		const markdown = new Markdown('# Title\n\npara')
+		const iterator = markdown.walk()
+		const first = iterator.next()
+		expect(first.done).toBe(false)
+		expect(first.value).toBe(markdown.document)
+	})
+
+	it('an early break terminates cleanly without throwing', () => {
+		const markdown = new Markdown('# Title\n\npara\n\n---')
+		const collected: MarkdownNode[] = []
+		expect(() => {
+			for (const node of markdown.walk()) {
+				collected.push(node)
+				if (node.element === 'heading') break
+			}
+		}).not.toThrow()
+		expect(collected.map((node) => node.element)).toEqual(['document', 'heading'])
 	})
 })
 
 describe('Markdown — async iteration', () => {
-	it('for await…of collects the exact same sequence as [...md]', async () => {
+	it('for await…of collects the exact same sequence as sync walk()', async () => {
 		const markdown = new Markdown('# Title\n\npara with **bold** text and [a link](x)')
 		const collected: MarkdownNode[] = []
-		for await (const node of markdown) collected.push(node)
-		expect(collected).toEqual([...markdown])
+		for await (const node of markdown.walk()) collected.push(node)
+		expect(collected).toEqual([...markdown.walk()])
 	})
 
 	it('works inside an async pipeline — an async helper counting nodes returns the right count', async () => {
 		const markdown = new Markdown('# Title\n\npara')
-		async function countNodes(source: AsyncIterable<MarkdownNode>): Promise<number> {
+		async function countNodes(source: Iterable<MarkdownNode>): Promise<number> {
 			let count = 0
 			for await (const node of source) if (node !== undefined) count += 1
 			return count
 		}
-		expect(await countNodes(markdown)).toBe([...markdown].length)
+		expect(await countNodes(markdown.walk())).toBe([...markdown.walk()].length)
 	})
 
 	it('for await…of over stream() yields the top-level blocks (native ReadableStream async iteration)', async () => {
@@ -409,7 +429,7 @@ describe('Markdown — async iteration', () => {
 		const collected: MarkdownNode[] = []
 		await expect(
 			(async () => {
-				for await (const node of markdown) {
+				for await (const node of markdown.walk()) {
 					collected.push(node)
 					if (node.element === 'heading') break
 				}
@@ -423,7 +443,7 @@ describe('Markdown — async iteration', () => {
 		let count = 0
 		await expect(
 			(async () => {
-				for await (const node of markdown) if (node !== undefined) count += 1
+				for await (const node of markdown.walk()) if (node !== undefined) count += 1
 			})(),
 		).resolves.toBeUndefined()
 		expect(count).toBeGreaterThan(0)
@@ -435,9 +455,9 @@ describe('Markdown — adversarial (deep input)', () => {
 		expect(() => new Markdown(buildDeepQuoteInput(10_000))).not.toThrow()
 	})
 
-	it('iterates, filters, and reduces over a pathologically deep document without throwing', () => {
+	it('walks, filters, and reduces over a pathologically deep document without throwing', () => {
 		const markdown = new Markdown(buildDeepQuoteInput(10_000))
-		expect(() => [...markdown]).not.toThrow()
+		expect(() => [...markdown.walk()]).not.toThrow()
 		expect(() => markdown.filter(isHeadingNode)).not.toThrow()
 		expect(() => markdown.reduce((accumulator) => accumulator + 1, 0)).not.toThrow()
 	})

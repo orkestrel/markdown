@@ -21,9 +21,9 @@ import { parseDocument } from './parsers.js'
  *   untrusted value should gate it with `isMarkdownDocument` first.
  * - **Immutable.** {@link map} never mutates the stored AST - it returns a NEW `Markdown`
  *   instance; the document root invariant (`element: 'document'`) always holds.
- * - **Traversal order.** `find` / `filter` / `reduce` / the default iterator walk the AST
- *   depth-first, pre-order, root-inclusive (via {@link walkNodes}); `stream` is shallow -
- *   only the document's direct block children.
+ * - **Traversal order.** {@link walk} and the `find` / `filter` / `reduce` queries built
+ *   on it walk the AST depth-first, pre-order, root-inclusive (via {@link walkNodes});
+ *   `stream` is shallow - only the document's direct block children.
  *
  * @example
  * ```ts
@@ -49,12 +49,33 @@ export class Markdown implements MarkdownInterface {
 		return this.#document
 	}
 
+	/**
+	 * THE deep traversal - a lazy, depth-first, pre-order, root-inclusive generator
+	 * over every {@link MarkdownNode} in the document. `find` / `filter` / `reduce`
+	 * all iterate this single traversal.
+	 *
+	 * @example
+	 * ```ts
+	 * for (const node of markdown.walk()) {
+	 *   // every node, depth-first, pre-order, root-inclusive
+	 * }
+	 *
+	 * // also consumable by for-await - JS accepts a sync iterable in for-await
+	 * for await (const node of markdown.walk()) {
+	 *   // same sequence, no separate async iterator needed
+	 * }
+	 * ```
+	 */
+	*walk(): Generator<MarkdownNode> {
+		yield* walkNodes(this.#document)
+	}
+
 	// Finds the first node (depth-first, pre-order) narrowed by a type guard.
 	find<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): T | undefined
 	// Finds the first node (depth-first, pre-order) matching a predicate.
 	find(predicate: (node: MarkdownNode) => boolean): MarkdownNode | undefined
 	find(predicate: (node: MarkdownNode) => boolean): MarkdownNode | undefined {
-		for (const node of walkNodes(this.#document)) if (predicate(node)) return node
+		for (const node of this.walk()) if (predicate(node)) return node
 		return undefined
 	}
 
@@ -64,7 +85,7 @@ export class Markdown implements MarkdownInterface {
 	filter(predicate: (node: MarkdownNode) => boolean): readonly MarkdownNode[]
 	filter(predicate: (node: MarkdownNode) => boolean): readonly MarkdownNode[] {
 		const out: MarkdownNode[] = []
-		for (const node of walkNodes(this.#document)) if (predicate(node)) out.push(node)
+		for (const node of this.walk()) if (predicate(node)) out.push(node)
 		return out
 	}
 
@@ -76,7 +97,7 @@ export class Markdown implements MarkdownInterface {
 	/** Folds the AST depth-first, pre-order into an accumulator. */
 	reduce<T>(callback: (accumulator: T, node: MarkdownNode) => T, initial: T): T {
 		let accumulator = initial
-		for (const node of walkNodes(this.#document)) accumulator = callback(accumulator, node)
+		for (const node of this.walk()) accumulator = callback(accumulator, node)
 		return accumulator
 	}
 
@@ -120,25 +141,5 @@ export class Markdown implements MarkdownInterface {
 				}
 			},
 		})
-	}
-
-	/** Iterates every node (depth-first, pre-order, root-inclusive). */
-	*[Symbol.iterator](): Iterator<MarkdownNode> {
-		yield* walkNodes(this.#document)
-	}
-
-	/**
-	 * Asynchronously iterates every node (depth-first, pre-order, root-inclusive) -
-	 * the same sequence as {@link Symbol.iterator}, one node per microtask.
-	 *
-	 * @example
-	 * ```ts
-	 * for await (const node of markdown) {
-	 *   // one microtask per node
-	 * }
-	 * ```
-	 */
-	async *[Symbol.asyncIterator](): AsyncIterator<MarkdownNode> {
-		for (const node of walkNodes(this.#document)) yield await node
 	}
 }
