@@ -1,4 +1,10 @@
-import type { MarkdownDocument, MarkdownHandlers, MarkdownNode } from '@src/core'
+import type {
+	BlockquoteNode,
+	MarkdownDocument,
+	MarkdownHandlers,
+	MarkdownNode,
+	ParagraphNode,
+} from '@src/core'
 import { describe, expect, it } from 'vitest'
 import { buildDeepQuoteInput, firstBlock } from '../../setup.js'
 import { Markdown, isHeadingNode, isMarkdownDocument, isTextNode } from '@src/core'
@@ -323,5 +329,20 @@ describe('Markdown — adversarial (deep input)', () => {
 	it('an identity map over a pathologically deep document does not throw', () => {
 		const markdown = new Markdown(buildDeepQuoteInput(10_000))
 		expect(() => markdown.map((node) => node)).not.toThrow()
+	})
+
+	it('an identity map over an ADOPTED 10,000-deep blockquote-chain document does not throw', () => {
+		// Built directly as an AST (not via parseDocument, which caps depth during
+		// parsing) and adopted as-is, so map/rewriteDocument sees the FULL depth.
+		const leaf: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'leaf' }],
+		}
+		let node: BlockquoteNode | ParagraphNode = leaf
+		for (let level = 0; level < 10_000; level += 1)
+			node = { element: 'blockquote', children: [node] }
+		const document: MarkdownDocument = { element: 'document', children: [node] }
+		const markdown = new Markdown(document)
+		expect(() => markdown.map((current) => current)).not.toThrow()
 	})
 })

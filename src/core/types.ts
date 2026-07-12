@@ -224,7 +224,13 @@ export interface MarkdownHandlers<T> {
 	readonly list: MarkdownHandler<ListNode, T>
 	/** Folds a {@link ListItemNode} from its already-folded block children. */
 	readonly listItem: MarkdownHandler<ListItemNode, T>
-	/** Folds a {@link TableNode} (leaf - always called with an empty children list). */
+	/**
+	 * Folds a {@link TableNode} from its cells' already-folded inline nodes, flattened
+	 * to ONE folded `T` per inline node - header cells first (column order), then body
+	 * rows' cells (row order, then column order). It is NOT a leaf: recover cell
+	 * boundaries from `node.header[c].length` / `node.rows[r][c].length` against the
+	 * flat `children` list.
+	 */
 	readonly table: MarkdownHandler<TableNode, T>
 	/** Folds a {@link TextNode} (leaf - always called with an empty children list). */
 	readonly text: MarkdownHandler<TextNode, T>

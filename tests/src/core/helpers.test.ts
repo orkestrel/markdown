@@ -1,7 +1,9 @@
 import type {
+	BlockNode,
 	BlockquoteNode,
 	MarkdownDocument,
 	MarkdownHandlers,
+	MarkdownNode,
 	ParagraphNode,
 	TableNode,
 } from '@src/core'
@@ -836,6 +838,67 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		expect(parseDocument(renderMarkdown(document))).toEqual(document)
 	})
 
+	it('round-trips a single-space code span without growing on reparse', () => {
+		const document = parseDocument('` `')
+		expect(document).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'codeSpan', value: ' ' }] }],
+		})
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
+	it('round-trips a multi-space code span without growing on reparse', () => {
+		const document = parseDocument('`   `')
+		expect(document).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'codeSpan', value: '   ' }] }],
+		})
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
+	it('round-trips a heading whose inline text ends in a `#` run', () => {
+		const document = parseDocument('# foo \\#')
+		const heading = document.children[0]
+		expect(heading?.element === 'heading' ? flattenText(heading) : undefined).toBe('foo #')
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
+	it('round-trips a link href containing an escaped closing paren', () => {
+		const document = parseDocument('[x](a\\)b)')
+		const paragraph = document.children[0]
+		const link = paragraph?.element === 'paragraph' ? paragraph.children[0] : undefined
+		expect(link?.element === 'link' ? link.href : undefined).toBe('a)b')
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
+	it('round-trips a link href containing an escaped opening paren', () => {
+		const document = parseDocument('[x](a\\(b)')
+		const paragraph = document.children[0]
+		const link = paragraph?.element === 'paragraph' ? paragraph.children[0] : undefined
+		expect(link?.element === 'link' ? link.href : undefined).toBe('a(b')
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
+	it('round-trips a link href containing a literal backslash', () => {
+		const document = parseDocument('[x](a\\qb)')
+		const paragraph = document.children[0]
+		const link = paragraph?.element === 'paragraph' ? paragraph.children[0] : undefined
+		expect(link?.element === 'link' ? link.href : undefined).toBe('a\\qb')
+		const rendered = renderMarkdown(document)
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
 	it('is idempotent (rendering an already-canonical document twice yields the same source)', () => {
 		const once = renderMarkdown(parseDocument(composite))
 		const twice = renderMarkdown(parseDocument(once))
@@ -1075,6 +1138,37 @@ describe('rewriteDocument', () => {
 		)
 		const paragraph = rewritten.children[0]
 		expect(paragraph?.element === 'paragraph' ? flattenText(paragraph) : undefined).toBe('X')
+	})
+
+	it('caps descent at MAX_DEPTH — a subtree at the cap passes through unchanged, by reference', () => {
+		const leaf: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'leaf' }],
+		}
+		const chain: (BlockquoteNode | ParagraphNode)[] = [leaf]
+		for (let level = 0; level < 100; level += 1) {
+			const previous = chain[chain.length - 1]
+			if (previous === undefined) continue
+			chain.push({ element: 'blockquote', children: [previous] })
+		}
+		const top = chain[chain.length - 1]
+		if (top === undefined) throw new Error('unreachable — chain always has 101 entries')
+		const document: MarkdownDocument = { element: 'document', children: [top] }
+		const rewrite = (node: MarkdownNode): MarkdownNode =>
+			node.element === 'text' ? { element: 'text', value: 'X' } : node
+
+		expect(() => rewriteDocument(document, rewrite)).not.toThrow()
+
+		const rewritten = rewriteDocument(document, rewrite)
+		let atCap: BlockNode | undefined = rewritten.children[0]
+		for (let level = 0; level < MAX_DEPTH; level += 1) {
+			if (atCap === undefined || atCap.element !== 'blockquote')
+				throw new Error('unreachable — chain is a pure blockquote run down to the cap')
+			atCap = atCap.children[0]
+		}
+		// The node AT the cap (and everything below it) is the SAME reference as the
+		// original input — never rebuilt, `rewrite` never invoked on it.
+		expect(atCap).toBe(chain[chain.length - 1 - MAX_DEPTH])
 	})
 })
 

@@ -801,8 +801,16 @@ export function renderMarkdown(node: MarkdownNode): string {
 		switch (current.element) {
 			case 'document':
 				return renderBlocks(current.children, depth)
-			case 'heading':
-				return `${'#'.repeat(current.level)} ${renderInline(current.children, depth)}`
+			case 'heading': {
+				const text = renderInline(current.children, depth)
+				// A trailing `#` run reads back as an ATX closing sequence on reparse -
+				// escape the FIRST `#` of that run so it can't be stripped.
+				const escaped = text.replace(/(\s*)(#+)$/, (_match, lead: string, hashes: string) => {
+					const first = hashes[0] ?? ''
+					return `${lead}\\${first}${hashes.slice(1)}`
+				})
+				return `${'#'.repeat(current.level)} ${escaped}`
+			}
 			case 'paragraph':
 				return renderInline(current.children, depth)
 			case 'thematicBreak':
@@ -839,16 +847,15 @@ export function renderMarkdown(node: MarkdownNode): string {
 			}
 			case 'codeSpan': {
 				const fence = fenceFor(current.value, 1)
-				const pad =
-					current.value.startsWith('`') ||
-					current.value.endsWith('`') ||
-					(current.value.length > 0 && current.value.trim() === '')
-						? ' '
-						: ''
+				const pad = current.value.startsWith('`') || current.value.endsWith('`') ? ' ' : ''
 				return `${fence}${pad}${current.value}${pad}${fence}`
 			}
-			case 'link':
-				return `[${renderInline(current.children, depth)}](${current.href})`
+			case 'link': {
+				// Mirror scanLink's unescape - a href containing `\`, `(`, or `)` must
+				// round-trip through the same balanced-paren + backslash-escape scan.
+				const href = current.href.replace(/[\\()]/g, (character) => `\\${character}`)
+				return `[${renderInline(current.children, depth)}](${href})`
+			}
 			default:
 				return ''
 		}
@@ -913,10 +920,11 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
  * @remarks
  * **Table contract.** A {@link TableNode} has no single `children` array - its cells
  * live in `header` (one inline-node list per column) and `rows` (a list of such
- * rows). The `table` handler receives the folded cells as a FLAT `readonly T[]` in
- * walk order - every header cell's fold (column order), then every body row's cells'
- * folds (row order, then column order) - and reads `node.header` / `node.rows` off
- * the table node itself to recover row/column structure.
+ * rows). The `table` handler receives ONE folded `T` per inline node, flattened in
+ * walk order across ALL cells - every header cell's inline nodes (column order), then
+ * every body row's cells' inline nodes (row order, then column order) - and reads
+ * `node.header[c].length` / `node.rows[r][c].length` off the table node itself to
+ * recover cell boundaries within the flat list.
  *
  * Total: never throws. At `depth >= {@link MAX_DEPTH}` the node's handler is invoked
  * with an empty children list instead of recursing further.
@@ -1013,6 +1021,12 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, d
  * freshly-rebuilt (unrewritten-at-this-level) node is kept instead - `rewriteDocument`
  * stays total and never produces a structurally invalid document.
  *
+ * Descent is capped at {@link MAX_DEPTH}, the same cap {@link walkNodes} and
+ * {@link foldNode} observe: at `depth >= MAX_DEPTH` the subtree is passed through
+ * UNCHANGED (by reference, not rebuilt, and `rewrite` is not invoked on it) instead of
+ * recursing further, so a pathologically deep adopted document cannot exhaust the
+ * call stack. {@link MarkdownInterface.map} inherits this cap since it delegates here.
+ *
  * @param document - The document AST to rewrite
  * @param rewrite - The bottom-up {@link MarkdownRewriteHandler}
  * @returns A new, rewritten {@link MarkdownDocument}
@@ -1028,51 +1042,59 @@ export function rewriteDocument(
 	document: MarkdownDocument,
 	rewrite: MarkdownRewriteHandler,
 ): MarkdownDocument {
-	function rewriteInline(node: InlineNode): InlineNode {
-		const rebuilt = rebuildInline(node)
+	function rewriteInline(node: InlineNode, depth: number): InlineNode {
+		if (depth >= MAX_DEPTH) return node
+		const rebuilt = rebuildInline(node, depth)
 		const result = rewrite(rebuilt)
 		return isInlineNode(result) ? result : rebuilt
 	}
 
-	function rewriteBlock(node: BlockNode): BlockNode {
-		const rebuilt = rebuildBlock(node)
+	function rewriteBlock(node: BlockNode, depth: number): BlockNode {
+		if (depth >= MAX_DEPTH) return node
+		const rebuilt = rebuildBlock(node, depth)
 		const result = rewrite(rebuilt)
 		return isBlockNode(result) ? result : rebuilt
 	}
 
-	function rewriteItem(item: ListItemNode): ListItemNode {
-		const rebuilt: ListItemNode = { element: 'listItem', children: item.children.map(rewriteBlock) }
+	function rewriteItem(item: ListItemNode, depth: number): ListItemNode {
+		if (depth >= MAX_DEPTH) return item
+		const rebuilt: ListItemNode = {
+			element: 'listItem',
+			children: item.children.map((child) => rewriteBlock(child, depth + 1)),
+		}
 		const result = rewrite(rebuilt)
 		return result.element === 'listItem' ? result : rebuilt
 	}
 
-	function rebuildInline(node: InlineNode): InlineNode {
+	function rebuildInline(node: InlineNode, depth: number): InlineNode {
 		switch (node.element) {
 			case 'emphasis':
-				return { ...node, children: node.children.map(rewriteInline) }
+				return { ...node, children: node.children.map((child) => rewriteInline(child, depth + 1)) }
 			case 'link':
-				return { ...node, children: node.children.map(rewriteInline) }
+				return { ...node, children: node.children.map((child) => rewriteInline(child, depth + 1)) }
 			case 'text':
 			case 'codeSpan':
 				return node
 		}
 	}
 
-	function rebuildBlock(node: BlockNode): BlockNode {
+	function rebuildBlock(node: BlockNode, depth: number): BlockNode {
 		switch (node.element) {
 			case 'heading':
-				return { ...node, children: node.children.map(rewriteInline) }
+				return { ...node, children: node.children.map((child) => rewriteInline(child, depth + 1)) }
 			case 'paragraph':
-				return { ...node, children: node.children.map(rewriteInline) }
+				return { ...node, children: node.children.map((child) => rewriteInline(child, depth + 1)) }
 			case 'blockquote':
-				return { ...node, children: node.children.map(rewriteBlock) }
+				return { ...node, children: node.children.map((child) => rewriteBlock(child, depth + 1)) }
 			case 'list':
-				return { ...node, items: node.items.map(rewriteItem) }
+				return { ...node, items: node.items.map((item) => rewriteItem(item, depth + 1)) }
 			case 'table':
 				return {
 					...node,
-					header: node.header.map((cell) => cell.map(rewriteInline)),
-					rows: node.rows.map((row) => row.map((cell) => cell.map(rewriteInline))),
+					header: node.header.map((cell) => cell.map((inline) => rewriteInline(inline, depth + 1))),
+					rows: node.rows.map((row) =>
+						row.map((cell) => cell.map((inline) => rewriteInline(inline, depth + 1))),
+					),
 				}
 			case 'codeBlock':
 			case 'thematicBreak':
@@ -1080,7 +1102,7 @@ export function rewriteDocument(
 		}
 	}
 
-	return { element: 'document', children: document.children.map(rewriteBlock) }
+	return { element: 'document', children: document.children.map((child) => rewriteBlock(child, 0)) }
 }
 
 /**
