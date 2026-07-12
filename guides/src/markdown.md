@@ -237,7 +237,10 @@ Markdown's validation surface is a thin, purpose-built layer over `@orkestrel/co
 
 ## Patterns
 
-### Construct and inspect
+Every feature below has a compact, runnable example. Together they cover every `MarkdownInterface`
+method, every standalone writer/traversal helper, and the contract-factory fixture path.
+
+### Construct from a string and narrow with a guard
 
 ```ts
 import { Markdown, isHeadingNode } from '@src/core'
@@ -249,18 +252,63 @@ const heading = markdown.find(isHeadingNode) // HeadingNode | undefined, narrowe
 if (heading !== undefined) heading.level // number — narrowed to HeadingNode
 ```
 
-### Query and transform
+### Construct from an adopted document
 
 ```ts
-import { Markdown, isLinkNode, renderMarkdown } from '@src/core'
+import { Markdown, isMarkdownDocument } from '@src/core'
+import type { MarkdownDocument } from '@src/core'
+
+function adopt(candidate: unknown): Markdown | undefined {
+	if (!isMarkdownDocument(candidate)) return undefined // total guard - never throws
+	return new Markdown(candidate) // adopted AS-IS, not re-validated
+}
+
+const good: MarkdownDocument = { element: 'document', children: [] }
+adopt(good) // Markdown instance
+adopt({ element: 'bogus' }) // undefined - rejected before Markdown ever adopts it
+```
+
+### Filter and flatten
+
+```ts
+import { Markdown, isLinkNode, flattenText } from '@src/core'
 
 const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
 const links = markdown.filter(isLinkNode) // readonly LinkNode[]
+const labels = links.map((link) => flattenText(link)) // ['one', 'two']
+```
+
+### Chain `map` rewrites, then write back with `renderMarkdown`
+
+```ts
+import { Markdown, renderMarkdown } from '@src/core'
+
+const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
 
 const shouted = markdown.map((node) =>
 	node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 )
-renderMarkdown(shouted.document) // 'See [ONE](https://a.dev) and [TWO](https://b.dev).'
+const linked = shouted.map((node) =>
+	node.element === 'link' ? { ...node, href: `${node.href}?ref=guide` } : node,
+)
+
+renderMarkdown(linked.document) // 'See [ONE](https://a.dev?ref=guide) and [TWO](https://b.dev?ref=guide).'
+```
+
+Each `map` call returns a NEW `MarkdownInterface` — the original `markdown` is never mutated, so a
+transform pipeline is a chain of small, composable, side-effect-free rewrites ending in a writer.
+
+### Reduce into an accumulator
+
+```ts
+import { Markdown, isHeadingNode } from '@src/core'
+
+const markdown = new Markdown('# One\n\n## Two\n\nBody text.')
+
+const levels = markdown.reduce<readonly number[]>(
+	(accumulator, node) => (isHeadingNode(node) ? [...accumulator, node.level] : accumulator),
+	[],
+) // [1, 2]
 ```
 
 ### Environment-agnostic fold
@@ -269,6 +317,8 @@ renderMarkdown(shouted.document) // 'See [ONE](https://a.dev) and [TWO](https://
 import { Markdown } from '@src/core'
 import type { MarkdownHandlers } from '@src/core'
 
+// Mirrors what a browser DOM build would do with document.createElement — environment-agnostic:
+// no DOM, no browser, no HTML-string coupling baked into the handler table itself.
 const toHTML: MarkdownHandlers<string> = {
 	document: (_, children) => children.join('\n'),
 	heading: (node, children) => `<h${node.level}>${children.join('')}</h${node.level}>`,
@@ -279,7 +329,7 @@ const toHTML: MarkdownHandlers<string> = {
 	list: (node, children) =>
 		node.ordered ? `<ol>${children.join('')}</ol>` : `<ul>${children.join('')}</ul>`,
 	listItem: (_, children) => `<li>${children.join('')}</li>`,
-	table: () => '<table>…</table>',
+	table: (_, children) => `<table>${children.join('')}</table>`,
 	text: (node) => node.value,
 	emphasis: (node, children) =>
 		node.strong ? `<strong>${children.join('')}</strong>` : `<em>${children.join('')}</em>`,
@@ -288,37 +338,129 @@ const toHTML: MarkdownHandlers<string> = {
 }
 
 const markdown = new Markdown('# Hi')
-markdown.fold(toHTML) // '<h1>Hi</h1>' — no DOM, no browser, no HTML-string coupling in the fold table itself
+markdown.fold(toHTML) // '<h1>Hi</h1>'
 ```
 
-### Untrusted input
+### Shallow streaming with `stream()`
 
 ```ts
-import { Markdown, isMarkdownDocument, renderHTML } from '@src/core'
+import { Markdown } from '@src/core'
 
-function renderUntrusted(candidate: unknown): string | undefined {
-	if (!isMarkdownDocument(candidate)) return undefined // total guard - never throws
-	return renderHTML(new Markdown(candidate).document)
+const markdown = new Markdown('# Title\n\nFirst.\n\nSecond.')
+
+const tops: string[] = []
+for (const block of markdown.stream()) tops.push(block.element) // shallow — top-level blocks only
+// tops: ['heading', 'paragraph', 'paragraph']
+```
+
+### Sync deep iteration
+
+```ts
+import { Markdown } from '@src/core'
+
+const markdown = new Markdown('# Title\n\nA **bold** word.')
+
+const all: string[] = []
+for (const node of markdown) all.push(node.element) // deep, depth-first, pre-order
+```
+
+### Async iteration with `for await…of`
+
+```ts
+import { Markdown } from '@src/core'
+
+const markdown = new Markdown('# Title\n\nA **bold** word.')
+
+async function writeAll(writer: { write(chunk: string): void }): Promise<void> {
+	for await (const node of markdown) writer.write(node.element) // one microtask per node
 }
 
-renderUntrusted({ element: 'document', children: [] }) // ''
-renderUntrusted({ element: 'bogus' }) // undefined - rejected before it ever reaches renderHTML
+// `for await…of` also works over `stream()` — a sync `Generator` is a valid `for await` target too.
+async function streamAll(writer: { write(chunk: string): void }): Promise<void> {
+	for await (const block of markdown.stream()) writer.write(block.element)
+}
+```
+
+Both `Symbol.iterator` and `Symbol.asyncIterator` walk the SAME depth-first, pre-order, root-inclusive
+sequence — the async form composes naturally with any async pipeline (a stream writer, a queue) without
+first collecting the whole traversal into memory.
+
+### Standalone writers and traversal on a bare node
+
+```ts
+import {
+	Markdown,
+	renderHTML,
+	renderMarkdown,
+	walkNodes,
+	foldNode,
+	rewriteDocument,
+	parseInline,
+	parseDocument,
+} from '@src/core'
+import type { MarkdownHandlers } from '@src/core'
+
+const markdown = new Markdown('# Hi\n\nText.')
+
+renderHTML(markdown.document) // '<h1>Hi</h1>\n<p>Text.</p>'
+
+// renderMarkdown round-trip: parseDocument(renderMarkdown(doc)) deep-equals doc.
+const roundTripped = parseDocument(renderMarkdown(markdown.document))
+
+// The class-free path: walkNodes / foldNode / rewriteDocument all operate on a bare MarkdownNode,
+// no Markdown instance required.
+const heading = markdown.document.children[0]
+const elements = [...walkNodes(heading)].map((node) => node.element) // ['heading', 'text']
+
+const countHandlers: MarkdownHandlers<number> = {
+	document: (_, children) => children.reduce((a, b) => a + b, 0),
+	heading: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+	paragraph: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+	thematicBreak: () => 1,
+	blockquote: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+	codeBlock: () => 1,
+	list: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+	listItem: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+	table: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+	text: () => 1,
+	emphasis: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+	codeSpan: () => 1,
+	link: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+}
+const nodeCount = foldNode(heading, countHandlers, 0) // 2
+
+const rewritten = rewriteDocument(markdown.document, (node) =>
+	node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
+)
+
+const fragment = parseInline('a **bold** span') // readonly InlineNode[], no block structure
 ```
 
 ### Guide-parity extraction
 
 ```ts
-import { Markdown, isTableNode, isHeadingNode, flattenText } from '@src/core'
-import type { TableNode } from '@src/core'
+import { Markdown, isTableNode, flattenText } from '@src/core'
 
 // Extract every Surface-table first-column identifier from this very guide.
 function extractSurfaceNames(source: string): readonly string[] {
 	const markdown = new Markdown(source)
-	const tables = markdown.filter(isTableNode) as readonly TableNode[]
+	const tables = markdown.filter(isTableNode) // readonly TableNode[] — narrowed, no cast needed
 	return tables.flatMap((table) =>
 		table.rows.map((row) => flattenText({ element: 'paragraph', children: row[0] ?? [] })),
 	)
 }
+```
+
+### Contract-backed fixture generation
+
+```ts
+import { createTextContract } from '@src/core'
+import { seededRandom } from '@orkestrel/contract'
+
+const text = createTextContract()
+text.schema // the compiled JSON Schema for TextNode
+const fixture = text.generate(seededRandom(42)) // reproducible seed data
+text.is(fixture) // true — guard / generator stay in lockstep
 ```
 
 ## Tests
