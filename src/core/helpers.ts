@@ -47,6 +47,11 @@ import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '
  *
  * @param markdown - The raw markdown source
  * @returns The document's lines, line-terminators stripped
+ *
+ * @example
+ * ```ts
+ * splitLines('a\r\nb\nc') // ['a', 'b', 'c']
+ * ```
  */
 export function splitLines(markdown: string): readonly string[] {
 	const lines = markdown.replace(/\r\n?/g, '\n').split('\n')
@@ -60,6 +65,11 @@ export function splitLines(markdown: string): readonly string[] {
  *
  * @param line - The line to measure
  * @returns The number of leading space / tab characters
+ *
+ * @example
+ * ```ts
+ * leadingIndent('  text') // 2
+ * ```
  */
 export function leadingIndent(line: string): number {
 	let count = 0
@@ -80,6 +90,11 @@ export function leadingIndent(line: string): number {
  *
  * @param line - The candidate line
  * @returns The heading level (1–6) and its raw inline text, or `undefined`
+ *
+ * @example
+ * ```ts
+ * extractHeading('## Title') // { level: 2, text: 'Title' }
+ * ```
  */
 export function extractHeading(
 	line: string,
@@ -99,6 +114,11 @@ export function extractHeading(
  *
  * @param line - The candidate line
  * @returns The fence marker run and its language tag, or `undefined`
+ *
+ * @example
+ * ```ts
+ * extractFence('```ts') // { marker: '```', lang: 'ts' }
+ * ```
  */
 export function extractFence(
 	line: string,
@@ -120,6 +140,11 @@ export function extractFence(
  *
  * @param line - The candidate line
  * @returns The list-item parts, or `undefined` when not a list item
+ *
+ * @example
+ * ```ts
+ * extractListItem('- item') // { ordered: false, start: 1, content: 'item', indent: 0, marker: 2 }
+ * ```
  */
 export function extractListItem(line: string): ListItemParts | undefined {
 	const unordered = /^(\s*)([-*+])\s+(.*)$/.exec(line)
@@ -149,6 +174,11 @@ export function extractListItem(line: string): ListItemParts | undefined {
  *
  * @param line - A blockquote line (per {@link isQuote})
  * @returns The line with its leading `>` (and one space) removed
+ *
+ * @example
+ * ```ts
+ * stripQuote('> text') // 'text'
+ * ```
  */
 export function stripQuote(line: string): string {
 	return line.replace(/^\s{0,3}>\s?/, '')
@@ -161,6 +191,11 @@ export function stripQuote(line: string): string {
  *
  * @param row - The raw table row line
  * @returns The row's cells, in column order
+ *
+ * @example
+ * ```ts
+ * splitTableRow('| a | b |') // ['a', 'b']
+ * ```
  */
 export function splitTableRow(row: string): readonly string[] {
 	const cells: string[] = []
@@ -191,6 +226,11 @@ export function splitTableRow(row: string): readonly string[] {
  *
  * @param delimiter - The table's delimiter row
  * @returns One alignment per column, in column order
+ *
+ * @example
+ * ```ts
+ * tableAlignments('| :--- | ---: |') // ['left', 'right']
+ * ```
  */
 export function tableAlignments(delimiter: string): readonly TableAlign[] {
 	return splitTableRow(delimiter).map((cell) => {
@@ -216,6 +256,11 @@ export function tableAlignments(delimiter: string): readonly TableAlign[] {
  * @param lines - The document's lines
  * @param index - The line index to test
  * @returns `true` when the line begins a different block
+ *
+ * @example
+ * ```ts
+ * startsBlock(['text', '## Heading'], 1) // true
+ * ```
  */
 export function startsBlock(lines: readonly string[], index: number): boolean {
 	const line = lines[index] ?? ''
@@ -237,6 +282,11 @@ export function startsBlock(lines: readonly string[], index: number): boolean {
  *
  * @param text - The raw text possibly carrying `\x` escapes
  * @returns The text with escapable `\x` reduced to `x`
+ *
+ * @example
+ * ```ts
+ * unescapeText('\\*hi\\*') // '*hi*'
+ * ```
  */
 export function unescapeText(text: string): string {
 	let out = ''
@@ -258,6 +308,12 @@ export function unescapeText(text: string): string {
  *
  * @param nodes - The inline nodes (possibly with adjacent text runs)
  * @returns The nodes with consecutive text nodes concatenated
+ *
+ * @example
+ * ```ts
+ * coalesceText([{ element: 'text', value: 'a' }, { element: 'text', value: 'b' }])
+ * // [{ element: 'text', value: 'ab' }]
+ * ```
  */
 export function coalesceText(nodes: readonly InlineNode[]): readonly InlineNode[] {
 	const out: InlineNode[] = []
@@ -282,6 +338,11 @@ export function coalesceText(nodes: readonly InlineNode[]): readonly InlineNode[
  * @param start - The index of the opening backtick
  * @param to - The exclusive end of the scan window
  * @returns The span text + end index, or `undefined`
+ *
+ * @example
+ * ```ts
+ * scanCode('`code`', 0, 6) // { value: 'code', end: 6 }
+ * ```
  */
 export function scanCode(
 	source: string,
@@ -325,6 +386,12 @@ export function scanCode(
  *   at {@link MAX_DEPTH} the link's text children degrade to literal text instead of
  *   recursing further
  * @returns The parsed {@link LinkNode} + end index, or `undefined`
+ *
+ * @example
+ * ```ts
+ * scanLink('[text](url)', 0, 11)
+ * // { node: { element: 'link', href: 'url', children: [...] }, end: 11 }
+ * ```
  */
 export function scanLink(
 	source: string,
@@ -387,6 +454,12 @@ export function scanLink(
  *   at {@link MAX_DEPTH} the emphasis's children degrade to literal text instead of
  *   recursing further
  * @returns The parsed {@link EmphasisNode} + end index, or `undefined`
+ *
+ * @example
+ * ```ts
+ * scanEmphasis('*em*', 0, 4)
+ * // { node: { element: 'emphasis', strong: false, children: [...] }, end: 4 }
+ * ```
  */
 export function scanEmphasis(
 	source: string,
@@ -448,6 +521,11 @@ export function scanEmphasis(
  *   it emits as a single literal text node - so pathological nesting (`[[[[…`,
  *   `****…`) cannot exhaust the call stack.
  * @returns The parsed inline nodes (NOT yet coalesced)
+ *
+ * @example
+ * ```ts
+ * scanInline('hi *there*', 0, 10) // [{ element: 'text', value: 'hi ' }, { element: 'emphasis', ... }]
+ * ```
  */
 export function scanInline(
 	source: string,
@@ -516,6 +594,11 @@ export function scanInline(
  *
  * @param text - The raw text
  * @returns The HTML-escaped text
+ *
+ * @example
+ * ```ts
+ * escapeHtml('<a>&"\'') // '&lt;a&gt;&amp;&quot;&#39;'
+ * ```
  */
 export function escapeHtml(text: string): string {
 	return text
@@ -539,6 +622,12 @@ export function escapeHtml(text: string): string {
  *
  * @param href - The raw link destination
  * @returns A safe, escaped `href` (empty when the scheme is unsafe or protocol-relative)
+ *
+ * @example
+ * ```ts
+ * sanitizeUrl('javascript:alert(1)') // ''
+ * sanitizeUrl('/path')               // '/path'
+ * ```
  */
 export function sanitizeUrl(href: string): string {
 	// Strip every whitespace + C0/C1 control codepoint (≤ U+0020 or U+007F–U+009F)

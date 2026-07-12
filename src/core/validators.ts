@@ -41,6 +41,12 @@ import { splitTableRow } from './helpers.js'
  *
  * @param character - The character to test
  * @returns `true` when it is inline whitespace
+ *
+ * @example
+ * ```ts
+ * isWhitespace(' ') // true
+ * isWhitespace('a') // false
+ * ```
  */
 export function isWhitespace(character: string): boolean {
 	return character === ' ' || character === '\t' || character === '\n'
@@ -52,6 +58,12 @@ export function isWhitespace(character: string): boolean {
  *
  * @param character - The single character after a backslash
  * @returns `true` when a backslash before it is an escape
+ *
+ * @example
+ * ```ts
+ * isEscapable('*') // true
+ * isEscapable('a') // false
+ * ```
  */
 export function isEscapable(character: string): boolean {
 	return /[\\`*_{}[\]()#+\-.!>~|]/.test(character)
@@ -64,6 +76,11 @@ export function isEscapable(character: string): boolean {
  *
  * @param line - The candidate line
  * @returns `true` when the line is blank
+ *
+ * @example
+ * ```ts
+ * isBlankLine('   ') // true
+ * ```
  */
 export function isBlankLine(line: string): boolean {
 	return isEmptyString(line.trim())
@@ -75,6 +92,11 @@ export function isBlankLine(line: string): boolean {
  *
  * @param line - The candidate line
  * @returns `true` when the line begins a blockquote
+ *
+ * @example
+ * ```ts
+ * isQuote('> quoted') // true
+ * ```
  */
 export function isQuote(line: string): boolean {
 	return /^\s{0,3}>/.test(line)
@@ -87,6 +109,11 @@ export function isQuote(line: string): boolean {
  * @param line - The candidate closing line
  * @param marker - The opening fence's marker run (from {@link extractFence})
  * @returns `true` when `line` closes the fence
+ *
+ * @example
+ * ```ts
+ * isFenceClose('```', '```') // true
+ * ```
  */
 export function isFenceClose(line: string, marker: string): boolean {
 	const character = marker[0] === '~' ? '~' : '`'
@@ -108,6 +135,12 @@ export function isFenceClose(line: string, marker: string): boolean {
  *
  * @param character - The single character to test, or `undefined` past the end of a line
  * @returns `true` when it is whitespace
+ *
+ * @example
+ * ```ts
+ * isFenceWhitespace(' ')         // true
+ * isFenceWhitespace(undefined)   // false
+ * ```
  */
 export function isFenceWhitespace(character: string | undefined): boolean {
 	return (
@@ -127,6 +160,11 @@ export function isFenceWhitespace(character: string | undefined): boolean {
  *
  * @param line - The candidate line
  * @returns `true` when the line is a thematic break
+ *
+ * @example
+ * ```ts
+ * isThematicBreak('---') // true
+ * ```
  */
 export function isThematicBreak(line: string): boolean {
 	const stripped = line.trim().replace(/\s+/g, '')
@@ -144,6 +182,11 @@ export function isThematicBreak(line: string): boolean {
  * @param header - The candidate header line
  * @param delimiter - The line after it (the candidate delimiter)
  * @returns `true` when the two lines open a table
+ *
+ * @example
+ * ```ts
+ * isTableStart('| a |', '| - |') // true
+ * ```
  */
 export function isTableStart(header: string, delimiter: string | undefined): boolean {
 	if (delimiter === undefined || !header.includes('|')) return false
@@ -159,12 +202,26 @@ export function isHeadingNode(node: MarkdownNode): node is HeadingNode {
 	return node.element === 'heading'
 }
 
-/** Determine whether a node is a paragraph block. */
+/**
+ * Determine whether a node is a paragraph block.
+ *
+ * @example
+ * ```ts
+ * isParagraphNode({ element: 'paragraph', children: [] }) // true
+ * ```
+ */
 export function isParagraphNode(node: MarkdownNode): node is ParagraphNode {
 	return node.element === 'paragraph'
 }
 
-/** Determine whether a node is a list block. */
+/**
+ * Determine whether a node is a list block.
+ *
+ * @example
+ * ```ts
+ * isListNode({ element: 'list', ordered: false, start: 1, items: [] }) // true
+ * ```
+ */
 export function isListNode(node: MarkdownNode): node is ListNode {
 	return node.element === 'list'
 }
@@ -174,29 +231,64 @@ export function isTableNode(node: MarkdownNode): node is TableNode {
 	return node.element === 'table'
 }
 
-/** Determine whether a node is a fenced code block. */
+/**
+ * Determine whether a node is a fenced code block.
+ *
+ * @example
+ * ```ts
+ * isCodeBlockNode({ element: 'codeBlock', code: 'x' }) // true
+ * ```
+ */
 export function isCodeBlockNode(node: MarkdownNode): node is CodeBlockNode {
 	return node.element === 'codeBlock'
 }
 
-/** Determine whether a node is a blockquote block. */
+/**
+ * Determine whether a node is a blockquote block.
+ *
+ * @example
+ * ```ts
+ * isBlockquoteNode({ element: 'blockquote', children: [] }) // true
+ * ```
+ */
 export function isBlockquoteNode(node: MarkdownNode): node is BlockquoteNode {
 	return node.element === 'blockquote'
 }
 
-/** Determine whether a node is a thematic break (horizontal rule) block. */
+/**
+ * Determine whether a node is a thematic break (horizontal rule) block.
+ *
+ * @example
+ * ```ts
+ * isThematicBreakNode({ element: 'thematicBreak' }) // true
+ * ```
+ */
 export function isThematicBreakNode(node: MarkdownNode): node is ThematicBreakNode {
 	return node.element === 'thematicBreak'
 }
 
 // === Inline guards
 
-/** Determine whether a node is a plain text run. */
+/**
+ * Determine whether a node is a plain text run.
+ *
+ * @example
+ * ```ts
+ * isTextNode({ element: 'text', value: 'hi' }) // true
+ * ```
+ */
 export function isTextNode(node: MarkdownNode): node is TextNode {
 	return node.element === 'text'
 }
 
-/** Determine whether a node is an emphasis run (`*em*` / `**strong**`). */
+/**
+ * Determine whether a node is an emphasis run (`*em*` / `**strong**`).
+ *
+ * @example
+ * ```ts
+ * isEmphasisNode({ element: 'emphasis', strong: false, children: [] }) // true
+ * ```
+ */
 export function isEmphasisNode(node: MarkdownNode): node is EmphasisNode {
 	return node.element === 'emphasis'
 }
@@ -207,6 +299,11 @@ export function isEmphasisNode(node: MarkdownNode): node is EmphasisNode {
  * @remarks
  * Narrows to {@link CodeSpanNode} - the node whose `element` discriminant is
  * `'codeSpan'`.
+ *
+ * @example
+ * ```ts
+ * isCodeSpanNode({ element: 'codeSpan', value: 'x' }) // true
+ * ```
  */
 export function isCodeSpanNode(node: MarkdownNode): node is CodeSpanNode {
 	return node.element === 'codeSpan'

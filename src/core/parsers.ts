@@ -31,6 +31,11 @@ import { isNonEmptyArray } from '@orkestrel/contract'
  * @param lines - The markdown lines to parse.
  * @param depth - The current recursion depth (blockquotes/lists increment it).
  * @returns The parsed block nodes.
+ *
+ * @example
+ * ```ts
+ * parseBlocks(['# Hi'], 0) // [{ element: 'heading', level: 1, children: [...] }]
+ * ```
  */
 export function parseBlocks(lines: readonly string[], depth: number): readonly BlockNode[] {
 	if (depth >= MAX_DEPTH) {
@@ -119,6 +124,11 @@ export function parseBlocks(lines: readonly string[], depth: number): readonly B
  * @param lines - The markdown lines to scan.
  * @param start - The index of the header row.
  * @returns The parsed table node and the index of the first line after it.
+ *
+ * @example
+ * ```ts
+ * collectTable(['| a |', '| - |'], 0) // { node: { element: 'table', ... }, next: 2 }
+ * ```
  */
 export function collectTable(
 	lines: readonly string[],
@@ -155,6 +165,11 @@ export function collectTable(
  * @param start - The index of the first list item.
  * @param depth - The current recursion depth (each item recurses at `depth + 1`).
  * @returns The parsed list node and the index of the first line after it.
+ *
+ * @example
+ * ```ts
+ * collectList(['- item'], 0, 0) // { node: { element: 'list', ... }, next: 1 }
+ * ```
  */
 export function collectList(
 	lines: readonly string[],
