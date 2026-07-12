@@ -194,7 +194,7 @@ export function stripQuote(line: string): string {
  *
  * @example
  * ```ts
- * splitTableRow('| a | b |') // ['a', 'b']
+ * splitTableRow('|a|b|') // ['a', 'b']
  * ```
  */
 export function splitTableRow(row: string): readonly string[] {
