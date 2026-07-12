@@ -1,294 +1,284 @@
 # PROPOSAL: `@orkestrel/guide`
 
-> A parity checker for `@orkestrel` guides. Any package installs it as a devDependency and runs it against its `guides/` folder to prove — mechanically, in CI — that every guide is in **bijection** with the code it documents. Built on `@orkestrel/markdown` (the parsing engine) and `@orkestrel/contract` (the report/guard machinery).
+> A guides-parity **test helper** for `@orkestrel` packages. A consumer adds it as a devDependency, drops one short test file into `tests/guides/src/parity.test.ts`, wires a vitest `guides` project, and thereafter every guide is proven — mechanically, in CI, as ordinary vitest assertions — to be in **bijection** with the code it documents. No CLI, no runner, no exit-code contract: it is a library of extraction + reflection helpers that your test suite calls. Built on `@orkestrel/markdown`.
 
-## 1. Motivation & doctrine — AGENTS §22 made executable
+## 1. Motivation & doctrine — AGENTS §22 as a vitest suite
 
-AGENTS §22 declares docs to be *enforced contracts*, not comments: every backticked API in a guide resolves to a real export, every public export is documented, every behavioral interface's `## Methods` table lists exactly its call-signature members, each implementing class exposes exactly its interface's methods, and a guide scopes parity to its concept's source. Today that contract is asserted by hand-written, per-repo parity tests. `contract.md` even spells the machine-checkable spec out as its `## Contract` invariants 1 (surface bijection, both directions) and 6 (method bijection + class-no-extra-surface) — but `markdown.md` has **no** `## Contract` section at all. The enforcement is real but bespoke, duplicated, and asymmetric across repos.
+AGENTS §22 declares docs to be *enforced contracts*, not comments: every public export is documented, every behavioral interface's `## Methods` table lists exactly its call-signature members, each implementing class exposes exactly those methods, and every relative link resolves. Today that enforcement exists only as convention plus a proven-but-project-bound helper — the earlier terrain project's `setupGuides.ts` — and neither `contract` nor `markdown` runs a parity suite at all yet.
 
-`@orkestrel/guide` turns §22 into one reusable engine. It reads a guide as data, reflects the source as truth, and reports every drift as a typed `Finding` with a stable exit code. The doctrine: **a guide is a claim about code; the checker is the proof.** Drift fails CI — that is the system working (§22), not a test to suppress.
+`@orkestrel/guide` promotes that proven helper into one reusable package. The doctrine is unchanged — **a guide is a claim about code; the test is the proof** — but the delivery is deliberately humble: it is not a program you *run*, it is a set of functions your existing test project *imports*. Drift surfaces as a red vitest assertion with an excellent diff (`expect(missing).toEqual([])` → `[ 'function flattenText' ]`), reconciled like any other failing test. This is a direct modernization of terrain's `setupGuides.ts`, ported onto the new stateful `@orkestrel/markdown` API and packaged for reuse.
 
-## 2. The guide-format contract (normative)
+## 2. The guide-format contract + manifest
 
-The checker enforces a structural contract every conforming guide MUST satisfy. This is the guide anatomy both existing repos already share, promoted to a spec.
+The helpers assume the guide anatomy both existing repos already share; no config file, convention only.
 
-**Guide anatomy** (`guides/src/<name>.md`), in order:
+**Guide anatomy** (`guides/src/<name>.md`):
 
-1. `# Title` — a single H1.
-2. **Summary** — one blockquote (`>`) immediately after the title, ending with `Source:` + `barrel` pointers.
-3. `## Surface` — one or more H3 subsections; each H3 is either a backticked identifier heading (a documented class/entity) OR a category (`### Types`, `### Helpers`, …) followed by **one table** whose **first column** is a backticked identifier and whose **second column** is a `Kind` ∈ {`type`, `interface`, `const`, `function`}.
-4. `## Methods` — one H4 `` #### `InterfaceName` `` per behavioral interface, each followed by one `| Method | Returns | Behavior |` table.
-5. **Prose sections** — free-form domain explanation (unconstrained).
-6. `## Patterns` — one or more ` ```ts ` fenced blocks, executable/typecheckable.
-7. `## Tests` — bullet list of relative links to test files, with coverage notes.
-8. `## Contract` — the numbered parity invariants (REQUIRED for any guide that has a `## Methods` section; see C6 for the severity timeline).
-9. `## See also` — links to `AGENTS.md`, the guides `README.md`, and any dependency guides.
+1. `# Title` (single H1) and a `>` summary blockquote.
+2. `## Surface` — one or more H3 subsections. Each H3 is either a **category** (`### Types`, `### Helpers`, …) followed by one table whose **first column** is a backticked identifier and which carries a **`Kind`** column (`type` / `interface` / `const` / `function` / `class`), OR a **backticked entity heading** (`` ### `Markdown` ``) documenting a class export.
+3. `## Methods` — one H4 `` #### `InterfaceName` `` per behavioral interface, each followed by one `| Method | … |` table whose first column is the backticked member name.
+4. `## Tests` — a bullet list of relative links to the test files.
+5. Free-form prose, `## Patterns`, `## See also` — unconstrained by the checks.
 
-**Manifest format** (`guides/README.md`) — the machine-readable map:
-
-- A `## By concept` table `| Concept | Spec | Source | Tests |` — each row maps a guide (`Spec`) to its source directory (`Source`) and tests directory (`Tests`). This is the run manifest: one row = one check target.
-- A `## By directory` reverse table `| Directory | Guide |`.
-- An optional `## Dependency reference` section whose links cite sibling guides documenting runtime-dependency packages (e.g. `markdown/guides/README.md` cites `contract.md`). These supply the **attributed-externals** allow-set for C4.
-
-Convention over configuration: the manifest + the anatomy are the entire contract. There is no config file. The one escape hatch is the dependency-reference section (which externals a guide may legitimately name) — itself a documented, checkable convention, not a private config.
+**Manifest** (`guides/README.md`) — the run map. A `## By concept` table `| Concept | Spec | Source | Tests |`; one row = one check target. `Spec` links the guide, `Source` links its source directory (a cell MAY link several directories — a layer guide spanning a core module plus its backend implementations — which parse to a multi-directory scope), `Tests` links its test directory. Adding a row auto-extends coverage with **zero test edits**. An optional `## Dependency reference` section names sibling guides for runtime-dependency packages (e.g. `markdown` cites `contract.md`); it is documentation, not consumed by v1's checks.
 
 ## 3. Package identity & dependencies
 
-- **Name:** `@orkestrel/guide` · **Repo:** `orkestrel/guide` · ESM-only · `node >=24` · house template layout, core + server surfaces + a `bin/`.
-- **Runtime deps:**
-  - `@orkestrel/markdown` — the guide/manifest parsing engine. `new Markdown(source)` + `walk`/`filter`/`find` + node guards + `flattenText` extract the structured view over the AST. Pure, core-safe.
-  - `@orkestrel/contract` — the report layer. `ContractShape` + `createContract` compile the `Finding`/`Report`/`Summary` types into `is`/`parse`/`schema`/`generate` bundles; its guard combinators back the from-unknown validators. Pure, core-safe.
-- **Peer dep:** `typescript` (`>=6 <7`). Source reflection uses the **consumer's** compiler and the **consumer's** `tsconfig.json`, so the checker must bind the same TypeScript the consumer builds and type-checks with. Pinning our own copy would risk reflecting a different language version than the one the guide's code is written against. A peer dep (with a matching `devDependency` here for our own tests) is the correct shape: the consumer owns the compiler, we consume it. Range `>=6 <7` because the compiler API surface we touch (`getExportsOfModule`, `getDeclaredTypeOfSymbol`, `getCallSignatures`, `parseJsonConfigFileContent`) is stable within a major but not guaranteed across one.
+- **Name** `@orkestrel/guide` · **repo** `orkestrel/guide` · ESM-only · `node >=24` · house layout, `core` + `server` surfaces, **no `bin/`**.
+- **Runtime dependency — exactly one:** `@orkestrel/markdown`. `createMarkdown` / the `MarkdownInterface` (`walk` / `find` / `filter`), the `is*Node` guards, `walkNodes`, and `flattenText` are the entire engine the extraction layer needs. Pure and core-safe.
+- **`@orkestrel/contract` — deliberately NOT a direct dependency.** The v1 proposal used contract to compile a `Finding`/`Report`/`Summary` model. This redesign drops that model entirely (§4): findings are `readonly string[]` diffs asserted with `expect(diff).toEqual([])`, which yields a better vitest failure diff than any custom report and costs zero dependencies (AGENTS §1: no unsolicited deps). `contract` remains only a *documented* dependency-reference in the markdown guide, not a code import.
+- **No peer `typescript`.** Source truth is read with line scanners (§7), not the compiler API — so there is no peer compiler to bind, no version-skew surface, and type-only exports are read directly from source text.
 
-## 4. Architecture
+## 4. Architecture & public API
 
-Two surfaces, split by the strict-core rule: `core` is pure ECMAScript and may not touch a host global; the TypeScript compiler API and `node:fs` need Node, so they live in `server`. Core parses strings and runs pure check algorithms; server does all I/O and reflection and injects it into core through an interface.
+Two surfaces, split by the strict-core rule. `core` is pure ECMAScript: it parses guide markdown and runs the pure comparison leaves. `server` owns all I/O — `node:fs` directory walking and file reads. Dependency direction: server imports core; core never imports server. `Source` (server) implements `SourceInterface` (declared in core `types.ts`), the dependency-inversion seam that lets the pure comparison helpers depend only on the interface.
 
-```
-src/core/     pure engine: guide parsing, check algorithms, report model
-src/server/   node: TS-compiler reflection, fs loaders, the CLI runner
-bin/guide.ts  the `guide` executable entrypoint
-```
+The design is intentionally lean: **no `validators.ts`, no `shapers.ts`, no `Checker`/`Runner` classes.** The "checks" are pure set-difference helpers the drop-in test composes directly, so there is no orchestration entity to own.
 
-### `src/core` (pure, published as `@orkestrel/guide/core`)
+### `src/core` (pure, `@orkestrel/guide/core`)
 
-| File            | Holds                                                                                                      |
-| --------------- | ---------------------------------------------------------------------------------------------------------- |
-| `types.ts`      | **source of truth** — every interface/type below                                                            |
-| `constants.ts`  | `CHECKS`, `REQUIRED_SECTIONS`, `SURFACE_KINDS`, `LANGUAGE_LITERALS`, `EXIT_OK/FINDINGS/USAGE/INTERNAL`       |
-| `helpers.ts`    | pure leaves — `diffSets`, `flattenCell`, `identifiers` (tokenizer), `resolveToken`, `normalizeLink`          |
-| `parsers.ts`    | guide/manifest extraction pipeline over the Markdown AST (the structured spine)                              |
-| `validators.ts` | `isFinding`/`isReport`/`isSeverity`/`isCheck`/`isManifest` guards (from-unknown, via contract combinators)   |
-| `shapers.ts`    | `findingShape`, `severityShape`, `reportShape`, `summaryShape`, `manifestEntryShape` (`ContractShape`)       |
-| `Guide.ts`      | the `Guide` class (stateful structured view over a guide)                                                    |
-| `Checker.ts`    | the `Checker` class — `run()` composes the checks over a `Guide` + injected `SourceInterface`                |
-| `factories.ts`  | `createGuide`, `createChecker`, `createFindingContract`, `createReportContract`, `createSummaryContract`    |
-| `index.ts`      | the sole core barrel                                                                                         |
+| File           | Holds                                                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`     | source of truth — `SurfaceSymbol`, `ExportKind`, `GuideModule`, `ManifestEntry`, `MethodGroup`, `GuideInterface`, `SourceInterface`   |
+| `constants.ts` | `EXTERNAL_SCHEMES`, `SURFACE`, `METHODS`, `TESTS`, `MANIFEST` heading literals                                                        |
+| `helpers.ts`   | pure leaves — `symbolKey`, `findMissing`, `missingSymbols`, `isExternalLink`, `resolveLink`, `resolvePath`, `firstCode`, `kindIndex`  |
+| `parsers.ts`   | guide/manifest extraction over the Markdown AST — `extractSurface`, `extractMethods`, `extractLinks`, `extractTests`, `sectionBlocks`, `parseManifest` |
+| `Guide.ts`     | the `Guide` class — a stateful structured view over one guide (extraction cached in the constructor)                                  |
+| `factories.ts` | `createGuide`                                                                                                                         |
+| `index.ts`     | the sole core barrel                                                                                                                  |
 
-Homes follow §5 kind-purity: **guide-structure extraction** is a parsing pipeline → `parsers.ts` (mirroring how `@orkestrel/markdown` uses `parsers.ts` for its block/inline spine); its pure scanning leaves → `helpers.ts`. The **eight check algorithms** are the `Checker`'s behavior — genuine orchestration comparing two enumerations and emitting findings — so they are `#` private methods on `Checker` (§7), never file-local functions; their extractable leaves (set diff, token resolution, kind mapping) live in `helpers.ts`, keeping `Checker` a real composition, not a hollow delegate. **Report shapes** → `shapers.ts`, compiled in `factories.ts`.
+### `src/server` (node, `@orkestrel/guide`)
 
-### `src/server` (node, published as `@orkestrel/guide`)
-
-| File           | Holds                                                                                          |
-| -------------- | ----------------------------------------------------------------------------------------------- |
-| `types.ts`     | server-local: `SourceOptions`, `RunnerOptions`                                                   |
-| `constants.ts` | `DEFAULT_TSCONFIG`, `DEFAULT_MANIFEST` path conventions                                          |
-| `helpers.ts`   | reflection leaves — `symbolToExport`, `interfaceMembers`, `classMembers`, `loadFile`, `format`   |
-| `Source.ts`    | the `Source` class — implements `SourceInterface`: TS-compiler reflection + fs + diagnostics     |
-| `Runner.ts`    | the `Runner` class — manifest-driven multi-guide orchestration                                   |
-| `factories.ts` | `createSource`, `createRunner`                                                                   |
-| `index.ts`     | the sole server barrel                                                                           |
-
-Dependency direction: server imports core; core never imports server. `Source` (server) implements `SourceInterface` (declared in core `types.ts`), so core's checks depend only on the interface — the dependency-inversion seam that lets pure core call `source.exists(...)` / `source.members(...)` without importing `node:fs` or `typescript`. Per §6 neither barrel re-exports the other's symbols; a consumer imports the value API from `@orkestrel/guide` and report **types** from `@orkestrel/guide/core`.
+| File           | Holds                                                                                                                        |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`     | server-local `SourceOptions`                                                                                                   |
+| `helpers.ts`   | scanner grammar + fs leaves — `exportsFrom`, `declarationBody`, `joinHead`, `memberMethods`, `moduleFiles`, `readText`, `pathExists` |
+| `Source.ts`    | the `Source` class — implements `SourceInterface`: reflects exports/members/existence off disk via line scanners               |
+| `factories.ts` | `createSource`                                                                                                                 |
+| `index.ts`     | the sole server barrel                                                                                                         |
 
 ### Public API sketch
 
 ```ts
-// ---- report model (core/types.ts) ----
-type Severity = 'error' | 'warning' | 'info'
-type Check = 'surface' | 'methods' | 'kind' | 'resolve' | 'link' | 'structure' | 'tests' | 'patterns'
-interface Finding {                       // one drift, plain data (no behavior)
-	readonly check: Check                 // which check produced it
-	readonly severity: Severity           // error fails CI; warning/info do not
-	readonly guide: string                // guide path it belongs to
-	readonly message: string              // human-readable summary
-	readonly identifier?: string          // the offending symbol/token, when applicable
-	readonly location?: string            // section / line pointer
-}
-interface Report {                        // one guide's outcome
-	readonly guide: string
-	readonly findings: readonly Finding[]
-	readonly passed: boolean              // no error-severity findings
-}
-interface Summary {                       // a whole run
-	readonly reports: readonly Report[]
-	readonly errors: number               // total error-severity findings
-	readonly warnings: number
-	readonly passed: boolean
-}
-
-// ---- reflected source truth (core/types.ts; implemented in server) ----
+// ---- core/types.ts ----
 type ExportKind = 'type' | 'interface' | 'const' | 'function' | 'class'
-interface Export { readonly name: string; readonly kind: ExportKind; readonly implements?: readonly string[] }
-interface Member { readonly name: string; readonly callable: boolean }  // callable = a method; else a data member
-interface Diagnostic { readonly message: string; readonly line: number }
-interface SourceInterface {
-	exports(): readonly Export[]                    // every barrel export incl. type-only
-	export(name: string): Export | undefined        // one export by name
-	members(name: string): readonly Member[]         // an interface's or class's public members
-	exists(path: string): boolean                    // fs existence of a resolved relative path
-	diagnose(fence: string): readonly Diagnostic[]   // typecheck one ```ts pattern fence
+interface SurfaceSymbol {                     // one documented / exported symbol
+	readonly name: string                     // its identifier
+	readonly kind: ExportKind                 // its declaration kind — half of the bijection key
+}
+type GuideModule = string | readonly string[] // one source dir, or several (a layer guide's scope)
+interface ManifestEntry {                     // one `## By concept` row, paths normalized to workspace root
+	readonly concept: string
+	readonly spec: string                     // the guide .md, root-relative
+	readonly source: GuideModule              // the source dir(s) it documents
+	readonly tests: string                    // the tests dir
+}
+interface MethodGroup {                       // one `#### `Interface`` block in `## Methods`
+	readonly interface: string                // the backticked interface name
+	readonly methods: readonly string[]       // its documented Method-cell identifiers
+}
+interface GuideInterface {                    // the structured view of one guide (pure)
+	sections(): readonly string[]             // `##` heading names, in order (empty-extraction guard)
+	surface(): readonly SurfaceSymbol[]       // every Surface identifier + Kind, table rows ∪ entity headings
+	methods(): readonly MethodGroup[]         // one group per documented behavioral interface
+	links(): readonly string[]                // every link href in the guide (incl. table cells)
+	tests(): readonly string[]                // the relative test links under `## Tests`
+}
+interface SourceInterface {                   // reflected source truth (implemented in server)
+	exports(): readonly SurfaceSymbol[]       // every module-scope export incl. type-only, by (name, kind)
+	methods(name: string): readonly string[] // the call-signature members of `class`/`interface` `name`
+	exists(relative: string): boolean         // fs existence of a workspace-root-relative path
 }
 
-// ---- the structured guide view (core/types.ts) ----
-interface SurfaceEntry { readonly name: string; readonly kind: ExportKind }
-interface MethodGroup { readonly interface: string; readonly methods: readonly string[]; readonly data: readonly string[] }
-interface Claim { readonly token: string; readonly hard: boolean; readonly location: string }
-interface GuideInterface {
-	readonly title: string                 // the H1 text
-	readonly summary: string               // the blockquote summary, flattened
-	sections(): readonly string[]          // ## heading names, in order
-	surface(): readonly SurfaceEntry[]     // every Surface-table identifier + Kind
-	methods(): readonly MethodGroup[]      // one per documented behavioral interface
-	claims(): readonly Claim[]             // every backticked token, tagged hard vs prose
-	patterns(): readonly string[]          // ```ts fence bodies under ## Patterns
-	tests(): readonly string[]             // relative test links under ## Tests
-	links(): readonly string[]             // every relative link target in the guide
-}
+// ---- core: pure comparison leaves + factory ----
+function symbolKey(symbol: SurfaceSymbol): string                                    // `${kind} ${name}`
+function findMissing(names: readonly string[], source: readonly string[]): readonly string[]        // set difference
+function missingSymbols(symbols: readonly SurfaceSymbol[], source: readonly SurfaceSymbol[]): readonly string[] // symbolKey diff
+function isExternalLink(href: string): boolean                                       // http/https/mailto/tel/# → skip
+function resolveLink(from: string, target: string): string                           // resolve a link vs the guide's dir
+function parseManifest(markdown: string, base: string): readonly ManifestEntry[]     // `## By concept` → entries
+function createGuide(source: string): GuideInterface                                 // parse + cache extraction
 
-// ---- the check engine (core/types.ts) ----
-interface CheckerInterface { run(): Report }             // runs the enabled checks over one guide
-interface RunnerInterface { run(): Promise<Summary> }    // runs every manifest row (server)
-
-// ---- factories ----
-function createGuide(source: string): GuideInterface
-function createChecker(options: CheckerOptions): CheckerInterface   // { guide, source, checks?, patterns? }
-function createSource(options: SourceOptions): SourceInterface      // { tsconfig, root } (server)
-function createRunner(options: RunnerOptions): RunnerInterface      // { root, manifest?, checks?, patterns? } (server)
+// ---- server: reflection + factory ----
+interface SourceOptions { readonly root: string; readonly module: GuideModule }
+function createSource(options: SourceOptions): SourceInterface
+function readText(root: string, relative: string): string                            // read a workspace file
 ```
-
-`CheckerOptions`: `{ guide: GuideInterface; source: SourceInterface; checks?: readonly Check[]; patterns?: 'off' | 'typecheck' | 'execute' }` — `checks` scopes which checks run (default all), enabling per-check fixture testing.
 
 ## 5. The check catalog
 
-Each check is deterministic; a passing check emits zero findings; every failure is a `Finding`. `guide`/`location` fields are elided from payloads below for brevity.
+Each check is a pure comparison that a passing run reduces to `expect([]).toEqual([])`. Every check pairs with an explicit **non-vacuousness guard** so a renamed heading or a moved section fails *loudly* instead of extracting nothing and passing.
 
-**C1 — Surface bijection (`surface`).** DOC = the identifiers in every `## Surface` table's first column ∪ every backticked `## Surface` H3 heading. SRC = `source.exports()` names (the Source-dir barrel, incl. type-only). Assert `DOC == SRC` both directions. Payload: `{ check: 'surface', severity: 'error', direction: 'doc→source' | 'source→doc', identifier }` — e.g. `{ direction: 'source→doc', identifier: 'flattenText', message: 'export `flattenText` is undocumented' }`.
+**SB — Surface bijection (kind folded in).** *Inputs:* `guide.surface()` (each Surface table's first-column code span + its `Kind` cell, located by header text; plus each backticked entity H3 as `{name, kind:'class'}`) vs `source.exports()`. *Algorithm:* `missingSymbols` both directions over `symbolKey` — so a symbol can drift in neither name **nor** kind (kind agreement is not a separate check; it is baked into the key). *Guard:* `guide.surface().length > 0`. *Failing diff:* `[ 'function flattenText' ]` (an export with no Surface row) or `[ 'const MAX_DEPTH' ]` (documented `function`, declared `const`).
 
-**C2 — Methods bijection (`methods`).** For each `MethodGroup` (interface `I`): DOC_M = its Methods-table `Method` cells; SRC_M = `source.members(I)` filtered to `callable`. Assert `DOC_M == SRC_M` both directions; assert no non-`callable` member of `I` appears in DOC_M (data members belong in Surface). Then find implementer `X` (convention `I = XInterface → X`, verified by `source.export('X').implements` including `I`) and assert `source.members('X')` callable set `== SRC_M` (no extra public surface). Payload: `{ check: 'methods', severity: 'error', interface, identifier: member, direction, class? }`.
+**MB — Methods bijection + class-no-extra.** *Inputs:* per `MethodGroup`, its documented `methods` vs `source.methods(group.interface)`. *Algorithm:* `findMissing` both directions; then derive the implementer by convention (`XInterface → X`) and assert `findMissing(source.methods('X'), group.methods)` is empty — the class exposes **no** public method the interface does not document. The scanner's member regex already excludes `constructor`, getters/setters, `static`, and `#` privates, and the documented `readonly document`-style data member never matches (no `(`), so this mirrors §22's method-vs-data-member line exactly. *Guard:* `group.methods.length > 0`. *Failing diff:* `[ 'stream' ]`.
 
-**C3 — Kind agreement (`kind`).** For each `SurfaceEntry {name, kind}`, assert `source.export(name).kind == kind`. Payload: `{ check: 'kind', severity: 'error', identifier, message: 'documented `const`, reflected `function`' }`.
+**LI — Link integrity.** *Inputs:* `guide.links()` (a full-AST `filter(isLinkNode)` — table cells included). *Algorithm:* drop `isExternalLink` hrefs, `resolveLink` the rest against the guide's directory, keep those failing `source.exists`. *Guard:* the SB/MB extractions already prove the AST walk is live. *Failing diff:* `[ 'src/core/gone.ts' ]`.
 
-**C4 — Backtick resolution (`resolve`).** `guide.claims()` tags each backticked token. **Hard claims** — Surface first-column cells, Methods `Method` cells, backticked H3/H4 headings — must resolve to a real export/member (already covered by C1/C2; C4 also covers hard tokens in non-first cells, e.g. a `Shape` column naming another type). **Prose claims** — every other backtick — are resolved only if identifier-shaped (the `identifiers` tokenizer splits a fenced expression like `T | undefined` into `T`, `undefined`, discards operators/punctuation). Resolution order, first match wins:
+**TE — Tests-link existence.** *Inputs:* `guide.tests()` (the `## Tests` bullet links). *Algorithm:* `resolveLink` + `source.exists`; keep the missing. *Failing diff:* `[ 'tests/src/core/missing.test.ts' ]`.
 
-1. a name in `source.exports()`;
-2. a documented field/member name (any Surface `Shape` field or Methods member of this guide);
-3. an **attributed external** — a name documented in a dependency-reference guide's surface (e.g. `createContract`, `Guard` via `contract.md`);
-4. a `LANGUAGE_LITERALS` token (`true`/`false`/`undefined`/`null`/`string`/`number`/`boolean`/`readonly`/`Promise`/`Generator`/`ReadableStream`/…).
+**NV — Non-vacuousness (the minimal structure guard).** Not a body of anatomy rules — just the assertions that keep every other check honest: `parseManifest` yields ≥1 entry (an empty manifest must not pass a whole empty suite), `guide.surface()` is non-empty, and each `MethodGroup` is non-empty. A guide whose `## Surface` or `## Methods` heading was renamed extracts an empty set and **fails here**, rather than passing vacuously. Full anatomy linting, backtick-prose resolution, and pattern typechecking are deferred (§10).
 
-No match → `{ check: 'resolve', severity: 'error', identifier: token, message: 'unresolved backticked identifier' }`. C4 runs at `warning` in v0.1 (tiers 2 + 4 only, no reflection), promoted to `error` once tiers 1 + 3 land.
+## 6. The drop-in
 
-**C5 — Link integrity (`link`).** For each `guide.links()` target, resolve against the guide's directory and assert `source.exists(path)`. Payload: `{ check: 'link', severity: 'error', identifier: href, message: 'broken link → missing file' }`.
+This is the centerpiece: the entire consumer-side footprint is one short test file, one vitest project, one script.
 
-**C6 — Structure lint (`structure`).** Assert the §2 anatomy: title, summary blockquote, `## Surface` (each H3 well-formed: category-H3 → a first-column-backticked, Kind-second table), `## Methods` (H4 per interface + `| Method | Returns | Behavior |` table), `## Patterns` (≥1 ts fence), `## Tests`, `## See also`, and `## Contract` **when a `## Methods` section exists**. The `## Contract` requirement resolves the markdown.md ↔ contract.md asymmetry: it is `warning` in v0.1 (so markdown.md's absence is surfaced, not fatal) and `error` in v1 once adopted. Payload: `{ check: 'structure', severity, identifier: section, message: 'required section `## Contract` missing' }`.
-
-**C7 — Tests existence (`tests`).** Each `guide.tests()` link exists on disk (`source.exists`). Opt-in **mirror** sub-check (`warning`): every source file in the Source dir except non-behavioral kinds (`types.ts`/`constants.ts`/`index.ts`/`errors.ts`, §16) has a linked test. Payload: `{ check: 'tests', severity, identifier: path }`.
-
-**C8 — Patterns executability (`patterns`).** For each `guide.patterns()` fence, `source.diagnose(fence)` typechecks it under the consumer's tsconfig, with `@src/core` resolving to the Source-dir barrel (the fence is added to the program as a virtual `.ts` file; diagnostics filtered to it). Default tier `typecheck` when a tsconfig is available, else `off`; `execute` is deferred (a parity checker proves the examples *compile against current signatures* — deterministic and hermetic; running them needs a runtime and side-effect isolation, out of scope for v1). Payload: `{ check: 'patterns', severity: 'error', location: 'pattern #2', message: diagnostic }`.
-
-## 6. CLI & vitest integration
-
-**Bin `guide`.** Invocations: `guide` (check every `## By concept` row of the nearest `guides/README.md`), `guide <guide.md>` (one guide), flags `--patterns=off|typecheck|execute`, `--tests=mirror`, `--json`, `--quiet`. Manifest discovery walks up from cwd to the first `guides/README.md`, parses its concept table, and for each row builds a `Guide` (from the loaded `Spec` file) + a `Source` (from the consumer tsconfig + the `Source` dir), runs a `Checker`, and aggregates into a `Summary`.
-
-```
-$ guide
-guide  markdown  src/markdown.md
-  ✖ surface   export `flattenText` is undocumented                     (source→doc)
-  ✖ methods   `MarkdownInterface.walk` documented, not on interface    (doc→source)
-  ⚠ structure required section `## Contract` missing
-  12 checks · 2 errors · 1 warning
-
-Summary: 1 guide · 2 errors · 1 warning  → exit 1
-```
-
-**Exit-code contract (stable for CI):** `0` no errors (warnings allowed); `1` ≥1 error finding; `2` usage error (manifest/guide/tsconfig not found, empty manifest); `3` internal error (compiler failed to build a program). Constants `EXIT_OK/FINDINGS/USAGE/INTERNAL`.
-
-**The blessed vitest pattern** a consumer writes (`tests/guides/parity.test.ts`, a Node test project):
+**`tests/guides/src/parity.test.ts`** (blessed, ~45 lines):
 
 ```ts
-import { createRunner } from '@orkestrel/guide'
-import type { Finding } from '@orkestrel/guide/core'
 import { describe, expect, it } from 'vitest'
+import { fileURLToPath } from 'node:url'
+import {
+	createGuide,
+	findMissing,
+	isExternalLink,
+	missingSymbols,
+	parseManifest,
+	resolveLink,
+} from '@orkestrel/guide/core'
+import { createSource, readText } from '@orkestrel/guide'
 
-const summary = await createRunner({ root: process.cwd() }).run()
+const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
+const manifest = parseManifest(readText(ROOT, 'guides/README.md'), 'guides')
 
-describe('guide parity', () => {
-	for (const report of summary.reports) {
-		it(`${report.guide} has no parity errors`, () => {
-			const errors: readonly Finding[] = report.findings.filter((f) => f.severity === 'error')
-			expect(errors.map((e) => e.message)).toEqual([])
-		})
-	}
+it('manifest lists at least one guide', () => {
+	expect(manifest.length).toBeGreaterThan(0)
 })
+
+for (const entry of manifest) {
+	const guide = createGuide(readText(ROOT, entry.spec))
+	const source = createSource({ root: ROOT, module: entry.source })
+
+	describe(entry.concept, () => {
+		it('extracts a non-empty documented surface', () => {
+			expect(guide.surface().length).toBeGreaterThan(0)
+		})
+		it('documents every source export', () => {
+			expect(missingSymbols(source.exports(), guide.surface())).toEqual([])
+		})
+		it('documents only real exports', () => {
+			expect(missingSymbols(guide.surface(), source.exports())).toEqual([])
+		})
+
+		for (const group of guide.methods()) {
+			const members = source.methods(group.interface)
+			const entity = group.interface.replace(/Interface$/, '')
+			describe(group.interface, () => {
+				it('documents at least one method', () => {
+					expect(group.methods.length).toBeGreaterThan(0)
+				})
+				it('documents every interface method', () => {
+					expect(findMissing(members, group.methods)).toEqual([])
+				})
+				it('documents no phantom method', () => {
+					expect(findMissing(group.methods, members)).toEqual([])
+				})
+				if (entity !== group.interface) {
+					it(`${entity} exposes no undocumented method`, () => {
+						expect(findMissing(source.methods(entity), group.methods)).toEqual([])
+					})
+				}
+			})
+		}
+
+		it('resolves every relative link', () => {
+			const broken = guide
+				.links()
+				.filter((href) => !isExternalLink(href))
+				.map((href) => resolveLink(entry.spec, href))
+				.filter((path) => !source.exists(path))
+			expect(broken).toEqual([])
+		})
+		it('links only to test files that exist', () => {
+			const missing = guide
+				.tests()
+				.map((href) => resolveLink(entry.spec, href))
+				.filter((path) => !source.exists(path))
+			expect(missing).toEqual([])
+		})
+	})
+}
 ```
 
-## 7. How it uses `@orkestrel/markdown`
-
-`Guide` wraps `new Markdown(source)` and, in its constructor, runs the `parsers.ts` extraction once, caching the structured model its accessors project. The AST is flat (headings and following blocks are siblings under `document.children`), so extraction is an ordered walk that tracks the current heading context.
+**`vite.config.ts`** — add a `guides` project extending the repo's existing single `srcCore` config (Node env, its own include glob), and register it. Adapted from terrain's pattern to markdown/contract's shape:
 
 ```ts
-// parsers.ts — attach each table to the H2/H3 it follows (Surface extraction)
-export function collectSurface(markdown: MarkdownInterface): readonly SurfaceEntry[] {
-	const out: SurfaceEntry[] = []
-	let inSurface = false
-	for (const node of markdown.document.children) {
-		if (isHeadingNode(node)) inSurface = node.level === 2 ? flattenText(node) === 'Surface' : inSurface
-		if (inSurface && isTableNode(node)) out.push(...surfaceRows(node))
+// Extends srcCore: the guides-parity suite. Node env — it reads the real
+// guides/*.md and the documented source modules off disk — but resolves like core tests.
+export const guides = (config?: UserConfig): UserConfig =>
+	srcCore(
+		mergeConfig(
+			{
+				test: {
+					name: { label: 'guides', color: 'green' },
+					include: ['tests/guides/**/*.test.ts'],
+					exclude: ['tests/src/**/*.test.ts', 'tests/setup.test.ts'],
+				},
+			},
+			config ?? {},
+		),
+	)
+
+// ...in defineConfig:
+	test: { projects: [srcCore, guides] }
+```
+
+**`package.json`** — one script:
+
+```json
+"test:guides": "vitest run --project guides"
+```
+
+Add `test:guides` to the `prepublishOnly` gate chain after the existing test step. That is the whole adoption footprint.
+
+## 7. Source-scanning fidelity
+
+`Source` reflects truth with **line scanners over source text**, not the TypeScript compiler API — a direct port of terrain's proven `setupGuides.ts` scanners.
+
+- **Exports.** Per module file, `exportsFrom` matches `^export (?:async )?(function|class|const|interface|type) (\w+)` → `{name, kind}`. The name is always on the first line even when oxfmt wraps the signature, so no join is needed here.
+- **Members.** `declarationBody(files, keyword, name)` finds the declaration head, uses `joinHead` to fold an oxfmt-wrapped head (printWidth 100; nested generics like `<T = Record<string, unknown>>` still match) into one line ending in `{`, then collects lines to the column-0 `}`. `memberMethods` matches `^\t(?:async )?\*?(\w+)(<[^>]*>)?\??\(` — plain / `async` / generator / optional methods count; getters, setters, `static`, `#` privates, and data members never do (their shape breaks the `name(` match); `constructor` is filtered out.
+- **File walking.** `moduleFiles` recurses each `GuideModule` directory, unions multi-dir scopes, and excludes `index.ts` and `*.test.ts`.
+
+```ts
+export function joinHead(lines: readonly string[], start: number): { text: string; end: number } | undefined {
+	const parts: string[] = []
+	for (let i = start; i < lines.length; i += 1) {
+		const line = lines[i]
+		if (line === undefined) break
+		parts.push(i === start ? line.trimEnd() : line.trim())
+		if (line.trimEnd().endsWith('{')) return { text: parts.join(' '), end: i }
 	}
-	return out
+	return undefined
 }
 ```
 
-```ts
-// helpers.ts — a table cell's identifier is its flattened text (codeSpan value drops backticks)
-export function flattenCell(cell: readonly InlineNode[]): string {
-	return flattenText({ element: 'paragraph', children: cell }).trim()
-}
-```
+**Why line scanning has high fidelity here — and is the right v1 choice.** AGENTS *locks the grammar the scanner assumes*, and the format/lint gates enforce that lock on every commit: §5 requires every module-scope declaration to be exported (nothing hides from the scanner), §6 permits exactly one export style, §3 mandates tabs, and oxfmt fixes the wrap shape `joinHead` decodes. The scanner reads **source text**, so type-only exports (`export interface`, `export type`) — the exact symbols invisible to runtime reflection — are trivially visible. It has zero dependencies, runs in milliseconds, and needs no peer compiler.
 
-```ts
-// parsers.ts — harvest every prose backtick as a claim token
-export function collectClaims(markdown: MarkdownInterface): readonly Claim[] {
-	return markdown.filter(isCodeSpanNode).map((node) => ({ token: node.value, hard: false, location: '' }))
-	// the ordered pass re-tags first-column/Method/heading tokens as hard: true
-}
-```
+**Honest limits.** The approach is *style-coupled*: a repo that does not obey AGENTS' export style, indentation, or format width would mis-scan. That is an acceptable v1 constraint because the target repos are exactly the ones whose gates enforce the style. The TypeScript compiler API (a `Source` variant reflecting via `getExportsOfModule` / call signatures, behind the same `SourceInterface`) is the natural **future hardening** for non-conforming or cross-language consumers — not v1.
 
-Manifest parsing reuses the same primitives: `parseManifest` finds the `## By concept` table and maps each row's `[Concept, Spec, Source, Tests]` cells via `flattenCell` + link-href extraction.
+## 8. Testing strategy, including dogfooding
 
-## 8. How it reflects source truth
+- **Unit tests mirror source** (§16): `tests/src/core/parsers.test.ts` (guide + manifest extraction, incl. entity-heading surface and multi-dir Source cells), `helpers.test.ts` (`symbolKey`, `findMissing`, `missingSymbols`, `resolveLink`, `firstCode`, `kindIndex`), `Guide.test.ts`; server `tests/src/server/helpers.test.ts` (`joinHead` on wrapped heads, `memberMethods` on every excluded shape, `moduleFiles` exclusions) and `Source.test.ts` (reflection against a fixture module).
+- **Fixture guides** (`tests/fixtures/`): one *good* guide + tiny fixture module that passes every check, plus one *broken* fixture per failure mode (undocumented export, wrong Kind, extra class method, broken link, missing test, renamed `## Surface`) — each isolating one check's red path and its non-vacuousness guard. Deterministic, no network.
+- **Self-dogfooding** (acceptance criterion): the package ships its own `guides/src/guide.md` documenting `GuideInterface` / `SourceInterface` (with `## Methods`), and its own `tests/guides/src/parity.test.ts` runs the drop-in against this repo — the checker must pass its own checker.
 
-`Source` (server) is the only place the TypeScript compiler API is used:
+## 9. Adoption plan — `contract` and `markdown`
 
-1. **Program from the consumer's tsconfig.** `ts.readConfigFile` + `ts.parseJsonConfigFileContent` → `{ options, fileNames }`; `ts.createProgram(fileNames, options)` → `program.getTypeChecker()`. Reflection targets the consumer's **source** barrel (`src/core/index.ts`), not `dist` — parity checks source truth, and the consumer's tsconfig path alias (`@src/core`) already points there.
-2. **Barrel enumeration incl. type-only.** `checker.getExportsOfModule(moduleSymbol)` returns every exported symbol — crucially **including interfaces and type aliases**, which are invisible to runtime `import` reflection. This is why the compiler API is mandatory: `export type * from './types.js'` members only appear here. `symbolToExport` maps `symbol.flags` → `ExportKind` (`Interface`/`TypeAlias`/`Function`/`Class`/`BlockScopedVariable`→`const`).
-3. **Interface members.** `checker.getDeclaredTypeOfSymbol(sym).getProperties()`; a member is `callable` iff `checker.getTypeOfSymbolAtLocation(member, decl).getCallSignatures().length > 0` — exactly §22's method-vs-data-member distinction.
-4. **Class public members.** The class symbol's members minus `#`-private identifiers (the `private` keyword is banned, §1); heritage via `implements` clauses populates `Export.implements`.
-5. **Diagnostics for C8.** A virtual `SourceFile` per fence is added to a throwaway program sharing the consumer's options; `getPreEmitDiagnostics` filtered to that file.
+For **both** repos: add `@orkestrel/guide` as a devDependency, drop in `tests/guides/src/parity.test.ts` (§6), add the `guides` vitest project and the `test:guides` script (into `prepublishOnly` after `test`), then run once and reconcile whatever surfaces (undocumented exports, extra class surface, kind drift, broken links) — docs or code, per §22. Both `## By concept` tables already expose `Spec` / `Source` / `Tests` pointing at the exact dirs the helpers resolve, so no manifest changes are required.
 
-**Fallbacks/limits.** No consumer tsconfig or a program that fails to build → the reflection-dependent checks (C1/C2/C3/C8) SKIP with an `info` finding rather than emitting false errors; the markdown-and-fs checks (C4-tiers-2/4, C5, C6, C7) still run. A missing Source barrel is a usage error (exit 2). Compiler-version skew is contained by the peer range (§3) and by touching only stable checker APIs.
+For **markdown** specifically: it has no `## Contract` section in `markdown.md` where `contract.md` does. This is out of v1's mechanical scope (NV does not require it), but the asymmetry should be noted and closed by hand when the guides are next revised.
 
-## 9. Testing strategy for `@orkestrel/guide` itself
-
-- **Fixture guides** (`tests/fixtures/`): a *good* guide paired with a tiny fixture module (one interface + its class, one function, one const, one type + a matching tsconfig) that passes every check; plus one *broken* fixture per failure mode (undocumented export, extra class method, wrong Kind, unresolved backtick, broken link, missing `## Contract`, missing test file, type-erroring pattern) — each isolates one check's error path, driven through `createChecker({ checks: ['…'] })`.
-- **Unit tests** mirror source (§16): `tests/src/core/parsers.test.ts` (guide/manifest extraction), `helpers.test.ts` (tokenizer, set diff, resolution leaves), `validators.test.ts`, `shapers.test.ts` + `factories.test.ts` (contract round-trips), `Guide.test.ts`, `Checker.test.ts` (each check via fixtures). Server: `tests/src/server/Source.test.ts` (reflection against the fixture tsconfig — type-only enumeration, call-signature detection, class heritage), `Runner.test.ts` (manifest run + exit codes). All deterministic, no network, seeded generators for report fixtures.
-- **Self-dogfooding** (acceptance criterion): the package ships its own `guides/src/guide.md` documenting `GuideInterface`/`SourceInterface`/`CheckerInterface`/`RunnerInterface` (with `## Methods` + `## Contract`), and `tests/src/server/self.test.ts` runs `createRunner({ root })` against this repo asserting zero error findings. The checker must pass its own checker.
-
-## 10. Adoption plan — `contract` and `markdown` repos
-
-For **both** repos: add `@orkestrel/guide` as a devDependency; add `tests/guides/parity.test.ts` (§6) wired into a Node test project; add `check:guides` (`guide`) to the scripts and to the `prepublishOnly` gate chain after `test`. Run once and reconcile whatever the checker surfaces (undocumented exports, extra class surface, kind drift) — docs or code, per §22.
-
-For **markdown** specifically: add the missing `## Contract` section to `markdown.md` (invariants mirroring contract.md's — surface bijection, method bijection + class-no-extra, guard totality, types-as-source-of-truth, the never-throw/round-trip laws), satisfying C6's Contract requirement before it promotes to `error`. Its `README.md` already carries a `## Dependency reference` citing `contract.md` — formalize that as the C4 attributed-externals source (no edit needed; the checker reads it).
-
-Manifest tweaks: both `## By concept` tables already expose `Spec`/`Source`/`Tests` pointing at the exact dirs the checker resolves (`src/*.md`, `../src/core`, `../tests/src/core`) — machine-readable as-is, no changes required. `contract.md` has no runtime dep, so it needs no dependency-reference section.
-
-## 11. Risks & open questions
+## 10. Risks & future work
 
 **Risks (priority-ordered):**
 
-1. **C4 false positives on prose backticks** — the hardest determinism problem; an over-eager resolver flags legitimate prose and trains authors to suppress. *Mitigation:* strict identifier tokenizer + explicit four-tier resolution order + attributed-externals via dependency guides; ship C4 at `warning` in v0.1 and promote to `error` only after tuning against both real guides.
-2. **TS compiler API cost & version skew** — the peer `typescript` is consumer-controlled and the compiler API is not fully stable across versions. *Mitigation:* peer range `>=6 <7`, only stable checker APIs, one `Source` engine, graceful skip (info finding) when a program fails to build.
-3. **Core/server purity + source-not-dist targeting** — reflecting the consumer's *source* via *their* tsconfig, from a devDep whose own code is built, while keeping core lib-pure. *Mitigation:* the `SourceInterface` dependency-inversion seam keeps `node`/`typescript` out of core entirely; `Source` takes explicit `{ tsconfig, root }` derived by convention from the manifest + cwd, documented and overridable.
+1. **Style-coupling of the line scanners** — a source file that violates AGENTS' export/format grammar mis-scans, potentially a false parity failure. *Mitigation:* the target repos' format + lint gates enforce that grammar on every commit; the `memberMethods` / `joinHead` edge cases (wrapped heads, nested generics, every excluded member shape) are unit-tested against fixtures; the TS-compiler `Source` variant is the documented escape hatch if a consumer ever needs it.
+2. **Entity-heading kind inference** — a backticked `## Surface` H3 is assumed to document a `class`. *Mitigation:* that matches the anatomy convention and the only current case (`Markdown`); a non-class entity heading would fail SB loudly (visible, not silent), signaling the guide to add a table row instead.
+3. **Convention-derived implementer name** (`XInterface → X`) — a class named against convention would skip its no-extra check. *Mitigation:* the interface↔doc bijection still fully covers the documented set; only the *extra-method* guard depends on the name mapping, and a mismatch degrades to a safe no-op rather than a false pass.
 
-**Open questions (to decide before v1):**
+**Future work (post-v1):** the TS-compiler-API `Source` for cross-language/non-conforming repos; backtick-prose resolution (every prose backtick resolves to an export, a member, an attributed external, or a language literal); `## Patterns` fence typechecking; a tests-mirror sub-check (every behavioral source file has a linked test).
 
-1. **`## Contract` — required or recommended, and the promotion timeline?** Proposal: `warning` in v0.1 → `error` in v1 after markdown.md adopts. Confirm markdown.md must adopt before v1 ships.
-2. **C8 execution tier** — is typecheck-only acceptable for v1, with execution deferred? Proposal: yes.
-3. **Attributed-externals mechanism** — is resolving against dependency-reference guides sufficient, or is a minimal allow-list escape file warranted despite the no-config stance? Proposal: guides-only; no config file.
+## 11. Roadmap
 
-## 12. Phased roadmap
-
-- **v0.1 — no-compiler tier.** Core `Guide` + manifest parsing; server fs loaders + `Runner` + `bin/guide`; checks C6 (structure), C5 (link), C7 (tests-existence), C4 (tiers 2 + 4, `warning`). Report model + exit-code contract + report contracts. Self-guide dogfoods these checks. No `typescript` dependency exercised yet.
-- **v0.5 — reflection tier.** `Source` (TS compiler API); checks C1 (surface bijection), C2 (methods bijection + class-no-extra), C3 (kind). C4 upgraded to tiers 1 + 3 (real exports + attributed externals).
-- **v1.0 — full catalog.** C8 (patterns typecheck), C7 mirror sub-check, C4 + `## Contract` promoted to `error`; `contract` and `markdown` repos adopted and green; report contracts (`shapers.ts` + `factories.ts`) shipped for consumer typing.
-- **v1.x — future.** C8 `execute` tier (opt-in, isolated), `--watch` mode, and additional `--json` report consumers.
+- **v0.1 — the port.** Core `Guide` + `parseManifest`; server `Source` line scanners; the pure comparison helpers; checks SB, MB (+ class-no-extra), LI, TE, and the NV guards. Self-dogfooded against this repo's own `guides/`. One runtime dependency (`@orkestrel/markdown`), no compiler.
+- **v1.0 — adopted.** `contract` and `markdown` both green on the drop-in; `markdown.md`'s missing `## Contract` reconciled. API stable.
