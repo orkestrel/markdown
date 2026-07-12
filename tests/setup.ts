@@ -12,11 +12,12 @@ import type {
 	InlineNode,
 	LinkNode,
 	ListNode,
-	MarkdownParserInterface,
 	ParagraphNode,
 	TableNode,
 } from '@src/core'
 import {
+	Markdown,
+	flattenText,
 	isHeadingNode,
 	isListNode,
 	isTableNode,
@@ -26,7 +27,6 @@ import {
 	isEmphasisNode,
 	isCodeSpanNode,
 	isLinkNode,
-	isTextNode,
 } from '@src/core'
 import { afterEach, vi } from 'vitest'
 
@@ -42,18 +42,18 @@ afterEach(() => {
 // wants determinism uses the same starting point.
 export const TEST_SEED = 42
 
-// ── MarkdownParser AST assertions ─────────────────────────────────────────────
+// ── Markdown AST assertions ────────────────────────────────────────────────────
 // Assert a parsed node IS a given element kind — throwing if not — and return it
 // narrowed, so a test reads the typed node (`assertHeading(block).level`,
 // `assertLink(node).href`) without an `as` or an `if`-guarded `expect` (both
 // AGENTS-forbidden; §1 / §16). Thin assert-and-narrow wrappers over `@src/core`'s
 // `is*` guards — one `assert{Element}` per guard — environment-agnostic, so they
-// sit here beside the other base helpers, shared across the MarkdownParser and
+// sit here beside the other base helpers, shared across the Markdown and
 // AST-validator unit tests.
 
 /** Parse `markdown` and narrow its FIRST block, asserting at least one exists. */
-export function firstBlock(parser: MarkdownParserInterface, markdown: string): BlockNode {
-	const block = parser.parse(markdown).children[0]
+export function firstBlock(markdown: string): BlockNode {
+	const block = new Markdown(markdown).document.children[0]
 	if (block === undefined) throw new Error('expected at least one block')
 	return block
 }
@@ -112,21 +112,18 @@ export function assertLinkNode(node: InlineNode | undefined): LinkNode {
 
 // Parse a single-paragraph markdown snippet, assert it yields exactly one
 // paragraph, and return its first inline child narrowed to `InlineNode`.
-export function assertInlineNode(parser: MarkdownParserInterface, markdown: string): InlineNode {
-	const node = assertParagraphNode(firstBlock(parser, markdown)).children[0]
+export function assertInlineNode(markdown: string): InlineNode {
+	const node = assertParagraphNode(firstBlock(markdown)).children[0]
 	if (node === undefined) throw new Error(`no inline node parsed from: ${markdown}`)
 	return node
 }
 
-// The flattened text content of an inline-node tree (text + code values joined,
-// descending through emphasis / link children) — a content assertion independent
-// of the exact nesting.
+// The flattened text content of a LIST of inline nodes (a paragraph's `children`,
+// say) — the array-shaped convenience test suites call over `@src/core`'s
+// `flattenText(node)` (which flattens a single node's descendants), joining each
+// node's flattened text in order.
 export function inlineText(nodes: readonly InlineNode[]): string {
-	return nodes
-		.map((node) =>
-			isTextNode(node) || isCodeSpanNode(node) ? node.value : inlineText(node.children),
-		)
-		.join('')
+	return nodes.map((node) => flattenText(node)).join('')
 }
 
 // ── Adversarial values for guard-totality tests ───────────────────────────────
