@@ -1,3 +1,4 @@
+import type { BlockquoteNode, MarkdownDocument, MarkdownHandlers, ParagraphNode, TableNode } from '@src/core'
 import {
 	MAX_DEPTH,
 	coalesceText,
@@ -5,7 +6,13 @@ import {
 	extractFence,
 	extractHeading,
 	extractListItem,
+	flattenText,
+	foldNode,
 	leadingIndent,
+	parseDocument,
+	renderHTML,
+	renderMarkdown,
+	rewriteDocument,
 	sanitizeUrl,
 	scanCode,
 	scanEmphasis,
@@ -17,14 +24,17 @@ import {
 	stripQuote,
 	tableAlignments,
 	unescapeText,
+	walkNodes,
 } from '@src/core'
-import { buildDeepEmphasisInput } from '../../setup'
+import { buildDeepEmphasisInput, firstBlock } from '../../setup'
 import { describe, expect, it } from 'vitest'
 
-// The markdown parser's pure helper surface (block extractors, inline scanners, and
-// escaping / sanitization primitives). Each is pure and total; malformed input
-// degrades instead of throwing. MarkdownParser.test.ts covers the composed parser
-// behavior. This suite mirrors every exported helper.ts symbol (AGENTS §16).
+// The markdown parser's pure helper surface (block extractors, inline scanners,
+// escaping / sanitization primitives) plus the AST-level surface (renderHTML,
+// renderMarkdown, walkNodes, foldNode, rewriteDocument, flattenText). Each is pure
+// and total; malformed input degrades instead of throwing. parsers.test.ts covers
+// the composed parse-behavior corpus. This suite mirrors every exported helpers.ts
+// symbol (AGENTS §16).
 
 describe('splitLines', () => {
 	it('splits on \\n', () => {
@@ -510,5 +520,573 @@ describe('sanitizeUrl', () => {
 		it('keeps a single leading backslash destination', () => {
 			expect(sanitizeUrl('\\evil.com')).toBe('\\evil.com')
 		})
+	})
+})
+
+describe('renderHTML — structure', () => {
+	it('renders headings, paragraphs, emphasis, code, and links to HTML', () => {
+		const html = renderHTML(parseDocument('# Hi\n\nA **bold** `x` [link](https://x.dev).'))
+		expect(html).toContain('<h1>Hi</h1>')
+		expect(html).toContain('<strong>bold</strong>')
+		expect(html).toContain('<code>x</code>')
+		expect(html).toContain('<a href="https://x.dev">link</a>')
+	})
+
+	it('renders a list to <ul>/<ol> with <li> items', () => {
+		expect(renderHTML(parseDocument('- a\n- b'))).toContain('<ul>')
+		const ordered = renderHTML(parseDocument('2. a\n3. b'))
+		expect(ordered).toContain('<ol start="2">')
+	})
+
+	it('renders a GFM table with thead/tbody and per-column alignment', () => {
+		const html = renderHTML(parseDocument('| a | b |\n| :- | -: |\n| 1 | 2 |'))
+		expect(html).toContain('<table>')
+		expect(html).toContain('<thead>')
+		expect(html).toContain('<tbody>')
+		expect(html).toContain('<th style="text-align:left">a</th>')
+		expect(html).toContain('<td style="text-align:right">2</td>')
+	})
+
+	it('renders a fenced code block as <pre><code class="language-…">', () => {
+		const html = renderHTML(parseDocument('```ts\nconst x = 1\n```'))
+		expect(html).toContain('<pre><code class="language-ts">const x = 1</code></pre>')
+	})
+
+	it('renders a thematic break as <hr> and a blockquote as <blockquote>', () => {
+		expect(renderHTML(parseDocument('---'))).toBe('<hr>')
+		expect(renderHTML(parseDocument('> hi'))).toContain('<blockquote>')
+	})
+
+	it('renders an inline node tree to an escaped HTML fragment', () => {
+		const fragment = parseDocument('a **b** `<c>`').children
+			.flatMap((block) => (block.element === 'paragraph' ? block.children : []))
+			.map((node) => renderHTML(node))
+			.join('')
+		expect(fragment).toBe('a <strong>b</strong> <code>&lt;c&gt;</code>')
+	})
+
+	it('renders a document node by joining its blocks with newlines', () => {
+		const html = renderHTML({
+			element: 'document',
+			children: [
+				{ element: 'thematicBreak' },
+				{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] },
+			],
+		})
+		expect(html).toBe('<hr>\n<p>x</p>')
+	})
+
+	it('renders exact HTML for a small composite inline snapshot', () => {
+		expect(renderHTML(parseDocument('# Hi\n\n_em_ and `code`.'))).toBe(
+			'<h1>Hi</h1>\n<p><em>em</em> and <code>code</code>.</p>',
+		)
+	})
+})
+
+describe('renderHTML — escaping & sanitization (no XSS)', () => {
+	it('HTML-escapes < > & " in text', () => {
+		const html = renderHTML(parseDocument('a <script>alert("x" & 1)</script> tag'))
+		expect(html).toContain('&lt;script&gt;')
+		expect(html).toContain('&amp;')
+		expect(html).toContain('&quot;')
+		expect(html).not.toContain('<script>')
+	})
+
+	it('HTML-escapes the body of a code block and inline code', () => {
+		expect(renderHTML(parseDocument('```\n<b>&</b>\n```'))).toContain('&lt;b&gt;&amp;&lt;/b&gt;')
+		expect(renderHTML(parseDocument('`<i>`'))).toContain('<code>&lt;i&gt;</code>')
+	})
+
+	it('drops a javascript: href to an empty attribute', () => {
+		const html = renderHTML(parseDocument('[click](javascript:alert(1))'))
+		expect(html).toContain('<a href="">click</a>')
+		expect(html).not.toContain('javascript:')
+	})
+
+	it('drops other unsafe schemes (data:, vbscript:) and a control-char evasion', () => {
+		expect(renderHTML(parseDocument('[x](data:text/html,evil)'))).toContain('href=""')
+		expect(renderHTML(parseDocument('[x](vbscript:msgbox)'))).toContain('href=""')
+		// A tab between `java` and `script:` must not slip past the scheme check.
+		expect(renderHTML(parseDocument('[x](java\tscript:alert(1))'))).toContain('href=""')
+	})
+
+	it('drops a protocol-relative href (//host/path) to an empty attribute', () => {
+		const html = renderHTML(parseDocument('[x](//evil.example/path)'))
+		expect(html).toContain('href=""')
+		expect(html).not.toContain('//evil.example')
+	})
+
+	it('keeps safe schemes (http/https/mailto) and relative/anchor hrefs', () => {
+		expect(renderHTML(parseDocument('[a](https://x.dev)'))).toContain('href="https://x.dev"')
+		expect(renderHTML(parseDocument('[a](mailto:x@y.dev)'))).toContain('href="mailto:x@y.dev"')
+		expect(renderHTML(parseDocument('[a](#anchor)'))).toContain('href="#anchor"')
+		expect(renderHTML(parseDocument('[a](../guide.md)'))).toContain('href="../guide.md"')
+	})
+
+	it('attribute-escapes a quote inside an otherwise-safe href', () => {
+		const html = renderHTML(parseDocument('[a](https://x.dev/"onmouseover=alert(1))'))
+		expect(html).not.toContain('"onmouseover')
+		expect(html).toContain('&quot;')
+	})
+
+	it('drops backslash-variant protocol-relative hrefs to an empty attribute', () => {
+		// Markdown backslash-escaping unescapes one level (`\\` → `\`) inside the link
+		// destination before sanitizeUrl ever sees it, so each two-char prefix below
+		// needs its backslashes doubled in the markdown SOURCE to survive as a single
+		// backslash in the parsed href.
+		expect(renderHTML(parseDocument('[x](\\\\\\\\evil.com)'))).toContain('href=""') // href: \\evil.com
+		expect(renderHTML(parseDocument('[x](/\\\\evil.com)'))).toContain('href=""') // href: /\evil.com
+		expect(renderHTML(parseDocument('[x](\\\\/evil.com)'))).toContain('href=""') // href: \/evil.com
+	})
+
+	it('keeps a single leading backslash href', () => {
+		const html = renderHTML(parseDocument('[x](\\evil.com)'))
+		expect(html).toContain('href="\\evil.com"')
+	})
+})
+
+describe('renderHTML — MAX_DEPTH recursion cap + degrade arms', () => {
+	it('caps render depth on a valid, deeply nested blockquote chain (~70 levels) without throwing', () => {
+		const leaf: ParagraphNode = { element: 'paragraph', children: [{ element: 'text', value: 'leaf' }] }
+		let node: BlockquoteNode | ParagraphNode = leaf
+		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
+		expect(() => renderHTML(node)).not.toThrow()
+		const html = renderHTML(node)
+		// Depth caps well before the innermost leaf, so the literal 'leaf' text never
+		// reaches the rendered output.
+		expect(html).not.toContain('leaf')
+	})
+
+	it('renders a fabricated node with an unknown element as an empty string (total default arm)', () => {
+		// A minimal, deliberately-loose type predicate (no `as`) that lets a
+		// structurally-invalid node reach `renderHTML` directly, bypassing the strict
+		// `isMarkdownNode` guard — exercising the switch's default arm. Narrowing happens
+		// through the helper's return type (never a conditional `expect`).
+		function isFabricatedNode(value: unknown): value is MarkdownDocument {
+			return typeof value === 'object' && value !== null
+		}
+		function narrow<T>(value: unknown, guard: (candidate: unknown) => candidate is T): T {
+			if (!guard(value)) throw new Error('fixture did not match the expected fabricated shape')
+			return value
+		}
+		const fabricated = narrow({ element: 'bogus' }, isFabricatedNode)
+		expect(renderHTML(fabricated)).toBe('')
+	})
+
+	it('renders a fabricated TableNode with an out-of-set align without injecting a style attribute', () => {
+		function isFabricatedTable(value: unknown): value is TableNode {
+			return typeof value === 'object' && value !== null
+		}
+		function narrow<T>(value: unknown, guard: (candidate: unknown) => candidate is T): T {
+			if (!guard(value)) throw new Error('fixture did not match the expected fabricated shape')
+			return value
+		}
+		const fabricated = narrow(
+			{
+				element: 'table',
+				header: [[{ element: 'text', value: 'a' }]],
+				rows: [],
+				align: ['"onmouseover=alert(1) style="text-align:center'],
+			},
+			isFabricatedTable,
+		)
+		const html = renderHTML(fabricated)
+		expect(html).not.toContain('style=')
+		expect(html).not.toContain('onmouseover')
+	})
+
+	it('does not throw rendering a deeply nested parsed emphasis/link chain', () => {
+		expect(() => renderHTML(firstBlock(buildDeepEmphasisInput(10_000)))).not.toThrow()
+	})
+})
+
+describe('renderMarkdown — canonical forms', () => {
+	it('normalizes underscore emphasis to asterisks', () => {
+		expect(renderMarkdown(parseDocument('_em_'))).toBe('*em*')
+		expect(renderMarkdown(parseDocument('__strong__'))).toBe('**strong**')
+	})
+
+	it('renders list markers as - and N. ', () => {
+		expect(renderMarkdown(parseDocument('- a\n- b'))).toBe('- a\n- b')
+		expect(renderMarkdown(parseDocument('2. a\n3. b'))).toBe('2. a\n3. b')
+	})
+
+	it('renders a thematic break as ---', () => {
+		expect(renderMarkdown(parseDocument('***'))).toBe('---')
+	})
+
+	it('renders a fenced code block with a backtick fence', () => {
+		expect(renderMarkdown(parseDocument('```ts\nconst x = 1\n```'))).toBe('```ts\nconst x = 1\n```')
+	})
+
+	it('renders an ATX heading with # repeated per level', () => {
+		expect(renderMarkdown(parseDocument('### Title'))).toBe('### Title')
+	})
+
+	it('renders a blockquote with > -prefixed lines', () => {
+		expect(renderMarkdown(parseDocument('> hi'))).toBe('> hi')
+	})
+
+	it('renders a table alignment row with :--/--:/:-: delimiters', () => {
+		const markdown = renderMarkdown(parseDocument('| l | c | r |\n| :- | :-: | -: |\n| 1 | 2 | 3 |'))
+		expect(markdown).toContain('| :-- | :-: | --: |')
+	})
+
+	it('renders a link as [text](href) with the raw href', () => {
+		expect(renderMarkdown(parseDocument('[a](https://x.dev)'))).toBe('[a](https://x.dev)')
+	})
+
+	it('backslash-escapes text specials that would otherwise re-parse as markup', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: '*[x]*' }] }],
+		}
+		const rendered = renderMarkdown(document)
+		expect(rendered).toBe('\\*\\[x\\]\\*')
+		expect(parseDocument(rendered)).toEqual(document)
+	})
+})
+
+describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
+	const composite = [
+		'# Title',
+		'',
+		'An intro with **bold**, _italic_, `code`, and a [link](./guide.md).',
+		'',
+		'## Section',
+		'',
+		'- one',
+		'- two',
+		'  - nested',
+		'',
+		'1. first',
+		'2. second',
+		'',
+		'| Name | Kind |',
+		'| :--- | ---: |',
+		'| `parse` | function |',
+		'',
+		'```ts',
+		'const x = 1',
+		'```',
+		'',
+		'> a quoted line',
+		'',
+		'---',
+	].join('\n')
+
+	it('round-trips a rich combined document (parse(render(doc)) deep-equals doc)', () => {
+		const document = parseDocument(composite)
+		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+	})
+
+	it('round-trips awkward text carrying literal markup characters (* _ ` [ x ])', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{ element: 'paragraph', children: [{ element: 'text', value: 'a * b _ c ` d [ e ] f' }] },
+			],
+		}
+		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+	})
+
+	it('round-trips a text line that starts with #, >, or 1. as literal text (not markup)', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{ element: 'paragraph', children: [{ element: 'text', value: '# not a heading' }] },
+				{ element: 'paragraph', children: [{ element: 'text', value: '> not a quote' }] },
+				{ element: 'paragraph', children: [{ element: 'text', value: '1. not a list' }] },
+			],
+		}
+		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+	})
+
+	it('round-trips a table cell containing a literal pipe', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'table',
+					header: [[{ element: 'text', value: 'a|b' }]],
+					rows: [[[{ element: 'text', value: 'c|d' }]]],
+					align: ['none'],
+				},
+			],
+		}
+		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+	})
+
+	it('round-trips inline code containing backticks', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{ element: 'paragraph', children: [{ element: 'codeSpan', value: 'a`b' }] },
+			],
+		}
+		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+	})
+
+	it('is idempotent (rendering an already-canonical document twice yields the same source)', () => {
+		const once = renderMarkdown(parseDocument(composite))
+		const twice = renderMarkdown(parseDocument(once))
+		expect(once).toBe(twice)
+	})
+
+	it('renders an empty document to the empty string', () => {
+		expect(renderMarkdown({ element: 'document', children: [] })).toBe('')
+	})
+
+	it('does not throw on a fabricated deep AST (total)', () => {
+		const leaf: ParagraphNode = { element: 'paragraph', children: [{ element: 'text', value: 'leaf' }] }
+		let node: BlockquoteNode | ParagraphNode = leaf
+		for (let level = 0; level < 200; level += 1) node = { element: 'blockquote', children: [node] }
+		expect(() => renderMarkdown(node)).not.toThrow()
+	})
+})
+
+describe('walkNodes', () => {
+	it('yields the exact DFS pre-order sequence for a known document', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{ element: 'thematicBreak' },
+				{
+					element: 'heading',
+					level: 1,
+					children: [{ element: 'text', value: 'Hi' }, { element: 'emphasis', strong: false, children: [{ element: 'text', value: 'x' }] }],
+				},
+			],
+		}
+		const sequence = [...walkNodes(document)].map((node) => node.element)
+		expect(sequence).toEqual(['document', 'thematicBreak', 'heading', 'text', 'emphasis', 'text'])
+	})
+
+	it('is root-inclusive (the first yielded node is the passed-in node itself)', () => {
+		const node = firstBlock('hello')
+		const [first] = [...walkNodes(node)]
+		expect(first).toBe(node)
+	})
+
+	it('visits table cell inline nodes header-then-rows', () => {
+		const table = firstBlock('| a | b |\n| - | - |\n| `c` | d |')
+		const sequence = [...walkNodes(table)].map((node) => node.element)
+		expect(sequence).toEqual(['table', 'text', 'text', 'codeSpan', 'text'])
+	})
+
+	it('does not throw on a depth-capped deep block chain', () => {
+		expect(() => [...walkNodes(firstBlock(buildDeepEmphasisInput(100_000)))]).not.toThrow()
+	})
+})
+
+describe('foldNode', () => {
+	const countHandlers: MarkdownHandlers<number> = {
+		document: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		heading: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		paragraph: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		thematicBreak: () => 1,
+		blockquote: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		codeBlock: () => 1,
+		list: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		listItem: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		table: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		text: () => 1,
+		emphasis: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		codeSpan: () => 1,
+		link: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+	}
+
+	it('folds children-first (post-order) — a text-collecting fold sees leaves before their parent', () => {
+		const order: string[] = []
+		const handlers: MarkdownHandlers<string> = {
+			document: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			heading: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			paragraph: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			thematicBreak: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			blockquote: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			codeBlock: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			list: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			listItem: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			table: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			text: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			emphasis: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			codeSpan: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			link: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+		}
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		}
+		foldNode(document, handlers, 0)
+		expect(order).toEqual(['text', 'paragraph', 'document'])
+	})
+
+	it('gives the table handler a flat header-then-rows list of folded cells', () => {
+		const cells: string[] = []
+		const table: TableNode = {
+			element: 'table',
+			header: [[{ element: 'text', value: 'h1' }], [{ element: 'text', value: 'h2' }]],
+			rows: [[[{ element: 'text', value: 'r1c1' }], [{ element: 'text', value: 'r1c2' }]]],
+			align: ['none', 'none'],
+		}
+		const textHandlers: MarkdownHandlers<string> = {
+			document: (_, children) => children.join(''),
+			heading: (_, children) => children.join(''),
+			paragraph: (_, children) => children.join(''),
+			thematicBreak: () => '',
+			blockquote: (_, children) => children.join(''),
+			codeBlock: () => '',
+			list: (_, children) => children.join(''),
+			listItem: (_, children) => children.join(''),
+			table: (_, children) => {
+				cells.push(...children)
+				return children.join(',')
+			},
+			text: (node) => node.value,
+			emphasis: (_, children) => children.join(''),
+			codeSpan: (node) => node.value,
+			link: (_, children) => children.join(''),
+		}
+		expect(foldNode(table, textHandlers, 0)).toBe('h1,h2,r1c1,r1c2')
+		expect(cells).toEqual(['h1', 'h2', 'r1c1', 'r1c2'])
+	})
+
+	it('caps at MAX_DEPTH — the node at the cap folds with an empty children list', () => {
+		const leaf: ParagraphNode = { element: 'paragraph', children: [{ element: 'text', value: 'leaf' }] }
+		let node: BlockquoteNode | ParagraphNode = leaf
+		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
+		expect(() => foldNode(node, countHandlers, 0)).not.toThrow()
+		// Below MAX_DEPTH the fold recurses fully; count is bounded by MAX_DEPTH, never
+		// unbounded by the full 70-level chain (proves the cap fired).
+		expect(foldNode(node, countHandlers, 0)).toBeLessThanOrEqual(MAX_DEPTH + 1)
+	})
+
+	it('a count-fold total equals the walkNodes traversal length', () => {
+		const document = parseDocument(
+			'# Title\n\nAn intro with **bold** and `code`.\n\n- one\n- two\n\n| a | b |\n| - | - |\n| 1 | 2 |',
+		)
+		expect(foldNode(document, countHandlers, 0)).toBe([...walkNodes(document)].length)
+	})
+})
+
+describe('rewriteDocument', () => {
+	it('rewrites bottom-up (children rewritten before the node they belong to)', () => {
+		const order: string[] = []
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		}
+		rewriteDocument(document, (node) => {
+			order.push(node.element)
+			return node
+		})
+		expect(order).toEqual(['text', 'paragraph'])
+	})
+
+	it('never passes the document root to rewrite', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		}
+		const seen: string[] = []
+		rewriteDocument(document, (node) => {
+			seen.push(node.element)
+			return node
+		})
+		expect(seen).not.toContain('document')
+	})
+
+	it('never mutates the input document (copy-on-write)', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		}
+		const snapshot = JSON.parse(JSON.stringify(document)) as unknown
+		rewriteDocument(document, (node) =>
+			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
+		)
+		expect(document).toEqual(snapshot)
+	})
+
+	it('reflects a text-value rewrite in the output', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		}
+		const rewritten = rewriteDocument(document, (node) =>
+			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
+		)
+		const paragraph = rewritten.children[0]
+		expect(paragraph?.element === 'paragraph' ? flattenText(paragraph) : undefined).toBe('X')
+	})
+})
+
+describe('flattenText', () => {
+	it('concatenates text + codeSpan + codeBlock content in order', () => {
+		const paragraph: ParagraphNode = {
+			element: 'paragraph',
+			children: [
+				{ element: 'text', value: 'a ' },
+				{ element: 'codeSpan', value: 'b' },
+			],
+		}
+		expect(flattenText(paragraph)).toBe('a b')
+		expect(flattenText({ element: 'codeBlock', code: 'c' })).toBe('c')
+	})
+
+	it('flattens a heading', () => {
+		expect(flattenText(firstBlock('# Hi **there**'))).toBe('Hi there')
+	})
+
+	it('flattens a paragraph with mixed inline content', () => {
+		expect(flattenText(firstBlock('a **b** `c`'))).toBe('a b c')
+	})
+
+	it('flattens a table (header cells then row cells)', () => {
+		const table = firstBlock('| a | b |\n| - | - |\n| 1 | 2 |')
+		expect(flattenText(table)).toBe('ab12')
+	})
+
+	it('does not throw on a deeply nested parsed emphasis/link chain', () => {
+		expect(() => flattenText(firstBlock(buildDeepEmphasisInput(10_000)))).not.toThrow()
 	})
 })
