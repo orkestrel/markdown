@@ -658,7 +658,8 @@ export function renderHTML(node: MarkdownNode): string {
 	function renderItem(children: readonly BlockNode[], depth: number): string {
 		if (children.length === 1) {
 			const only = children[0]
-			if (only !== undefined && only.element === 'paragraph') return renderInline(only.children, depth)
+			if (only !== undefined && only.element === 'paragraph')
+				return renderInline(only.children, depth)
 		}
 		return children.map((child) => render(child, depth + 1)).join('\n')
 	}
@@ -1128,7 +1129,9 @@ export function flattenText(node: MarkdownNode): string {
 					.map((cell) => cell.map((inline) => flatten(inline, depth + 1)).join(''))
 					.join('')
 				const rows = current.rows
-					.map((row) => row.map((cell) => cell.map((inline) => flatten(inline, depth + 1)).join('')).join(''))
+					.map((row) =>
+						row.map((cell) => cell.map((inline) => flatten(inline, depth + 1)).join('')).join(''),
+					)
 					.join('')
 				return header + rows
 			}

@@ -10,81 +10,81 @@ Markdown here is: parse once into a stateful `Markdown` workspace, then treat ev
 
 The full node shape and workspace contract, from [`types.ts`](../../src/core/types.ts). `element` is the discriminant every node carries; block nodes carry document structure, inline nodes carry the inline content of a heading / paragraph / list item / table cell.
 
-| Type                     | Kind      | Shape                                                                                                                    |
-| ------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TableAlign`             | type      | `'none' \| 'left' \| 'right' \| 'center'` — a GFM table column's declared alignment.                                     |
-| `ListItemParts`          | interface | `{ ordered, start, content, indent, marker }` — the block phase's parsed list-item-line result.                          |
-| `TextNode`               | interface | `{ element: 'text', value: string }` — a plain-text inline leaf (escapes resolved, not yet HTML-escaped).                |
-| `EmphasisNode`           | interface | `{ element: 'emphasis', strong: boolean, children: readonly InlineNode[] }` — `*em*` / `**strong**`.                     |
-| `CodeSpanNode`           | interface | `{ element: 'codeSpan', value: string }` — `` `code` ``, verbatim (no inner markdown).                                   |
-| `LinkNode`               | interface | `{ element: 'link', href: string, children: readonly InlineNode[] }` — `[text](href)`.                                   |
-| `InlineNode`             | type      | `TextNode \| EmphasisNode \| CodeSpanNode \| LinkNode` — anything that can appear inside inline content.                 |
-| `HeadingNode`            | interface | `{ element: 'heading', level: number, children: readonly InlineNode[] }` — an ATX heading, `level` 1–6.                  |
-| `ParagraphNode`          | interface | `{ element: 'paragraph', children: readonly InlineNode[] }`.                                                             |
-| `ListItemNode`           | interface | `{ element: 'listItem', children: readonly BlockNode[] }` — one item of a `ListNode`.                                    |
-| `ListNode`               | interface | `{ element: 'list', ordered: boolean, start: number, items: readonly ListItemNode[] }`.                                  |
-| `TableNode`              | interface | `{ element: 'table', header, rows, align }` — a GFM table; `header`/`rows` are inline-content cells, `align` per-column. |
-| `CodeBlockNode`          | interface | `{ element: 'codeBlock', lang?: string, code: string }` — a fenced code block, verbatim (no inner markdown).             |
-| `BlockquoteNode`         | interface | `{ element: 'blockquote', children: readonly BlockNode[] }` — `>`-prefixed lines, de-quoted and re-parsed as blocks.     |
-| `ThematicBreakNode`      | interface | `{ element: 'thematicBreak' }` — a horizontal rule; carries no fields beyond its discriminant.                           |
-| `BlockNode`              | type      | `HeadingNode \| ParagraphNode \| ListNode \| TableNode \| CodeBlockNode \| BlockquoteNode \| ThematicBreakNode`.         |
-| `MarkdownDocument`       | interface | `{ element: 'document', children: readonly BlockNode[] }` — the AST root a `Markdown` instance's `document` holds.       |
-| `MarkdownNode`           | type      | `MarkdownDocument \| BlockNode \| ListItemNode \| InlineNode` — the exhaustive set the writers' `switch` covers.         |
-| `MarkdownHandler<TNode, T>` | type   | `(node: TNode, children: readonly T[]) => T` — one catamorphism step; the building block of a `MarkdownHandlers` table.  |
-| `MarkdownHandlers<T>`   | interface | One `MarkdownHandler` per AST element (`document`, `heading`, `paragraph`, `thematicBreak`, `blockquote`, `codeBlock`, `list`, `listItem`, `table`, `text`, `emphasis`, `codeSpan`, `link`) — the total table `fold` requires. |
-| `MarkdownRewriteHandler` | type      | `(node: MarkdownNode) => MarkdownNode` — a bottom-up, copy-on-write node rewrite for `map`.                              |
-| `MarkdownInterface`     | interface | `extends Iterable<MarkdownNode>` — `{ document, find, filter, map, reduce, fold, stream }` — see [`## Methods`](#methods) below. |
+| Type                        | Kind      | Shape                                                                                                                                                                                                                          |
+| --------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TableAlign`                | type      | `'none' \| 'left' \| 'right' \| 'center'` — a GFM table column's declared alignment.                                                                                                                                           |
+| `ListItemParts`             | interface | `{ ordered, start, content, indent, marker }` — the block phase's parsed list-item-line result.                                                                                                                                |
+| `TextNode`                  | interface | `{ element: 'text', value: string }` — a plain-text inline leaf (escapes resolved, not yet HTML-escaped).                                                                                                                      |
+| `EmphasisNode`              | interface | `{ element: 'emphasis', strong: boolean, children: readonly InlineNode[] }` — `*em*` / `**strong**`.                                                                                                                           |
+| `CodeSpanNode`              | interface | `{ element: 'codeSpan', value: string }` — `` `code` ``, verbatim (no inner markdown).                                                                                                                                         |
+| `LinkNode`                  | interface | `{ element: 'link', href: string, children: readonly InlineNode[] }` — `[text](href)`.                                                                                                                                         |
+| `InlineNode`                | type      | `TextNode \| EmphasisNode \| CodeSpanNode \| LinkNode` — anything that can appear inside inline content.                                                                                                                       |
+| `HeadingNode`               | interface | `{ element: 'heading', level: number, children: readonly InlineNode[] }` — an ATX heading, `level` 1–6.                                                                                                                        |
+| `ParagraphNode`             | interface | `{ element: 'paragraph', children: readonly InlineNode[] }`.                                                                                                                                                                   |
+| `ListItemNode`              | interface | `{ element: 'listItem', children: readonly BlockNode[] }` — one item of a `ListNode`.                                                                                                                                          |
+| `ListNode`                  | interface | `{ element: 'list', ordered: boolean, start: number, items: readonly ListItemNode[] }`.                                                                                                                                        |
+| `TableNode`                 | interface | `{ element: 'table', header, rows, align }` — a GFM table; `header`/`rows` are inline-content cells, `align` per-column.                                                                                                       |
+| `CodeBlockNode`             | interface | `{ element: 'codeBlock', lang?: string, code: string }` — a fenced code block, verbatim (no inner markdown).                                                                                                                   |
+| `BlockquoteNode`            | interface | `{ element: 'blockquote', children: readonly BlockNode[] }` — `>`-prefixed lines, de-quoted and re-parsed as blocks.                                                                                                           |
+| `ThematicBreakNode`         | interface | `{ element: 'thematicBreak' }` — a horizontal rule; carries no fields beyond its discriminant.                                                                                                                                 |
+| `BlockNode`                 | type      | `HeadingNode \| ParagraphNode \| ListNode \| TableNode \| CodeBlockNode \| BlockquoteNode \| ThematicBreakNode`.                                                                                                               |
+| `MarkdownDocument`          | interface | `{ element: 'document', children: readonly BlockNode[] }` — the AST root a `Markdown` instance's `document` holds.                                                                                                             |
+| `MarkdownNode`              | type      | `MarkdownDocument \| BlockNode \| ListItemNode \| InlineNode` — the exhaustive set the writers' `switch` covers.                                                                                                               |
+| `MarkdownHandler<TNode, T>` | type      | `(node: TNode, children: readonly T[]) => T` — one catamorphism step; the building block of a `MarkdownHandlers` table.                                                                                                        |
+| `MarkdownHandlers<T>`       | interface | One `MarkdownHandler` per AST element (`document`, `heading`, `paragraph`, `thematicBreak`, `blockquote`, `codeBlock`, `list`, `listItem`, `table`, `text`, `emphasis`, `codeSpan`, `link`) — the total table `fold` requires. |
+| `MarkdownRewriteHandler`    | type      | `(node: MarkdownNode) => MarkdownNode` — a bottom-up, copy-on-write node rewrite for `map`.                                                                                                                                    |
+| `MarkdownInterface`         | interface | `extends Iterable<MarkdownNode>` — `{ document, find, filter, map, reduce, fold, stream }` — see [`## Methods`](#methods) below.                                                                                               |
 
 ### Constants
 
 From [`constants.ts`](../../src/core/constants.ts).
 
-| Constant           | Kind  | Behavior                                                                                                                                                                                                       |
-| ------------------ | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SAFE_URL_SCHEMES` | const | `ReadonlySet<string>` — `{'http', 'https', 'mailto', 'tel'}`, frozen, lower-case. Any other scheme (`javascript:`, `data:`, `vbscript:`, `file:`, …) is dropped at render.                                    |
+| Constant           | Kind  | Behavior                                                                                                                                                                                                                                                              |
+| ------------------ | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SAFE_URL_SCHEMES` | const | `ReadonlySet<string>` — `{'http', 'https', 'mailto', 'tel'}`, frozen, lower-case. Any other scheme (`javascript:`, `data:`, `vbscript:`, `file:`, …) is dropped at render.                                                                                            |
 | `MAX_DEPTH`        | const | `64` — the recursion cap `parseDocument` (and its `parsers.ts` helpers) and the `helpers.ts` traversal/render functions (`renderHTML`, `renderMarkdown`, `walkNodes`, `foldNode`) all honor before degrading (§ [Depth degrade semantics](#depth-degrade-semantics)). |
 
 ### Parsers
 
 The block/inline parsing pipeline, from [`parsers.ts`](../../src/core/parsers.ts) — the orchestration `parseDocument` composes out of `helpers.ts`'s pure scanning leaves (AGENTS §5). `parseBlocks` / `collectTable` / `collectList` are the recursive spine; each is exported and independently testable.
 
-| Parser         | Kind     | Signature                                                                              | Behavior                                                                                              |
-| -------------- | -------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `parseBlocks`  | function | `(lines: readonly string[], depth: number) => readonly BlockNode[]`                     | Parses a run of markdown lines into block nodes, recursing into nested blockquotes/list items; degrades to one literal paragraph at `MAX_DEPTH`. |
-| `collectTable` | function | `(lines: readonly string[], start: number) => { node: TableNode, next: number }`        | Collects a GFM table starting at its header row (header + delimiter + contiguous body rows).          |
-| `collectList`  | function | `(lines: readonly string[], start: number, depth: number) => { node: ListNode, next: number }` | Collects a list starting at its first item, gathering same-indent siblings and recursing into each item's block content. |
-| `parseDocument`| function | `(markdown: string) => MarkdownDocument`                                                | Parses a markdown string into a `MarkdownDocument` AST via the block phase (`splitLines` + `parseBlocks`). Never throws. |
-| `parseInline`  | function | `(text: string) => readonly InlineNode[]`                                               | Parses one line of inline content (emphasis / code / links), no block structure. Never throws.        |
+| Parser          | Kind     | Signature                                                                                      | Behavior                                                                                                                                         |
+| --------------- | -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `parseBlocks`   | function | `(lines: readonly string[], depth: number) => readonly BlockNode[]`                            | Parses a run of markdown lines into block nodes, recursing into nested blockquotes/list items; degrades to one literal paragraph at `MAX_DEPTH`. |
+| `collectTable`  | function | `(lines: readonly string[], start: number) => { node: TableNode, next: number }`               | Collects a GFM table starting at its header row (header + delimiter + contiguous body rows).                                                     |
+| `collectList`   | function | `(lines: readonly string[], start: number, depth: number) => { node: ListNode, next: number }` | Collects a list starting at its first item, gathering same-indent siblings and recursing into each item's block content.                         |
+| `parseDocument` | function | `(markdown: string) => MarkdownDocument`                                                       | Parses a markdown string into a `MarkdownDocument` AST via the block phase (`splitLines` + `parseBlocks`). Never throws.                         |
+| `parseInline`   | function | `(text: string) => readonly InlineNode[]`                                                      | Parses one line of inline content (emphasis / code / links), no block structure. Never throws.                                                   |
 
 ### Helpers
 
 Pure, total, zero-dependency parsing + writing leaves from [`helpers.ts`](../../src/core/helpers.ts) — the functional core `parsers.ts` composes and the projections `Markdown` and callers reach for directly (AGENTS §5). Every function is unit-testable in isolation; malformed input degrades to text, never throws.
 
-| Helper            | Kind     | Signature                                                                            | Behavior                                                                                                                                                     |
-| ----------------- | -------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `splitLines`      | function | `(markdown: string) => readonly string[]`                                            | Normalizes `\r\n` / `\r` to `\n` and splits into lines; a single trailing newline yields no final empty line.                                                |
-| `leadingIndent`   | function | `(line: string) => number`                                                           | Count of leading space/tab characters (a tab counts as one).                                                                                                 |
-| `extractHeading`  | function | `(line: string) => { level: number, text: string } \| undefined`                     | Parses an ATX heading line (`#`…`######`); `undefined` when not a heading.                                                                                   |
-| `extractFence`    | function | `(line: string) => { marker: string, lang: string \| undefined } \| undefined`       | Parses a fenced-code opening line (` ``` ` / `~~~`, optional info string); `undefined` when not a fence opener.                                              |
-| `extractListItem` | function | `(line: string) => ListItemParts \| undefined`                                       | Parses a bullet (`-`/`*`/`+`) or ordinal (`1.`/`1)`) list-item line; `undefined` when not a list item.                                                       |
-| `stripQuote`      | function | `(line: string) => string`                                                           | Strips one level of `>` blockquote marker (plus one optional space).                                                                                         |
-| `splitTableRow`   | function | `(row: string) => readonly string[]`                                                 | Splits a GFM table row into cells; outer pipes optional, `\|` escaped inside a cell is literal.                                                              |
-| `tableAlignments` | function | `(delimiter: string) => readonly TableAlign[]`                                       | Derives per-column alignment from a GFM delimiter row.                                                                                                       |
-| `startsBlock`     | function | `(lines: readonly string[], index: number) => boolean`                               | Whether the line at `index` starts a NEW block kind — stops paragraph collection without a blank-line separator.                                             |
-| `unescapeText`    | function | `(text: string) => string`                                                           | Resolves backslash escapes (`\*` → `*`) to their literal characters.                                                                                         |
-| `coalesceText`    | function | `(nodes: readonly InlineNode[]) => readonly InlineNode[]`                            | Merges adjacent text nodes into one.                                                                                                                         |
-| `scanCode`        | function | `(source, start, to) => { value: string, end: number } \| undefined`                 | Scans an inline code span (matching backtick-run closer); `undefined` when unterminated.                                                                     |
-| `scanLink`        | function | `(source, start, to, depth = 0) => { node: LinkNode, end: number } \| undefined`     | Scans `[text](href)`; `undefined` when the shape doesn't hold. `depth` gates the text-children recursion at `MAX_DEPTH`.                                     |
-| `scanEmphasis`    | function | `(source, start, to, depth = 0) => { node: EmphasisNode, end: number } \| undefined` | Scans `*em*` / `**strong**`; `undefined` when no valid closer exists. `depth` gates the children recursion at `MAX_DEPTH`.                                   |
-| `scanInline`      | function | `(source: string, from: number, to: number, depth = 0) => readonly InlineNode[]`     | The recursive inline-scanning engine (emphasis / link text recurse through it); linear-time, no backtracking. See [depth degrade](#depth-degrade-semantics). |
-| `escapeHtml`      | function | `(text: string) => string`                                                           | HTML-escapes `&` `<` `>` `"` `'` to entities.                                                                                                                |
-| `sanitizeUrl`     | function | `(href: string) => string`                                                           | Sanitizes + attribute-escapes a link `href` (§ [Sanitization policy](#sanitization-policy)).                                                                 |
-| `renderHTML`      | function | `(node: MarkdownNode) => string`                                                     | Renders any `MarkdownNode` (typically a `MarkdownDocument`) to a safe HTML string — text/attributes escaped, `href`s sanitized. Never throws.                |
+| Helper            | Kind     | Signature                                                                            | Behavior                                                                                                                                                                                                                             |
+| ----------------- | -------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `splitLines`      | function | `(markdown: string) => readonly string[]`                                            | Normalizes `\r\n` / `\r` to `\n` and splits into lines; a single trailing newline yields no final empty line.                                                                                                                        |
+| `leadingIndent`   | function | `(line: string) => number`                                                           | Count of leading space/tab characters (a tab counts as one).                                                                                                                                                                         |
+| `extractHeading`  | function | `(line: string) => { level: number, text: string } \| undefined`                     | Parses an ATX heading line (`#`…`######`); `undefined` when not a heading.                                                                                                                                                           |
+| `extractFence`    | function | `(line: string) => { marker: string, lang: string \| undefined } \| undefined`       | Parses a fenced-code opening line (` ``` ` / `~~~`, optional info string); `undefined` when not a fence opener.                                                                                                                      |
+| `extractListItem` | function | `(line: string) => ListItemParts \| undefined`                                       | Parses a bullet (`-`/`*`/`+`) or ordinal (`1.`/`1)`) list-item line; `undefined` when not a list item.                                                                                                                               |
+| `stripQuote`      | function | `(line: string) => string`                                                           | Strips one level of `>` blockquote marker (plus one optional space).                                                                                                                                                                 |
+| `splitTableRow`   | function | `(row: string) => readonly string[]`                                                 | Splits a GFM table row into cells; outer pipes optional, `\|` escaped inside a cell is literal.                                                                                                                                      |
+| `tableAlignments` | function | `(delimiter: string) => readonly TableAlign[]`                                       | Derives per-column alignment from a GFM delimiter row.                                                                                                                                                                               |
+| `startsBlock`     | function | `(lines: readonly string[], index: number) => boolean`                               | Whether the line at `index` starts a NEW block kind — stops paragraph collection without a blank-line separator.                                                                                                                     |
+| `unescapeText`    | function | `(text: string) => string`                                                           | Resolves backslash escapes (`\*` → `*`) to their literal characters.                                                                                                                                                                 |
+| `coalesceText`    | function | `(nodes: readonly InlineNode[]) => readonly InlineNode[]`                            | Merges adjacent text nodes into one.                                                                                                                                                                                                 |
+| `scanCode`        | function | `(source, start, to) => { value: string, end: number } \| undefined`                 | Scans an inline code span (matching backtick-run closer); `undefined` when unterminated.                                                                                                                                             |
+| `scanLink`        | function | `(source, start, to, depth = 0) => { node: LinkNode, end: number } \| undefined`     | Scans `[text](href)`; `undefined` when the shape doesn't hold. `depth` gates the text-children recursion at `MAX_DEPTH`.                                                                                                             |
+| `scanEmphasis`    | function | `(source, start, to, depth = 0) => { node: EmphasisNode, end: number } \| undefined` | Scans `*em*` / `**strong**`; `undefined` when no valid closer exists. `depth` gates the children recursion at `MAX_DEPTH`.                                                                                                           |
+| `scanInline`      | function | `(source: string, from: number, to: number, depth = 0) => readonly InlineNode[]`     | The recursive inline-scanning engine (emphasis / link text recurse through it); linear-time, no backtracking. See [depth degrade](#depth-degrade-semantics).                                                                         |
+| `escapeHtml`      | function | `(text: string) => string`                                                           | HTML-escapes `&` `<` `>` `"` `'` to entities.                                                                                                                                                                                        |
+| `sanitizeUrl`     | function | `(href: string) => string`                                                           | Sanitizes + attribute-escapes a link `href` (§ [Sanitization policy](#sanitization-policy)).                                                                                                                                         |
+| `renderHTML`      | function | `(node: MarkdownNode) => string`                                                     | Renders any `MarkdownNode` (typically a `MarkdownDocument`) to a safe HTML string — text/attributes escaped, `href`s sanitized. Never throws.                                                                                        |
 | `renderMarkdown`  | function | `(node: MarkdownNode) => string`                                                     | Renders any `MarkdownNode` to CANONICAL markdown source — the inverse of `renderHTML`, and the basis of the `parseDocument`↔`renderMarkdown` round-trip (§ [`renderMarkdown` round-trip](#rendermarkdown-round-trip)). Never throws. |
-| `walkNodes`       | function | `(node: MarkdownNode) => Generator<MarkdownNode>`                                    | Depth-first, pre-order, root-inclusive traversal — yields the node itself then its children. `Markdown.find` / `filter` / `reduce` / iteration all walk through this. |
-| `foldNode`        | function | `<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, depth: number) => T`         | The total catamorphism `Markdown.fold` delegates to — children folded first (post-order), then the node's own handler runs with the already-folded children. |
-| `rewriteDocument` | function | `(document: MarkdownDocument, rewrite: MarkdownRewriteHandler) => MarkdownDocument`  | The bottom-up (copy-on-write) rewrite `Markdown.map` delegates to — the document root is never itself passed to `rewrite`. |
-| `flattenText`     | function | `(node: MarkdownNode) => string`                                                     | Concatenates the `value`/`code` content of every descendant text/code-span/code-block node, in walk order — a plain-text projection of an AST. |
+| `walkNodes`       | function | `(node: MarkdownNode) => Generator<MarkdownNode>`                                    | Depth-first, pre-order, root-inclusive traversal — yields the node itself then its children. `Markdown.find` / `filter` / `reduce` / iteration all walk through this.                                                                |
+| `foldNode`        | function | `<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, depth: number) => T`         | The total catamorphism `Markdown.fold` delegates to — children folded first (post-order), then the node's own handler runs with the already-folded children.                                                                         |
+| `rewriteDocument` | function | `(document: MarkdownDocument, rewrite: MarkdownRewriteHandler) => MarkdownDocument`  | The bottom-up (copy-on-write) rewrite `Markdown.map` delegates to — the document root is never itself passed to `rewrite`.                                                                                                           |
+| `flattenText`     | function | `(node: MarkdownNode) => string`                                                     | Concatenates the `value`/`code` content of every descendant text/code-span/code-block node, in walk order — a plain-text projection of an AST.                                                                                       |
 
 ### Shapers
 
@@ -116,7 +116,7 @@ Line/character structural predicates plus node guards, from [`validators.ts`](..
 | `isHeadingNode`       | function | `node: MarkdownNode`                               | Narrows to `HeadingNode` — `node.element === 'heading'`.                                                                                                   |
 | `isParagraphNode`     | function | `node: MarkdownNode`                               | Narrows to `ParagraphNode`.                                                                                                                                |
 | `isListNode`          | function | `node: MarkdownNode`                               | Narrows to `ListNode`.                                                                                                                                     |
-| `isTableNode`         | function | `node: MarkdownNode`                               | Narrows to `TableNode`.                                                                                                                                     |
+| `isTableNode`         | function | `node: MarkdownNode`                               | Narrows to `TableNode`.                                                                                                                                    |
 | `isCodeBlockNode`     | function | `node: MarkdownNode`                               | Narrows to `CodeBlockNode`.                                                                                                                                |
 | `isBlockquoteNode`    | function | `node: MarkdownNode`                               | Narrows to `BlockquoteNode`.                                                                                                                               |
 | `isThematicBreakNode` | function | `node: MarkdownNode`                               | Narrows to `ThematicBreakNode`.                                                                                                                            |
@@ -137,13 +137,13 @@ The implementing class of `MarkdownInterface`, from [`Markdown.ts`](../../src/co
 
 From [`factories.ts`](../../src/core/factories.ts).
 
-| Factory                       | Kind     | Signature                                              | Behavior                                                                         |
-| ------------------------------ | -------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `createMarkdown`               | function | `(input: string \| MarkdownDocument) => MarkdownInterface` | Creates a `Markdown` workspace from a markdown string (parses it) or an already-parsed document (adopted as-is). |
-| `createTextContract`           | function | `() => ContractInterface<TextNode>`                     | Compiles `textShape` into a guard / parser / schema / generator bundle.          |
-| `createCodeSpanContract`       | function | `() => ContractInterface<CodeSpanNode>`                 | Compiles `codeSpanShape` into a guard / parser / schema / generator bundle.      |
-| `createCodeBlockContract`      | function | `() => ContractInterface<CodeBlockNode>`                | Compiles `codeBlockShape` into a guard / parser / schema / generator bundle.     |
-| `createThematicBreakContract`  | function | `() => ContractInterface<ThematicBreakNode>`            | Compiles `thematicBreakShape` into a guard / parser / schema / generator bundle. |
+| Factory                       | Kind     | Signature                                                  | Behavior                                                                                                         |
+| ----------------------------- | -------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `createMarkdown`              | function | `(input: string \| MarkdownDocument) => MarkdownInterface` | Creates a `Markdown` workspace from a markdown string (parses it) or an already-parsed document (adopted as-is). |
+| `createTextContract`          | function | `() => ContractInterface<TextNode>`                        | Compiles `textShape` into a guard / parser / schema / generator bundle.                                          |
+| `createCodeSpanContract`      | function | `() => ContractInterface<CodeSpanNode>`                    | Compiles `codeSpanShape` into a guard / parser / schema / generator bundle.                                      |
+| `createCodeBlockContract`     | function | `() => ContractInterface<CodeBlockNode>`                   | Compiles `codeBlockShape` into a guard / parser / schema / generator bundle.                                     |
+| `createThematicBreakContract` | function | `() => ContractInterface<ThematicBreakNode>`               | Compiles `thematicBreakShape` into a guard / parser / schema / generator bundle.                                 |
 
 ## Methods
 
@@ -151,14 +151,14 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 #### `MarkdownInterface`
 
-| Method   | Returns                 | Behavior                                                                                                                                    |
-| -------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `find`   | `T \| MarkdownNode \| undefined` | Finds the first node (depth-first, pre-order), narrowed by a type guard or matched by a predicate. `undefined` when nothing matches.        |
-| `filter` | `readonly T[] \| readonly MarkdownNode[]` | Collects every node (depth-first, pre-order), narrowed by a type guard or matched by a predicate.                                          |
-| `map`    | `MarkdownInterface`      | Rewrites the AST bottom-up (copy-on-write) via a `MarkdownRewriteHandler` and returns a NEW `MarkdownInterface`; never mutates the original. |
-| `reduce` | `T`                      | Folds the AST depth-first, pre-order into an accumulator via a plain reducer callback.                                                      |
-| `fold`   | `T`                      | Runs a total catamorphism over the document using a `MarkdownHandlers<T>` table (one handler per AST element).                              |
-| `stream` | `Generator<BlockNode>`   | Lazily yields the document's top-level block nodes only (shallow, source order) — NOT a deep traversal.                                     |
+| Method   | Returns                                   | Behavior                                                                                                                                     |
+| -------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `find`   | `T \| MarkdownNode \| undefined`          | Finds the first node (depth-first, pre-order), narrowed by a type guard or matched by a predicate. `undefined` when nothing matches.         |
+| `filter` | `readonly T[] \| readonly MarkdownNode[]` | Collects every node (depth-first, pre-order), narrowed by a type guard or matched by a predicate.                                            |
+| `map`    | `MarkdownInterface`                       | Rewrites the AST bottom-up (copy-on-write) via a `MarkdownRewriteHandler` and returns a NEW `MarkdownInterface`; never mutates the original. |
+| `reduce` | `T`                                       | Folds the AST depth-first, pre-order into an accumulator via a plain reducer callback.                                                       |
+| `fold`   | `T`                                       | Runs a total catamorphism over the document using a `MarkdownHandlers<T>` table (one handler per AST element).                               |
+| `stream` | `Generator<BlockNode>`                    | Lazily yields the document's top-level block nodes only (shallow, source order) — NOT a deep traversal.                                      |
 
 ## The AST model
 
@@ -210,17 +210,17 @@ This is defence-in-depth: `renderHTML` applies it even when a caller only ever f
 
 `renderMarkdown` is the inverse of `parseDocument`: for any `MarkdownDocument` produced by `parseDocument`, `parseDocument(renderMarkdown(doc))` deep-equals `doc`, and `renderMarkdown` is idempotent — `renderMarkdown(parseDocument(renderMarkdown(doc))) === renderMarkdown(doc)`. It writes every node to one CANONICAL markdown form, never the source's original (possibly variant) spelling:
 
-| Construct           | Canonical form                                                                                   |
-| -------------------- | -------------------------------------------------------------------------------------------------- |
-| Emphasis             | `*em*` / `**strong**` — underscore emphasis (`_em_`, `__strong__`) normalizes to asterisks.        |
-| Bulleted list item   | `- ` (a single hyphen + space), regardless of source marker (`*` / `+`).                           |
-| Ordered list item    | `N. ` — sequential ordinals starting from the list's `start`, `.`-style (never `)`)               |
-| Thematic break       | `---`, regardless of source marker (`***` / `___` / spaced variants).                              |
-| Fenced code block    | Backtick fences, widened past any 3+ backtick run already inside the body.                         |
-| Blockquote           | `> `-prefixed lines (`>` alone for an otherwise-empty line).                                       |
-| GFM table            | 1-space-padded cells, `\|`-escaped literal pipes, an explicit alignment delimiter row.              |
-| Link                 | `[text](href)` — the raw `href`, unescaped and unsanitized (sanitization is an HTML-render concern, not a markdown-writing one). |
-| Block separation     | Exactly ONE blank line between top-level blocks; a document with zero blocks renders `''`.          |
+| Construct          | Canonical form                                                                                                                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Emphasis           | `*em*` / `**strong**` — underscore emphasis (`_em_`, `__strong__`) normalizes to asterisks.                                      |
+| Bulleted list item | `- ` (a single hyphen + space), regardless of source marker (`*` / `+`).                                                         |
+| Ordered list item  | `N. ` — sequential ordinals starting from the list's `start`, `.`-style (never `)`)                                              |
+| Thematic break     | `---`, regardless of source marker (`***` / `___` / spaced variants).                                                            |
+| Fenced code block  | Backtick fences, widened past any 3+ backtick run already inside the body.                                                       |
+| Blockquote         | `> `-prefixed lines (`>` alone for an otherwise-empty line).                                                                     |
+| GFM table          | 1-space-padded cells, `\|`-escaped literal pipes, an explicit alignment delimiter row.                                           |
+| Link               | `[text](href)` — the raw `href`, unescaped and unsanitized (sanitization is an HTML-render concern, not a markdown-writing one). |
+| Block separation   | Exactly ONE blank line between top-level blocks; a document with zero blocks renders `''`.                                       |
 
 A `text` node's literal content is backslash-escaped wherever it would otherwise re-parse as different markup (a leading `#`, a leading list marker, a literal `*`/`_`/`` ` ``/`[`/`]`) — the round-trip soundness AGENTS §14 requires between a parser and its inverse.
 
@@ -273,11 +273,13 @@ const toHTML: MarkdownHandlers<string> = {
 	thematicBreak: () => '<hr>',
 	blockquote: (_, children) => `<blockquote>${children.join('\n')}</blockquote>`,
 	codeBlock: (node) => `<pre><code>${node.code}</code></pre>`,
-	list: (node, children) => (node.ordered ? `<ol>${children.join('')}</ol>` : `<ul>${children.join('')}</ul>`),
+	list: (node, children) =>
+		node.ordered ? `<ol>${children.join('')}</ol>` : `<ul>${children.join('')}</ul>`,
 	listItem: (_, children) => `<li>${children.join('')}</li>`,
 	table: () => '<table>…</table>',
 	text: (node) => node.value,
-	emphasis: (node, children) => (node.strong ? `<strong>${children.join('')}</strong>` : `<em>${children.join('')}</em>`),
+	emphasis: (node, children) =>
+		node.strong ? `<strong>${children.join('')}</strong>` : `<em>${children.join('')}</em>`,
 	codeSpan: (node) => `<code>${node.value}</code>`,
 	link: (node, children) => `<a href="${node.href}">${children.join('')}</a>`,
 }

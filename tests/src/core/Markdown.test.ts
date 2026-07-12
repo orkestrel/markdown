@@ -58,9 +58,9 @@ describe('Markdown — find', () => {
 	it('returns the FIRST match in depth-first pre-order (a nested heading before a later top-level one)', () => {
 		const markdown = new Markdown('> ## nested heading\n\n## later heading')
 		const heading = markdown.find(isHeadingNode)
-		expect(heading?.children.some((child) => isTextNode(child) && child.value === 'nested heading')).toBe(
-			true,
-		)
+		expect(
+			heading?.children.some((child) => isTextNode(child) && child.value === 'nested heading'),
+		).toBe(true)
 	})
 
 	it('returns undefined when no node matches', () => {

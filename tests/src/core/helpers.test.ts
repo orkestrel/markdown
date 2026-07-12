@@ -1,4 +1,10 @@
-import type { BlockquoteNode, MarkdownDocument, MarkdownHandlers, ParagraphNode, TableNode } from '@src/core'
+import type {
+	BlockquoteNode,
+	MarkdownDocument,
+	MarkdownHandlers,
+	ParagraphNode,
+	TableNode,
+} from '@src/core'
 import {
 	MAX_DEPTH,
 	coalesceText,
@@ -558,8 +564,8 @@ describe('renderHTML — structure', () => {
 	})
 
 	it('renders an inline node tree to an escaped HTML fragment', () => {
-		const fragment = parseDocument('a **b** `<c>`').children
-			.flatMap((block) => (block.element === 'paragraph' ? block.children : []))
+		const fragment = parseDocument('a **b** `<c>`')
+			.children.flatMap((block) => (block.element === 'paragraph' ? block.children : []))
 			.map((node) => renderHTML(node))
 			.join('')
 		expect(fragment).toBe('a <strong>b</strong> <code>&lt;c&gt;</code>')
@@ -647,7 +653,10 @@ describe('renderHTML — escaping & sanitization (no XSS)', () => {
 
 describe('renderHTML — MAX_DEPTH recursion cap + degrade arms', () => {
 	it('caps render depth on a valid, deeply nested blockquote chain (~70 levels) without throwing', () => {
-		const leaf: ParagraphNode = { element: 'paragraph', children: [{ element: 'text', value: 'leaf' }] }
+		const leaf: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'leaf' }],
+		}
 		let node: BlockquoteNode | ParagraphNode = leaf
 		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
 		expect(() => renderHTML(node)).not.toThrow()
@@ -706,7 +715,7 @@ describe('renderMarkdown — canonical forms', () => {
 		expect(renderMarkdown(parseDocument('__strong__'))).toBe('**strong**')
 	})
 
-	it('renders list markers as - and N. ', () => {
+	it('renders list markers as - and N.', () => {
 		expect(renderMarkdown(parseDocument('- a\n- b'))).toBe('- a\n- b')
 		expect(renderMarkdown(parseDocument('2. a\n3. b'))).toBe('2. a\n3. b')
 	})
@@ -728,7 +737,9 @@ describe('renderMarkdown — canonical forms', () => {
 	})
 
 	it('renders a table alignment row with :--/--:/:-: delimiters', () => {
-		const markdown = renderMarkdown(parseDocument('| l | c | r |\n| :- | :-: | -: |\n| 1 | 2 | 3 |'))
+		const markdown = renderMarkdown(
+			parseDocument('| l | c | r |\n| :- | :-: | -: |\n| 1 | 2 | 3 |'),
+		)
 		expect(markdown).toContain('| :-- | :-: | --: |')
 	})
 
@@ -820,9 +831,7 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 	it('round-trips inline code containing backticks', () => {
 		const document: MarkdownDocument = {
 			element: 'document',
-			children: [
-				{ element: 'paragraph', children: [{ element: 'codeSpan', value: 'a`b' }] },
-			],
+			children: [{ element: 'paragraph', children: [{ element: 'codeSpan', value: 'a`b' }] }],
 		}
 		expect(parseDocument(renderMarkdown(document))).toEqual(document)
 	})
@@ -838,7 +847,10 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 	})
 
 	it('does not throw on a fabricated deep AST (total)', () => {
-		const leaf: ParagraphNode = { element: 'paragraph', children: [{ element: 'text', value: 'leaf' }] }
+		const leaf: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'leaf' }],
+		}
 		let node: BlockquoteNode | ParagraphNode = leaf
 		for (let level = 0; level < 200; level += 1) node = { element: 'blockquote', children: [node] }
 		expect(() => renderMarkdown(node)).not.toThrow()
@@ -854,7 +866,10 @@ describe('walkNodes', () => {
 				{
 					element: 'heading',
 					level: 1,
-					children: [{ element: 'text', value: 'Hi' }, { element: 'emphasis', strong: false, children: [{ element: 'text', value: 'x' }] }],
+					children: [
+						{ element: 'text', value: 'Hi' },
+						{ element: 'emphasis', strong: false, children: [{ element: 'text', value: 'x' }] },
+					],
 				},
 			],
 		}
@@ -991,7 +1006,10 @@ describe('foldNode', () => {
 	})
 
 	it('caps at MAX_DEPTH — the node at the cap folds with an empty children list', () => {
-		const leaf: ParagraphNode = { element: 'paragraph', children: [{ element: 'text', value: 'leaf' }] }
+		const leaf: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'leaf' }],
+		}
 		let node: BlockquoteNode | ParagraphNode = leaf
 		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
 		expect(() => foldNode(node, countHandlers, 0)).not.toThrow()

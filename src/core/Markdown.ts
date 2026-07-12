@@ -1,4 +1,11 @@
-import type { BlockNode, MarkdownDocument, MarkdownHandlers, MarkdownInterface, MarkdownNode, MarkdownRewriteHandler } from './types.js'
+import type {
+	BlockNode,
+	MarkdownDocument,
+	MarkdownHandlers,
+	MarkdownInterface,
+	MarkdownNode,
+	MarkdownRewriteHandler,
+} from './types.js'
 import { foldNode, rewriteDocument, walkNodes } from './helpers.js'
 import { parseDocument } from './parsers.js'
 

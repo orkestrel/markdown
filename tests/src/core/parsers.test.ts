@@ -15,7 +15,14 @@ import {
 	firstBlock,
 	inlineText,
 } from '../../setup.js'
-import { MAX_DEPTH, collectList, collectTable, parseBlocks, parseDocument, parseInline } from '@src/core'
+import {
+	MAX_DEPTH,
+	collectList,
+	collectTable,
+	parseBlocks,
+	parseDocument,
+	parseInline,
+} from '@src/core'
 
 // The markdown parser's parse-behavior surface — parseDocument (the block phase
 // entry point), parseInline (the inline phase entry point), and their block-phase
@@ -59,7 +66,9 @@ describe('parseDocument — paragraphs', () => {
 	it('wraps a run of plain lines into one paragraph', () => {
 		const block = firstBlock('line one\nline two')
 		expect(block.element).toBe('paragraph')
-		expect(inlineText(block.element === 'paragraph' ? block.children : [])).toBe('line one\nline two')
+		expect(inlineText(block.element === 'paragraph' ? block.children : [])).toBe(
+			'line one\nline two',
+		)
 	})
 
 	it('separates two paragraphs on a blank line', () => {
@@ -90,7 +99,9 @@ describe('parseDocument — paragraphs', () => {
 describe('parseInline — emphasis', () => {
 	it('parses *italic* / _italic_ to a non-strong emphasis node', () => {
 		for (const marker of ['*', '_']) {
-			expect(assertEmphasisNode(parseInline(`an ${marker}italic${marker} word`)[1]).strong).toBe(false)
+			expect(assertEmphasisNode(parseInline(`an ${marker}italic${marker} word`)[1]).strong).toBe(
+				false,
+			)
 		}
 	})
 
@@ -121,7 +132,9 @@ describe('parseInline — emphasis', () => {
 
 describe('parseInline — inline code', () => {
 	it('parses `code` to a codeSpan with no inner markdown', () => {
-		expect(assertCodeSpanNode(parseInline('use `const x = *1*` here')[1]).value).toBe('const x = *1*')
+		expect(assertCodeSpanNode(parseInline('use `const x = *1*` here')[1]).value).toBe(
+			'const x = *1*',
+		)
 	})
 
 	it('lets a double-backtick span contain a single backtick', () => {
@@ -223,7 +236,9 @@ describe('parseDocument — lists', () => {
 	it('nests a three-level indented list structurally correctly', () => {
 		const list = assertListNode(firstBlock(buildDeepListInput(3, 'leaf')))
 		const level2 = assertListNode(
-			list.items[0]?.children.find((child) => child.element === 'list') ?? { element: 'thematicBreak' },
+			list.items[0]?.children.find((child) => child.element === 'list') ?? {
+				element: 'thematicBreak',
+			},
 		)
 		const level3 = assertListNode(
 			level2.items[0]?.children.find((child) => child.element === 'list') ?? {
@@ -241,7 +256,10 @@ describe('parseDocument — lists', () => {
 	it('splits a blank-line-separated continuation into two paragraphs within one item', () => {
 		const list = assertListNode(firstBlock('- para line\n\n  more para'))
 		expect(list.items).toHaveLength(1)
-		expect(list.items[0]?.children.map((child) => child.element)).toEqual(['paragraph', 'paragraph'])
+		expect(list.items[0]?.children.map((child) => child.element)).toEqual([
+			'paragraph',
+			'paragraph',
+		])
 		expect(inlineText(assertParagraphNode(list.items[0]?.children[0]).children)).toBe('para line')
 		expect(inlineText(assertParagraphNode(list.items[0]?.children[1]).children)).toBe('more para')
 	})
@@ -249,7 +267,9 @@ describe('parseDocument — lists', () => {
 	it('gathers a lazy continuation line into the same item', () => {
 		const list = assertListNode(firstBlock('- one\ncontinued'))
 		expect(list.items).toHaveLength(1)
-		expect(inlineText(assertParagraphNode(list.items[0]?.children[0]).children)).toBe('one\ncontinued')
+		expect(inlineText(assertParagraphNode(list.items[0]?.children[0]).children)).toBe(
+			'one\ncontinued',
+		)
 	})
 })
 
@@ -267,7 +287,9 @@ describe('parseDocument — GFM tables', () => {
 	})
 
 	it('reads per-column alignment from the delimiter row (all four combinations)', () => {
-		const table = assertTableNode(firstBlock('| l | c | r | n |\n| :- | :-: | -: | - |\n| 1 | 2 | 3 | 4 |'))
+		const table = assertTableNode(
+			firstBlock('| l | c | r | n |\n| :- | :-: | -: | - |\n| 1 | 2 | 3 | 4 |'),
+		)
 		expect(table.align).toEqual(['left', 'center', 'right', 'none'])
 	})
 
@@ -382,9 +404,9 @@ describe('parseDocument — thematic breaks', () => {
 
 describe('parseDocument — blockquotes', () => {
 	it('parses > lines into a blockquote of nested blocks', () => {
-		expect(assertBlockquoteNode(firstBlock('> a quoted line\n> over two')).children[0]?.element).toBe(
-			'paragraph',
-		)
+		expect(
+			assertBlockquoteNode(firstBlock('> a quoted line\n> over two')).children[0]?.element,
+		).toBe('paragraph')
 	})
 
 	it('joins multiple > lines into one paragraph inside the blockquote', () => {
@@ -393,7 +415,9 @@ describe('parseDocument — blockquotes', () => {
 	})
 
 	it('nests a heading inside a blockquote', () => {
-		expect(assertBlockquoteNode(firstBlock('> ## quoted heading')).children[0]?.element).toBe('heading')
+		expect(assertBlockquoteNode(firstBlock('> ## quoted heading')).children[0]?.element).toBe(
+			'heading',
+		)
 	})
 
 	it('nests a blockquote two levels deep with correct AST shape', () => {
@@ -484,7 +508,12 @@ describe('parseDocument — total / malformed input never throws', () => {
 
 	it('dispatches each line to its block kind', () => {
 		const doc = parseDocument('# h\n\npara\n\n- item\n\n> quote')
-		expect(doc.children.map((block) => block.element)).toEqual(['heading', 'paragraph', 'list', 'blockquote'])
+		expect(doc.children.map((block) => block.element)).toEqual([
+			'heading',
+			'paragraph',
+			'list',
+			'blockquote',
+		])
 	})
 
 	it('parses a long emphasis-marker run quickly (linear-time, no ReDoS)', () => {
@@ -509,7 +538,14 @@ describe('parseDocument — total / malformed input never throws', () => {
 describe('parseInline — coalescing and mixed runs', () => {
 	it('coalesces and parses a mixed inline run', () => {
 		const nodes = parseInline('a **b** `c` [d](e)')
-		expect(nodes.map((node) => node.element)).toEqual(['text', 'emphasis', 'text', 'codeSpan', 'text', 'link'])
+		expect(nodes.map((node) => node.element)).toEqual([
+			'text',
+			'emphasis',
+			'text',
+			'codeSpan',
+			'text',
+			'link',
+		])
 	})
 })
 
