@@ -94,4 +94,19 @@ export class Markdown implements MarkdownInterface {
 	*[Symbol.iterator](): Iterator<MarkdownNode> {
 		yield* walkNodes(this.#document)
 	}
+
+	/**
+	 * Asynchronously iterates every node (depth-first, pre-order, root-inclusive) -
+	 * the same sequence as {@link Symbol.iterator}, one node per microtask.
+	 *
+	 * @example
+	 * ```ts
+	 * for await (const node of markdown) {
+	 *   // one microtask per node
+	 * }
+	 * ```
+	 */
+	async *[Symbol.asyncIterator](): AsyncIterator<MarkdownNode> {
+		for (const node of walkNodes(this.#document)) yield await node
+	}
 }

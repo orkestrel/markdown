@@ -33,7 +33,7 @@ The full node shape and workspace contract, from [`types.ts`](../../src/core/typ
 | `MarkdownHandler<TNode, T>` | type      | `(node: TNode, children: readonly T[]) => T` — one catamorphism step; the building block of a `MarkdownHandlers` table.                                                                                                        |
 | `MarkdownHandlers<T>`       | interface | One `MarkdownHandler` per AST element (`document`, `heading`, `paragraph`, `thematicBreak`, `blockquote`, `codeBlock`, `list`, `listItem`, `table`, `text`, `emphasis`, `codeSpan`, `link`) — the total table `fold` requires. |
 | `MarkdownRewriteHandler`    | type      | `(node: MarkdownNode) => MarkdownNode` — a bottom-up, copy-on-write node rewrite for `map`.                                                                                                                                    |
-| `MarkdownInterface`         | interface | `extends Iterable<MarkdownNode>` — `{ document, find, filter, map, reduce, fold, stream }` — see [`## Methods`](#methods) below.                                                                                               |
+| `MarkdownInterface`         | interface | `extends Iterable<MarkdownNode>, AsyncIterable<MarkdownNode>` — `{ document, find, filter, map, reduce, fold, stream }` — see [`## Methods`](#methods) below.                                                                  |
 
 ### Constants
 
@@ -131,7 +131,7 @@ Line/character structural predicates plus node guards, from [`validators.ts`](..
 
 ### `Markdown`
 
-The implementing class of `MarkdownInterface`, from [`Markdown.ts`](../../src/core/Markdown.ts). A stateful, parsed markdown workspace: constructed from a markdown `string` (runs `parseDocument`) or an already-parsed `MarkdownDocument` (adopted AS-IS, not re-validated). Exposes its AST through the `readonly document` member (documented here in Surface prose, per the `ContractInterface` precedent, alongside its `Symbol.iterator` — both are part of the documented surface even though they carry no row in the [`## Methods`](#methods) table below, which lists only call-signature members). Immutable — `map` never mutates the stored AST, it returns a new `Markdown`. See [`## Methods`](#methods) for its public call-signature surface.
+The implementing class of `MarkdownInterface`, from [`Markdown.ts`](../../src/core/Markdown.ts). A stateful, parsed markdown workspace: constructed from a markdown `string` (runs `parseDocument`) or an already-parsed `MarkdownDocument` (adopted AS-IS, not re-validated). Exposes its AST through the `readonly document` member (documented here in Surface prose, per the `ContractInterface` precedent, alongside its `Symbol.iterator` and `Symbol.asyncIterator` — all three are part of the documented surface even though they carry no row in the [`## Methods`](#methods) table below, which lists only call-signature members). Both iterators walk the same depth-first, pre-order, root-inclusive sequence — `for (const node of markdown)` synchronously, `for await (const node of markdown)` asynchronously (one node per microtask), so a genuine async generator composes naturally with `for await…of` and other async pipelines. Immutable — `map` never mutates the stored AST, it returns a new `Markdown`. See [`## Methods`](#methods) for its public call-signature surface.
 
 ### Factories
 
@@ -147,7 +147,7 @@ From [`factories.ts`](../../src/core/factories.ts).
 
 ## Methods
 
-The public methods of each behavioral interface — one table per type, keyed by its backticked name (AGENTS §22). The `readonly document` member and `Symbol.iterator` are Surface-documented above, not listed here — this table lists exactly `MarkdownInterface`'s call-signature members.
+The public methods of each behavioral interface — one table per type, keyed by its backticked name (AGENTS §22). The `readonly document` member, `Symbol.iterator`, and `Symbol.asyncIterator` are Surface-documented above, not listed here — this table lists exactly `MarkdownInterface`'s call-signature members.
 
 #### `MarkdownInterface`
 

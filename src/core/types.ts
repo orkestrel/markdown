@@ -260,8 +260,14 @@ export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
  * - **Traversal order.** `find` / `filter` / `reduce` / the default iterator walk the
  *   AST depth-first, pre-order, root-inclusive; `stream` is shallow - only the
  *   document's direct block children.
+ * - **Dual iteration.** `MarkdownInterface` is both {@link Iterable} and
+ *   {@link AsyncIterable} over the same {@link MarkdownNode} sequence - a sync
+ *   `for (const node of markdown)` and an async `for await (const node of markdown)`
+ *   walk the identical depth-first, pre-order, root-inclusive order. The async form
+ *   yields one node per microtask, so a long document cooperates with the event loop
+ *   and composes naturally with other async pipelines.
  */
-export interface MarkdownInterface extends Iterable<MarkdownNode> {
+export interface MarkdownInterface extends Iterable<MarkdownNode>, AsyncIterable<MarkdownNode> {
 	/** The stored {@link MarkdownDocument} AST root. */
 	readonly document: MarkdownDocument
 	/** Finds the first node (depth-first, pre-order) narrowed by a type guard. */

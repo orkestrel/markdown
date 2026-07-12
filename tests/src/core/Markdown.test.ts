@@ -314,6 +314,57 @@ describe('Markdown — iteration', () => {
 	})
 })
 
+describe('Markdown — async iteration', () => {
+	it('for await…of collects the exact same sequence as [...md]', async () => {
+		const markdown = new Markdown('# Title\n\npara with **bold** text and [a link](x)')
+		const collected: MarkdownNode[] = []
+		for await (const node of markdown) collected.push(node)
+		expect(collected).toEqual([...markdown])
+	})
+
+	it('works inside an async pipeline — an async helper counting nodes returns the right count', async () => {
+		const markdown = new Markdown('# Title\n\npara')
+		async function countNodes(source: AsyncIterable<MarkdownNode>): Promise<number> {
+			let count = 0
+			for await (const node of source) if (node !== undefined) count += 1
+			return count
+		}
+		expect(await countNodes(markdown)).toBe([...markdown].length)
+	})
+
+	it('for await…of over stream() yields the top-level blocks (sync-generator fallback semantics)', async () => {
+		const markdown = new Markdown('# Title\n\npara\n\n---')
+		const blocks: string[] = []
+		for await (const block of markdown.stream()) blocks.push(block.element)
+		expect(blocks).toEqual(['heading', 'paragraph', 'thematicBreak'])
+	})
+
+	it('an early break from for await…of does not throw and terminates cleanly', async () => {
+		const markdown = new Markdown('# Title\n\npara\n\n---')
+		const collected: MarkdownNode[] = []
+		await expect(
+			(async () => {
+				for await (const node of markdown) {
+					collected.push(node)
+					if (node.element === 'heading') break
+				}
+			})(),
+		).resolves.toBeUndefined()
+		expect(collected.map((node) => node.element)).toEqual(['document', 'heading'])
+	})
+
+	it('completes without throwing over a pathologically deep (10,000-deep) document', async () => {
+		const markdown = new Markdown(buildDeepQuoteInput(10_000))
+		let count = 0
+		await expect(
+			(async () => {
+				for await (const node of markdown) if (node !== undefined) count += 1
+			})(),
+		).resolves.toBeUndefined()
+		expect(count).toBeGreaterThan(0)
+	})
+})
+
 describe('Markdown — adversarial (deep input)', () => {
 	it('constructs from a 10,000-deep blockquote chain without throwing', () => {
 		expect(() => new Markdown(buildDeepQuoteInput(10_000))).not.toThrow()
