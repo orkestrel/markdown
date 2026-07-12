@@ -1,49 +1,64 @@
 # Markdown
 
-> A zero-dependency, types-first markdown parser and renderer — a hand-written, linear-time scanner that turns a markdown string into a typed AST and (separately) projects that AST to a safe HTML string. Source: [`src/core`](../../src/core). Surfaced through the `@src/core` barrel.
+> A zero-dependency, types-first markdown parser and renderer — a hand-written, linear-time scanner that turns a markdown string into a typed AST held by a stateful `Markdown` workspace, and a set of standalone writer functions that project that AST back out (to safe HTML, or to canonical markdown source). Source: [`src/core`](../../src/core). Surfaced through the `@src/core` barrel.
 
-Markdown here is two separate, pure, total operations over one shared AST. `parse` runs a block phase (headings / paragraphs / lists / GFM tables / fenced code / blockquotes / thematic breaks) then an inline phase (emphasis / inline code / links) over each block's text, and returns a render-agnostic {@link MarkdownDocument} — a discriminated union of node values keyed by `element` (the axis that varies, AGENTS §4.4: never `kind` / `type`). `render` is a downstream, separate projection from AST → HTML string; it never assumes its input came from `parse` on trusted markdown, so it unconditionally HTML-escapes text/attributes and sanitizes link `href`s. Neither method ever throws: malformed input degrades to literal text, and adversarially deep nesting degrades at a fixed recursion cap rather than exhausting the call stack (no ReDoS, no stack overflow). The AST itself is the primary contract — render-agnostic and exhaustively testable — with a from-unknown validation surface (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) for when an AST arrives from outside `parse` (a deserialized document, a value crossing a process/RPC boundary).
+Markdown here is: parse once into a stateful `Markdown` workspace, then treat every output as a projection of it. `parseDocument` runs a block phase (headings / paragraphs / lists / GFM tables / fenced code / blockquotes / thematic breaks) then an inline phase (emphasis / inline code / links) over each block's text, and returns a render-agnostic {@link MarkdownDocument} — a discriminated union of node values keyed by `element` (the axis that varies, AGENTS §4.4: never `kind` / `type`). A `Markdown` instance wraps that AST with query (`find` / `filter` / `reduce` / iteration), rewrite (`map`), fold, and streaming operations. The writers — `renderHTML` and `renderMarkdown` — are separate, standalone, downstream projections from AST → string; neither assumes its input came from `parseDocument` on trusted markdown. `renderHTML` never throws: it unconditionally HTML-escapes text/attributes and sanitizes link `href`s. Neither writer ever throws: malformed input degrades to literal text, and adversarially deep nesting degrades at a fixed recursion cap rather than exhausting the call stack (no ReDoS, no stack overflow). The AST itself is the primary contract — render-agnostic and exhaustively testable — with a from-unknown validation surface (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) for when an AST arrives from outside `parseDocument` (a deserialized document, a value crossing a process/RPC boundary).
 
 ## Surface
 
 ### Types
 
-The full node shape and parser contract, from [`types.ts`](../../src/core/types.ts). `element` is the discriminant every node carries; block nodes carry document structure, inline nodes carry the inline content of a heading / paragraph / list item / table cell.
+The full node shape and workspace contract, from [`types.ts`](../../src/core/types.ts). `element` is the discriminant every node carries; block nodes carry document structure, inline nodes carry the inline content of a heading / paragraph / list item / table cell.
 
-| Type                      | Kind      | Shape                                                                                                                    |
-| ------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `TableAlign`              | type      | `'none' \| 'left' \| 'right' \| 'center'` — a GFM table column's declared alignment.                                     |
-| `ListItemParts`           | interface | `{ ordered, start, content, indent, marker }` — the block phase's parsed list-item-line result.                          |
-| `TextNode`                | interface | `{ element: 'text', value: string }` — a plain-text inline leaf (escapes resolved, not yet HTML-escaped).                |
-| `EmphasisNode`            | interface | `{ element: 'emphasis', strong: boolean, children: readonly InlineNode[] }` — `*em*` / `**strong**`.                     |
-| `CodeSpanNode`            | interface | `{ element: 'codeSpan', value: string }` — `` `code` ``, verbatim (no inner markdown).                                   |
-| `LinkNode`                | interface | `{ element: 'link', href: string, children: readonly InlineNode[] }` — `[text](href)`.                                   |
-| `InlineNode`              | type      | `TextNode \| EmphasisNode \| CodeSpanNode \| LinkNode` — anything that can appear inside inline content.                 |
-| `HeadingNode`             | interface | `{ element: 'heading', level: number, children: readonly InlineNode[] }` — an ATX heading, `level` 1–6.                  |
-| `ParagraphNode`           | interface | `{ element: 'paragraph', children: readonly InlineNode[] }`.                                                             |
-| `ListItemNode`            | interface | `{ element: 'listItem', children: readonly BlockNode[] }` — one item of a `ListNode`.                                    |
-| `ListNode`                | interface | `{ element: 'list', ordered: boolean, start: number, items: readonly ListItemNode[] }`.                                  |
-| `TableNode`               | interface | `{ element: 'table', header, rows, align }` — a GFM table; `header`/`rows` are inline-content cells, `align` per-column. |
-| `CodeBlockNode`           | interface | `{ element: 'codeBlock', lang?: string, code: string }` — a fenced code block, verbatim (no inner markdown).             |
-| `BlockquoteNode`          | interface | `{ element: 'blockquote', children: readonly BlockNode[] }` — `>`-prefixed lines, de-quoted and re-parsed as blocks.     |
-| `ThematicBreakNode`       | interface | `{ element: 'thematicBreak' }` — a horizontal rule; carries no fields beyond its discriminant.                           |
-| `BlockNode`               | type      | `HeadingNode \| ParagraphNode \| ListNode \| TableNode \| CodeBlockNode \| BlockquoteNode \| ThematicBreakNode`.         |
-| `MarkdownDocument`        | interface | `{ element: 'document', children: readonly BlockNode[] }` — the AST root `MarkdownParserInterface.parse` returns.        |
-| `MarkdownNode`            | type      | `MarkdownDocument \| BlockNode \| ListItemNode \| InlineNode` — the exhaustive set the renderer's `switch` covers.       |
-| `MarkdownParserInterface` | interface | `{ parse, parseInline, render }` — see [`## Methods`](#methods) below.                                                   |
+| Type                     | Kind      | Shape                                                                                                                    |
+| ------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TableAlign`             | type      | `'none' \| 'left' \| 'right' \| 'center'` — a GFM table column's declared alignment.                                     |
+| `ListItemParts`          | interface | `{ ordered, start, content, indent, marker }` — the block phase's parsed list-item-line result.                          |
+| `TextNode`               | interface | `{ element: 'text', value: string }` — a plain-text inline leaf (escapes resolved, not yet HTML-escaped).                |
+| `EmphasisNode`           | interface | `{ element: 'emphasis', strong: boolean, children: readonly InlineNode[] }` — `*em*` / `**strong**`.                     |
+| `CodeSpanNode`           | interface | `{ element: 'codeSpan', value: string }` — `` `code` ``, verbatim (no inner markdown).                                   |
+| `LinkNode`               | interface | `{ element: 'link', href: string, children: readonly InlineNode[] }` — `[text](href)`.                                   |
+| `InlineNode`             | type      | `TextNode \| EmphasisNode \| CodeSpanNode \| LinkNode` — anything that can appear inside inline content.                 |
+| `HeadingNode`            | interface | `{ element: 'heading', level: number, children: readonly InlineNode[] }` — an ATX heading, `level` 1–6.                  |
+| `ParagraphNode`          | interface | `{ element: 'paragraph', children: readonly InlineNode[] }`.                                                             |
+| `ListItemNode`           | interface | `{ element: 'listItem', children: readonly BlockNode[] }` — one item of a `ListNode`.                                    |
+| `ListNode`               | interface | `{ element: 'list', ordered: boolean, start: number, items: readonly ListItemNode[] }`.                                  |
+| `TableNode`              | interface | `{ element: 'table', header, rows, align }` — a GFM table; `header`/`rows` are inline-content cells, `align` per-column. |
+| `CodeBlockNode`          | interface | `{ element: 'codeBlock', lang?: string, code: string }` — a fenced code block, verbatim (no inner markdown).             |
+| `BlockquoteNode`         | interface | `{ element: 'blockquote', children: readonly BlockNode[] }` — `>`-prefixed lines, de-quoted and re-parsed as blocks.     |
+| `ThematicBreakNode`      | interface | `{ element: 'thematicBreak' }` — a horizontal rule; carries no fields beyond its discriminant.                           |
+| `BlockNode`              | type      | `HeadingNode \| ParagraphNode \| ListNode \| TableNode \| CodeBlockNode \| BlockquoteNode \| ThematicBreakNode`.         |
+| `MarkdownDocument`       | interface | `{ element: 'document', children: readonly BlockNode[] }` — the AST root a `Markdown` instance's `document` holds.       |
+| `MarkdownNode`           | type      | `MarkdownDocument \| BlockNode \| ListItemNode \| InlineNode` — the exhaustive set the writers' `switch` covers.         |
+| `MarkdownHandler<TNode, T>` | type   | `(node: TNode, children: readonly T[]) => T` — one catamorphism step; the building block of a `MarkdownHandlers` table.  |
+| `MarkdownHandlers<T>`   | interface | One `MarkdownHandler` per AST element (`document`, `heading`, `paragraph`, `thematicBreak`, `blockquote`, `codeBlock`, `list`, `listItem`, `table`, `text`, `emphasis`, `codeSpan`, `link`) — the total table `fold` requires. |
+| `MarkdownRewriteHandler` | type      | `(node: MarkdownNode) => MarkdownNode` — a bottom-up, copy-on-write node rewrite for `map`.                              |
+| `MarkdownInterface`     | interface | `extends Iterable<MarkdownNode>` — `{ document, find, filter, map, reduce, fold, stream }` — see [`## Methods`](#methods) below. |
 
 ### Constants
 
 From [`constants.ts`](../../src/core/constants.ts).
 
-| Constant           | Kind  | Behavior                                                                                                                                                                   |
-| ------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SAFE_URL_SCHEMES` | const | `ReadonlySet<string>` — `{'http', 'https', 'mailto', 'tel'}`, frozen, lower-case. Any other scheme (`javascript:`, `data:`, `vbscript:`, `file:`, …) is dropped at render. |
-| `MAX_DEPTH`        | const | `64` — the recursion cap the block phase, inline phase, and renderer all honor before degrading to literal text (§ [Depth degrade semantics](#depth-degrade-semantics)).   |
+| Constant           | Kind  | Behavior                                                                                                                                                                                                       |
+| ------------------ | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SAFE_URL_SCHEMES` | const | `ReadonlySet<string>` — `{'http', 'https', 'mailto', 'tel'}`, frozen, lower-case. Any other scheme (`javascript:`, `data:`, `vbscript:`, `file:`, …) is dropped at render.                                    |
+| `MAX_DEPTH`        | const | `64` — the recursion cap `parseDocument` (and its `parsers.ts` helpers) and the `helpers.ts` traversal/render functions (`renderHTML`, `renderMarkdown`, `walkNodes`, `foldNode`) all honor before degrading (§ [Depth degrade semantics](#depth-degrade-semantics)). |
+
+### Parsers
+
+The block/inline parsing pipeline, from [`parsers.ts`](../../src/core/parsers.ts) — the orchestration `parseDocument` composes out of `helpers.ts`'s pure scanning leaves (AGENTS §5). `parseBlocks` / `collectTable` / `collectList` are the recursive spine; each is exported and independently testable.
+
+| Parser         | Kind     | Signature                                                                              | Behavior                                                                                              |
+| -------------- | -------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `parseBlocks`  | function | `(lines: readonly string[], depth: number) => readonly BlockNode[]`                     | Parses a run of markdown lines into block nodes, recursing into nested blockquotes/list items; degrades to one literal paragraph at `MAX_DEPTH`. |
+| `collectTable` | function | `(lines: readonly string[], start: number) => { node: TableNode, next: number }`        | Collects a GFM table starting at its header row (header + delimiter + contiguous body rows).          |
+| `collectList`  | function | `(lines: readonly string[], start: number, depth: number) => { node: ListNode, next: number }` | Collects a list starting at its first item, gathering same-indent siblings and recursing into each item's block content. |
+| `parseDocument`| function | `(markdown: string) => MarkdownDocument`                                                | Parses a markdown string into a `MarkdownDocument` AST via the block phase (`splitLines` + `parseBlocks`). Never throws. |
+| `parseInline`  | function | `(text: string) => readonly InlineNode[]`                                               | Parses one line of inline content (emphasis / code / links), no block structure. Never throws.        |
 
 ### Helpers
 
-Pure, total, zero-dependency parsing + rendering leaves from [`helpers.ts`](../../src/core/helpers.ts) — the functional core `MarkdownParser`'s methods compose (AGENTS §5). Every function is unit-testable in isolation; malformed input degrades to text, never throws.
+Pure, total, zero-dependency parsing + writing leaves from [`helpers.ts`](../../src/core/helpers.ts) — the functional core `parsers.ts` composes and the projections `Markdown` and callers reach for directly (AGENTS §5). Every function is unit-testable in isolation; malformed input degrades to text, never throws.
 
 | Helper            | Kind     | Signature                                                                            | Behavior                                                                                                                                                     |
 | ----------------- | -------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -64,6 +79,12 @@ Pure, total, zero-dependency parsing + rendering leaves from [`helpers.ts`](../.
 | `scanInline`      | function | `(source: string, from: number, to: number, depth = 0) => readonly InlineNode[]`     | The recursive inline-scanning engine (emphasis / link text recurse through it); linear-time, no backtracking. See [depth degrade](#depth-degrade-semantics). |
 | `escapeHtml`      | function | `(text: string) => string`                                                           | HTML-escapes `&` `<` `>` `"` `'` to entities.                                                                                                                |
 | `sanitizeUrl`     | function | `(href: string) => string`                                                           | Sanitizes + attribute-escapes a link `href` (§ [Sanitization policy](#sanitization-policy)).                                                                 |
+| `renderHTML`      | function | `(node: MarkdownNode) => string`                                                     | Renders any `MarkdownNode` (typically a `MarkdownDocument`) to a safe HTML string — text/attributes escaped, `href`s sanitized. Never throws.                |
+| `renderMarkdown`  | function | `(node: MarkdownNode) => string`                                                     | Renders any `MarkdownNode` to CANONICAL markdown source — the inverse of `renderHTML`, and the basis of the `parseDocument`↔`renderMarkdown` round-trip (§ [`renderMarkdown` round-trip](#rendermarkdown-round-trip)). Never throws. |
+| `walkNodes`       | function | `(node: MarkdownNode) => Generator<MarkdownNode>`                                    | Depth-first, pre-order, root-inclusive traversal — yields the node itself then its children. `Markdown.find` / `filter` / `reduce` / iteration all walk through this. |
+| `foldNode`        | function | `<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, depth: number) => T`         | The total catamorphism `Markdown.fold` delegates to — children folded first (post-order), then the node's own handler runs with the already-folded children. |
+| `rewriteDocument` | function | `(document: MarkdownDocument, rewrite: MarkdownRewriteHandler) => MarkdownDocument`  | The bottom-up (copy-on-write) rewrite `Markdown.map` delegates to — the document root is never itself passed to `rewrite`. |
+| `flattenText`     | function | `(node: MarkdownNode) => string`                                                     | Concatenates the `value`/`code` content of every descendant text/code-span/code-block node, in walk order — a plain-text projection of an AST. |
 
 ### Shapers
 
@@ -95,7 +116,7 @@ Line/character structural predicates plus node guards, from [`validators.ts`](..
 | `isHeadingNode`       | function | `node: MarkdownNode`                               | Narrows to `HeadingNode` — `node.element === 'heading'`.                                                                                                   |
 | `isParagraphNode`     | function | `node: MarkdownNode`                               | Narrows to `ParagraphNode`.                                                                                                                                |
 | `isListNode`          | function | `node: MarkdownNode`                               | Narrows to `ListNode`.                                                                                                                                     |
-| `isTableNode`         | function | `node: MarkdownNode`                               | Narrows to `TableNode`.                                                                                                                                    |
+| `isTableNode`         | function | `node: MarkdownNode`                               | Narrows to `TableNode`.                                                                                                                                     |
 | `isCodeBlockNode`     | function | `node: MarkdownNode`                               | Narrows to `CodeBlockNode`.                                                                                                                                |
 | `isBlockquoteNode`    | function | `node: MarkdownNode`                               | Narrows to `BlockquoteNode`.                                                                                                                               |
 | `isThematicBreakNode` | function | `node: MarkdownNode`                               | Narrows to `ThematicBreakNode`.                                                                                                                            |
@@ -108,33 +129,36 @@ Line/character structural predicates plus node guards, from [`validators.ts`](..
 | `isMarkdownNode`      | const    | `Guard<MarkdownNode>`                              | Total from-unknown guard: the document root, a block node, a list item, or an inline node.                                                                 |
 | `isMarkdownDocument`  | const    | `Guard<MarkdownDocument>`                          | Total from-unknown guard: `{ element: 'document', children: readonly BlockNode[] }`.                                                                       |
 
-### `MarkdownParser`
+### `Markdown`
 
-The implementing class of `MarkdownParserInterface`, from [`MarkdownParser.ts`](../../src/core/MarkdownParser.ts). Stateless and event-free — a handle freely reused. See [`## Methods`](#methods) for its public surface.
+The implementing class of `MarkdownInterface`, from [`Markdown.ts`](../../src/core/Markdown.ts). A stateful, parsed markdown workspace: constructed from a markdown `string` (runs `parseDocument`) or an already-parsed `MarkdownDocument` (adopted AS-IS, not re-validated). Exposes its AST through the `readonly document` member (documented here in Surface prose, per the `ContractInterface` precedent, alongside its `Symbol.iterator` — both are part of the documented surface even though they carry no row in the [`## Methods`](#methods) table below, which lists only call-signature members). Immutable — `map` never mutates the stored AST, it returns a new `Markdown`. See [`## Methods`](#methods) for its public call-signature surface.
 
 ### Factories
 
 From [`factories.ts`](../../src/core/factories.ts).
 
-| Factory                       | Kind     | Signature                                    | Behavior                                                                         |
-| ----------------------------- | -------- | -------------------------------------------- | -------------------------------------------------------------------------------- |
-| `createMarkdownParser`        | function | `() => MarkdownParserInterface`              | Creates a stateless `MarkdownParser` handle.                                     |
-| `createTextContract`          | function | `() => ContractInterface<TextNode>`          | Compiles `textShape` into a guard / parser / schema / generator bundle.          |
-| `createCodeSpanContract`      | function | `() => ContractInterface<CodeSpanNode>`      | Compiles `codeSpanShape` into a guard / parser / schema / generator bundle.      |
-| `createCodeBlockContract`     | function | `() => ContractInterface<CodeBlockNode>`     | Compiles `codeBlockShape` into a guard / parser / schema / generator bundle.     |
-| `createThematicBreakContract` | function | `() => ContractInterface<ThematicBreakNode>` | Compiles `thematicBreakShape` into a guard / parser / schema / generator bundle. |
+| Factory                       | Kind     | Signature                                              | Behavior                                                                         |
+| ------------------------------ | -------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `createMarkdown`               | function | `(input: string \| MarkdownDocument) => MarkdownInterface` | Creates a `Markdown` workspace from a markdown string (parses it) or an already-parsed document (adopted as-is). |
+| `createTextContract`           | function | `() => ContractInterface<TextNode>`                     | Compiles `textShape` into a guard / parser / schema / generator bundle.          |
+| `createCodeSpanContract`       | function | `() => ContractInterface<CodeSpanNode>`                 | Compiles `codeSpanShape` into a guard / parser / schema / generator bundle.      |
+| `createCodeBlockContract`      | function | `() => ContractInterface<CodeBlockNode>`                | Compiles `codeBlockShape` into a guard / parser / schema / generator bundle.     |
+| `createThematicBreakContract`  | function | `() => ContractInterface<ThematicBreakNode>`            | Compiles `thematicBreakShape` into a guard / parser / schema / generator bundle. |
 
 ## Methods
 
-The public methods of each behavioral interface — one table per type, keyed by its backticked name (AGENTS §22).
+The public methods of each behavioral interface — one table per type, keyed by its backticked name (AGENTS §22). The `readonly document` member and `Symbol.iterator` are Surface-documented above, not listed here — this table lists exactly `MarkdownInterface`'s call-signature members.
 
-#### `MarkdownParserInterface`
+#### `MarkdownInterface`
 
-| Method        | Returns                 | Behavior                                                                                                                                                                                                                                          |
-| ------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `parse`       | `MarkdownDocument`      | Parses a markdown string into an AST (block phase then inline phase). Never throws.                                                                                                                                                               |
-| `parseInline` | `readonly InlineNode[]` | Parses a single line of inline content (emphasis / code / links), no block structure. Never throws.                                                                                                                                               |
-| `render`      | `string`                | Renders a parsed `MarkdownNode` (typically a `MarkdownDocument`) to an HTML string — text + attributes escaped, `href`s sanitized. Takes only the node (depth is an internal, `#`-private recursion parameter, not part of the public signature). |
+| Method   | Returns                 | Behavior                                                                                                                                    |
+| -------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `find`   | `T \| MarkdownNode \| undefined` | Finds the first node (depth-first, pre-order), narrowed by a type guard or matched by a predicate. `undefined` when nothing matches.        |
+| `filter` | `readonly T[] \| readonly MarkdownNode[]` | Collects every node (depth-first, pre-order), narrowed by a type guard or matched by a predicate.                                          |
+| `map`    | `MarkdownInterface`      | Rewrites the AST bottom-up (copy-on-write) via a `MarkdownRewriteHandler` and returns a NEW `MarkdownInterface`; never mutates the original. |
+| `reduce` | `T`                      | Folds the AST depth-first, pre-order into an accumulator via a plain reducer callback.                                                      |
+| `fold`   | `T`                      | Runs a total catamorphism over the document using a `MarkdownHandlers<T>` table (one handler per AST element).                              |
+| `stream` | `Generator<BlockNode>`   | Lazily yields the document's top-level block nodes only (shallow, source order) — NOT a deep traversal.                                     |
 
 ## The AST model
 
@@ -143,32 +167,34 @@ Every node is plain, readonly data with no behavior — a discriminated union ke
 - **Block nodes** (`BlockNode`) carry document structure: `heading`, `paragraph`, `list` (of `listItem`s), `table`, `codeBlock`, `blockquote`, `thematicBreak`. A `MarkdownDocument` is the root — `{ element: 'document', children: readonly BlockNode[] }`.
 - **Inline nodes** (`InlineNode`) carry the inline content of a heading / paragraph / list item / table cell: `text`, `emphasis` (nests further inline children — `**bold _and italic_**` is a strong node wrapping a text node and an emphasis node), `codeSpan` (verbatim, no inner markdown), `link` (nests inline children for its text).
 
-Recursion in the AST is structural, not incidental: a `blockquote`'s `children` re-parse the de-quoted lines as blocks (so quotes nest), a `list`'s `items` each carry `BlockNode[]` (so a nested list is just a `list` block inside a `listItem`'s children), and `emphasis` / `link` nest `InlineNode[]`. `MarkdownNode` is the exhaustive union the renderer's `switch` covers: `MarkdownDocument | BlockNode | ListItemNode | InlineNode`.
+Recursion in the AST is structural, not incidental: a `blockquote`'s `children` re-parse the de-quoted lines as blocks (so quotes nest), a `list`'s `items` each carry `BlockNode[]` (so a nested list is just a `list` block inside a `listItem`'s children), and `emphasis` / `link` nest `InlineNode[]`. `MarkdownNode` is the exhaustive union the writers' `switch` covers: `MarkdownDocument | BlockNode | ListItemNode | InlineNode`.
 
-## The parse → render pipeline
+## The parse pipeline
 
-`parse(markdown)` runs two phases:
+`parseDocument(markdown)` runs two phases:
 
-1. **Block phase** — splits the document into lines (`splitLines`, CRLF/CR normalized) and walks them, detecting fences, thematic breaks, ATX headings, blockquotes, GFM tables, and lists; anything left over collects into a paragraph. `startsBlock` lets a new block interrupt a paragraph without a separating blank line.
-2. **Inline phase** — each block's raw text runs through `scanInline` (backslash escapes, code spans, links, emphasis), then `coalesceText` merges adjacent text runs.
+1. **Block phase** — splits the document into lines (`splitLines`, CRLF/CR normalized) and walks them, detecting fences, thematic breaks, ATX headings, blockquotes, GFM tables, and lists (`parseBlocks`, `collectTable`, `collectList`); anything left over collects into a paragraph. `startsBlock` lets a new block interrupt a paragraph without a separating blank line.
+2. **Inline phase** — each block's raw text runs through `scanInline` (backslash escapes, code spans, links, emphasis) via `parseInline`, then `coalesceText` merges adjacent text runs.
 
-`render(node)` is a **separate**, downstream projection from the resulting AST to an HTML string — it is never fused into `parse`, so a caller can inspect, transform, or validate the AST before rendering (or never render it at all).
+`new Markdown(markdown)` (or `createMarkdown(markdown)`) calls `parseDocument` internally and stores the result as its `document`. `renderHTML(node)` and `renderMarkdown(node)` are **separate**, downstream, standalone projections from an AST to a string — never fused into parsing, so a caller can inspect, transform, or fold the AST (via `Markdown`'s `find` / `filter` / `map` / `reduce` / `fold`) before ever calling a writer, or never call one at all.
 
-**Total / never-throw.** Both `parse` and `render` are total functions: malformed markdown degrades to literal text (an unterminated `**` stays literal, a broken table falls back to a paragraph) rather than throwing. Inline scanning is index-based (no backtracking regex), so it is linear-time — no ReDoS on adversarial input.
+**Total / never-throw.** `parseDocument`, `renderHTML`, and `renderMarkdown` are all total functions: malformed markdown degrades to literal text (an unterminated `**` stays literal, a broken table falls back to a paragraph) rather than throwing. Inline scanning is index-based (no backtracking regex), so it is linear-time — no ReDoS on adversarial input.
 
 ### Depth degrade semantics
 
-`MAX_DEPTH` (`64`) bounds three independent recursions, each degrading to a fixed, cheap fallback instead of recursing further:
+`MAX_DEPTH` (`64`) bounds several independent recursions, each degrading to a fixed, cheap fallback instead of recursing further:
 
-- **Block recursion** (blockquote / list nesting, `MarkdownParser`'s private `#blocks`) — past the cap, the remaining lines collapse into **one literal paragraph** containing those lines joined by `\n`, instead of continuing to parse nested structure.
+- **Block recursion** (blockquote / list nesting, `parsers.ts`'s `parseBlocks`) — past the cap, the remaining lines collapse into **one literal paragraph** containing those lines joined by `\n`, instead of continuing to parse nested structure.
 - **Inline recursion** (`scanInline`, and the `depth` threaded through `scanLink` / `scanEmphasis`) — past the cap, the scan window is not scanned for markup at all; it emits as a **single literal text node**.
-- **Render recursion** (the public `render(node)`, which delegates to a `#`-private `#render(node, depth)` carrying the actual cap logic and every recursive call) — past the cap, a node is not rendered structurally; it yields the HTML-escaped `value` of a node that carries one (a `TextNode`, `CodeSpanNode`, …), or an **empty string** for a node with no `value` field. A table cell's inline content renders at `depth + 1` from the table's own depth (never reset to `0`), so a fabricated table-in-cell chain shares the same depth budget as everything else and cannot escape the cap. The `switch` inside `#render` also carries a `default` arm returning `''`, so a fabricated node with an `element` outside the exhaustive set (bypassing the type system, e.g. via an untyped/deserialized value) renders as an empty string instead of `undefined` — `render` is total even against a hostile `MarkdownNode`.
+- **`renderHTML` recursion** — past the cap, a node is not rendered structurally; it yields the HTML-escaped `value` of a node that carries one (a `TextNode`, `CodeSpanNode`, …), or an **empty string** for a node with no `value` field. A table cell's inline content renders at `depth + 1` from the table's own depth (never reset to `0`), so a fabricated table-in-cell chain shares the same depth budget as everything else and cannot escape the cap. The internal `switch` also carries a `default` arm returning `''`, so a fabricated node with an `element` outside the exhaustive set (bypassing the type system, e.g. via an untyped/deserialized value) renders as an empty string instead of `undefined` — `renderHTML` is total even against a hostile `MarkdownNode`.
+- **`renderMarkdown` recursion** — the same cap and the same value-bearing-vs-empty degrade rule, applied to canonical markdown source instead of HTML.
+- **`walkNodes` / `foldNode` recursion** — descent stops at the cap; the node AT the cap is still yielded/folded (with an empty children list for `foldNode`), its children are not.
 
-Together these bound pathological or hostile input (deeply nested blockquotes, runaway emphasis, adversarially deep ASTs) so the parser and renderer can never exhaust the call stack.
+Together these bound pathological or hostile input (deeply nested blockquotes, runaway emphasis, adversarially deep ASTs) so no parsing or writing function can ever exhaust the call stack.
 
 ## Sanitization policy
 
-`render` treats every text run, code body, and link `href` as untrusted, unconditionally:
+`renderHTML` treats every text run, code body, and link `href` as untrusted, unconditionally:
 
 - **Text + attribute escaping.** `escapeHtml` escapes `&` `<` `>` `"` `'` to entities on every text run and code body, so markdown content can never inject markup.
 - **`href` sanitization** (`sanitizeUrl`) — strips every whitespace and C0/C1 control codepoint from the href first (blocking `java\tscript:`-style scheme-spoofing evasions), then:
@@ -178,79 +204,129 @@ Together these bound pathological or hostile input (deeply nested blockquotes, r
   - the surviving value is then HTML-attribute-escaped.
 - **Table cell `align` clamping.** A table cell's `style="text-align:…"` attribute is only ever emitted when the column's `TableAlign` is the literal `'left'`, `'right'`, or `'center'` — `'none'` (or anything else a fabricated `TableNode` might carry) emits no `style` attribute at all, so the interpolated value can never escape that closed, literal set.
 
-This is defence-in-depth: `render` applies it even when a caller only ever feeds the parser trusted markdown, because `render` accepts any `MarkdownNode` — including one a caller constructed or accepted from elsewhere, not only one `parse` produced.
+This is defence-in-depth: `renderHTML` applies it even when a caller only ever feeds `parseDocument` trusted markdown, because `renderHTML` accepts any `MarkdownNode` — including one a caller constructed, rewrote via `map`, or accepted from elsewhere, not only one `parseDocument` produced. `renderMarkdown` is NOT a sanitization boundary — it emits canonical markdown source, not HTML, so escaping there exists only to keep the round-trip lossless (§ below), not to defend against injection.
+
+## `renderMarkdown` round-trip
+
+`renderMarkdown` is the inverse of `parseDocument`: for any `MarkdownDocument` produced by `parseDocument`, `parseDocument(renderMarkdown(doc))` deep-equals `doc`, and `renderMarkdown` is idempotent — `renderMarkdown(parseDocument(renderMarkdown(doc))) === renderMarkdown(doc)`. It writes every node to one CANONICAL markdown form, never the source's original (possibly variant) spelling:
+
+| Construct           | Canonical form                                                                                   |
+| -------------------- | -------------------------------------------------------------------------------------------------- |
+| Emphasis             | `*em*` / `**strong**` — underscore emphasis (`_em_`, `__strong__`) normalizes to asterisks.        |
+| Bulleted list item   | `- ` (a single hyphen + space), regardless of source marker (`*` / `+`).                           |
+| Ordered list item    | `N. ` — sequential ordinals starting from the list's `start`, `.`-style (never `)`)               |
+| Thematic break       | `---`, regardless of source marker (`***` / `___` / spaced variants).                              |
+| Fenced code block    | Backtick fences, widened past any 3+ backtick run already inside the body.                         |
+| Blockquote           | `> `-prefixed lines (`>` alone for an otherwise-empty line).                                       |
+| GFM table            | 1-space-padded cells, `\|`-escaped literal pipes, an explicit alignment delimiter row.              |
+| Link                 | `[text](href)` — the raw `href`, unescaped and unsanitized (sanitization is an HTML-render concern, not a markdown-writing one). |
+| Block separation     | Exactly ONE blank line between top-level blocks; a document with zero blocks renders `''`.          |
+
+A `text` node's literal content is backslash-escaped wherever it would otherwise re-parse as different markup (a leading `#`, a leading list marker, a literal `*`/`_`/`` ` ``/`[`/`]`) — the round-trip soundness AGENTS §14 requires between a parser and its inverse.
 
 ## Relationship with `@orkestrel/contract`
 
 Markdown's validation surface is a thin, purpose-built layer over `@orkestrel/contract`'s guard/combinator/shape machinery (AGENTS §14):
 
-- **From-unknown guards for untrusted ASTs.** `isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument` (`validators.ts`) are `Guard<T>` values composed from `recordOf` / `arrayOf` / `unionOf` / `literalOf` / `lazyOf` — each is total (never throws, even on cyclic or adversarially deep input) because every combinator involved is throw-contained by `@orkestrel/contract`'s guard contract. These validate a value that did **not** necessarily come from `parse` — a deserialized document, a value crossing a process/RPC boundary.
+- **From-unknown guards for untrusted ASTs.** `isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument` (`validators.ts`) are `Guard<T>` values composed from `recordOf` / `arrayOf` / `unionOf` / `literalOf` / `lazyOf` — each is total (never throws, even on cyclic or adversarially deep input) because every combinator involved is throw-contained by `@orkestrel/contract`'s guard contract. These validate a value that did **not** necessarily come from `parseDocument` — a deserialized document, a value crossing a process/RPC boundary.
 - **Leaf shapes + compiled contracts, in lockstep.** `shapers.ts` declares `ContractShape` values (`textShape`, `codeSpanShape`, `codeBlockShape`, `thematicBreakShape`, `tableAlignShape`, `listItemPartsShape`) for the AST's non-recursive node types. `factories.ts` compiles four of them through `createContract` into `ContractInterface<T>` bundles — `schema` / `is` / `parse` / `generate` derived from one declaration, so they can never drift from each other.
 - **Why recursive nodes are guard-only.** A `ContractShape` tree has no lazy/self-referential node — it is a finite, developer-authored tree the compilers can walk exhaustively. Any AST type whose fields recurse into `BlockNode` / `InlineNode` / `MarkdownNode` (`EmphasisNode`, `LinkNode`, `HeadingNode`, `ParagraphNode`, `ListItemNode`, `ListNode`, `TableNode`, `BlockquoteNode`, `MarkdownDocument`) is therefore **not** shaped — it stays guard-only, expressed directly in `validators.ts` with `@orkestrel/contract`'s `lazyOf` (the sanctioned recursion entry point: the thunk defers construction so a self-referential guard never references itself before it exists).
 
 ## Patterns
 
-### Parsing and rendering
+### Construct and inspect
 
 ```ts
-import { createMarkdownParser } from '@src/core'
+import { Markdown, isHeadingNode } from '@src/core'
 
-const parser = createMarkdownParser()
-const ast = parser.parse('# Title\n\nA **bold** [link](https://x.dev).')
-// ast.children[0] === { element: 'heading', level: 1, children: [{ element: 'text', value: 'Title' }] }
+const markdown = new Markdown('# Title\n\nA **bold** [link](https://x.dev).')
+markdown.document.children[0] // { element: 'heading', level: 1, children: [...] }
 
-parser.render(ast)
-// '<h1>Title</h1>\n<p>A <strong>bold</strong> <a href="https://x.dev">link</a>.</p>'
+const heading = markdown.find(isHeadingNode) // HeadingNode | undefined, narrowed
+if (heading !== undefined) heading.level // number — narrowed to HeadingNode
 ```
 
-### Typed narrowing with the assert-style node guards
+### Query and transform
 
 ```ts
-import { createMarkdownParser, isHeadingNode } from '@src/core'
+import { Markdown, isLinkNode, renderMarkdown } from '@src/core'
 
-const parser = createMarkdownParser()
-const ast = parser.parse('# Hi')
-const [first] = ast.children
+const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
+const links = markdown.filter(isLinkNode) // readonly LinkNode[]
 
-if (first !== undefined && isHeadingNode(first)) {
-	first.level // number — narrowed to HeadingNode
+const shouted = markdown.map((node) =>
+	node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
+)
+renderMarkdown(shouted.document) // 'See [ONE](https://a.dev) and [TWO](https://b.dev).'
+```
+
+### Environment-agnostic fold
+
+```ts
+import { Markdown } from '@src/core'
+import type { MarkdownHandlers } from '@src/core'
+
+const toHTML: MarkdownHandlers<string> = {
+	document: (_, children) => children.join('\n'),
+	heading: (node, children) => `<h${node.level}>${children.join('')}</h${node.level}>`,
+	paragraph: (_, children) => `<p>${children.join('')}</p>`,
+	thematicBreak: () => '<hr>',
+	blockquote: (_, children) => `<blockquote>${children.join('\n')}</blockquote>`,
+	codeBlock: (node) => `<pre><code>${node.code}</code></pre>`,
+	list: (node, children) => (node.ordered ? `<ol>${children.join('')}</ol>` : `<ul>${children.join('')}</ul>`),
+	listItem: (_, children) => `<li>${children.join('')}</li>`,
+	table: () => '<table>…</table>',
+	text: (node) => node.value,
+	emphasis: (node, children) => (node.strong ? `<strong>${children.join('')}</strong>` : `<em>${children.join('')}</em>`),
+	codeSpan: (node) => `<code>${node.value}</code>`,
+	link: (node, children) => `<a href="${node.href}">${children.join('')}</a>`,
 }
+
+const markdown = new Markdown('# Hi')
+markdown.fold(toHTML) // '<h1>Hi</h1>' — no DOM, no browser, no HTML-string coupling in the fold table itself
 ```
 
-### Validating untrusted input before render
+### Untrusted input
 
 ```ts
-import { createMarkdownParser, isMarkdownNode } from '@src/core'
+import { Markdown, isMarkdownDocument, renderHTML } from '@src/core'
 
 function renderUntrusted(candidate: unknown): string | undefined {
-	if (!isMarkdownNode(candidate)) return undefined // total guard - never throws
-	return createMarkdownParser().render(candidate)
+	if (!isMarkdownDocument(candidate)) return undefined // total guard - never throws
+	return renderHTML(new Markdown(candidate).document)
 }
 
-renderUntrusted({ element: 'text', value: 'hi' }) // '<p>hi</p>'... (a rendered TextNode)
-renderUntrusted({ element: 'bogus' }) // undefined - rejected before it ever reaches render
+renderUntrusted({ element: 'document', children: [] }) // ''
+renderUntrusted({ element: 'bogus' }) // undefined - rejected before it ever reaches renderHTML
 ```
 
-### Generating fixtures with a compiled contract
+### Guide-parity extraction
 
 ```ts
-import { createTextContract } from '@src/core'
-import { seededRandom } from '@orkestrel/contract'
+import { Markdown, isTableNode, isHeadingNode, flattenText } from '@src/core'
+import type { TableNode } from '@src/core'
 
-const text = createTextContract()
-text.is({ element: 'text', value: 'hi' }) // true
-text.generate(seededRandom(42)) // deterministic seed data: { element: 'text', value: '...' }
+// Extract every Surface-table first-column identifier from this very guide.
+function extractSurfaceNames(source: string): readonly string[] {
+	const markdown = new Markdown(source)
+	const tables = markdown.filter(isTableNode) as readonly TableNode[]
+	return tables.flatMap((table) =>
+		table.rows.map((row) => flattenText({ element: 'paragraph', children: row[0] ?? [] })),
+	)
+}
 ```
 
 ## Tests
 
-- [`tests/src/core/MarkdownParser.test.ts`](../../tests/src/core/MarkdownParser.test.ts) — `parse` / `parseInline` / `render` behavior, incl. degrade semantics at `MAX_DEPTH` and sanitization.
+- [`tests/src/core/Markdown.test.ts`](../../tests/src/core/Markdown.test.ts) — `find` / `filter` / `map` / `reduce` / `fold` / `stream` / iteration behavior, construction from a string vs. an already-parsed document.
+- [`tests/src/core/parsers.test.ts`](../../tests/src/core/parsers.test.ts) — `parseDocument` / `parseInline` / `parseBlocks` / `collectTable` / `collectList`, incl. degrade semantics at `MAX_DEPTH`.
 - [`tests/src/core/validators.test.ts`](../../tests/src/core/validators.test.ts) — structural predicates + per-node guards + the from-unknown AST guards (soundness on cyclic / adversarial input).
-- [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) — the pure line/block/inline scanning + escaping/sanitization leaves.
+- [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) — the pure line/block/inline scanning leaves, `renderHTML` / `renderMarkdown` / `walkNodes` / `foldNode` / `rewriteDocument` / `flattenText`, and sanitization.
 - [`tests/src/core/shapers.test.ts`](../../tests/src/core/shapers.test.ts) — per-shape guard exactness, JSON Schema essentials, seeded generate round-trips, parse rebuilds, and bidirectional `Infer` ↔ interface type parity.
-- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createMarkdownParser` + the compiled node contracts (`is` / `parse` / `schema` / `generate` round-trips).
+- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createMarkdown` + the compiled node contracts (`is` / `parse` / `schema` / `generate` round-trips).
 
 ## See also
 
 - [`AGENTS.md`](../../AGENTS.md) — the rules; §5 centralized-file pattern, §14 guard totality, §22 documentation-as-contracts.
 - [`README.md`](../README.md) — the guides index.
+</content>

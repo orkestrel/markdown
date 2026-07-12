@@ -21,20 +21,28 @@ npm install @orkestrel/markdown
 ## Usage
 
 ```ts
-import { createMarkdownParser } from '@orkestrel/markdown'
+import { createMarkdown, renderHTML } from '@orkestrel/markdown'
 
-const parser = createMarkdownParser()
-const ast = parser.parse('# Hi\n\nRead the [guide](./guide.md) for more, *thanks*.')
-parser.render(ast)
+const markdown = createMarkdown('# Hi\n\nRead the [guide](./guide.md) for more, *thanks*.')
+markdown.document
+// { element: 'document', children: [...] } — the typed, render-agnostic AST
+
+renderHTML(markdown.document)
 // '<h1>Hi</h1>\n<p>Read the <a href="./guide.md">guide</a> for more, <em>thanks</em>.</p>'
 ```
 
-`parse(markdown)` runs a two-phase parse (block phase, then inline phase) and
-returns a render-agnostic `MarkdownDocument`. `parseInline(text)` exposes the
-inline phase alone. `render(node)` HTML-escapes all text and attributes and
-sanitizes link `href`s (an unsafe scheme like `javascript:` or `data:` is
-dropped), so even hostile content cannot inject markup or script. The parser
-handle is stateless and event-free, so it is freely reused.
+`createMarkdown(markdown)` (or `new Markdown(markdown)`) runs a two-phase
+parse (block phase, then inline phase) and stores the result as a stateful
+workspace's `document` — a render-agnostic `MarkdownDocument`. The workspace
+also exposes `find` / `filter` / `map` / `reduce` / `fold` / `stream` /
+iteration over the AST. `renderHTML(node)` HTML-escapes all text and
+attributes and sanitizes link `href`s (an unsafe scheme like `javascript:` or
+`data:` is dropped), so even hostile content cannot inject markup or script.
+`renderMarkdown(node)` writes canonical markdown source back out — a
+`parseDocument(renderMarkdown(doc))` round-trip always deep-equals `doc`. A
+fold projects the AST to any shape (a plain string, a DOM tree, a count)
+through one total, per-element handler table, with no writer coupling built
+in.
 
 ## Validating untrusted ASTs
 
@@ -69,12 +77,15 @@ text.generate() // a seeded, schema-valid TextNode
 
 ## Safety notes
 
-- Rendered `href`s are restricted to a safe scheme allowlist (`http`,
+- `renderHTML`'s `href`s are restricted to a safe scheme allowlist (`http`,
   `https`, `mailto`, `tel`, or scheme-less/relative/anchor links) — anything
   else is dropped.
-- All rendered text and attributes are HTML-escaped.
+- All of `renderHTML`'s rendered text and attributes are HTML-escaped.
+  `renderMarkdown` is not an HTML boundary — it writes markdown source, not
+  markup — so no HTML-escaping applies there.
 - Parsing and rendering are depth-capped (`MAX_DEPTH`); past that depth the
-  parser degrades to literal text instead of recursing further or throwing.
+  parser/writer degrades to literal text instead of recursing further or
+  throwing.
 
 ## Guide
 
