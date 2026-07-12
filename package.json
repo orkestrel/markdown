@@ -60,6 +60,7 @@
 		"@orkestrel/contract": "^0.0.1"
 	},
 	"devDependencies": {
+		"@orkestrel/guide": "^0.0.1",
 		"@types/node": "^26.1.1",
 		"oxfmt": "^0.58.0",
 		"oxlint": "^1.73.0",
