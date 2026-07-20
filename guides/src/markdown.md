@@ -244,7 +244,7 @@ method, every standalone writer/traversal helper, and the contract-factory fixtu
 ### Construct from a string and narrow with a guard
 
 ```ts
-import { Markdown, isHeadingNode } from '@src/core'
+import { Markdown, isHeadingNode } from '@orkestrel/markdown'
 
 const markdown = new Markdown('# Title\n\nA **bold** [link](https://x.dev).')
 markdown.document.children[0] // { element: 'heading', level: 1, children: [...] }
@@ -256,8 +256,8 @@ if (heading !== undefined) heading.level // number — narrowed to HeadingNode
 ### Construct from an adopted document
 
 ```ts
-import { Markdown, isMarkdownDocument } from '@src/core'
-import type { MarkdownDocument } from '@src/core'
+import { Markdown, isMarkdownDocument } from '@orkestrel/markdown'
+import type { MarkdownDocument } from '@orkestrel/markdown'
 
 function adopt(candidate: unknown): Markdown | undefined {
 	if (!isMarkdownDocument(candidate)) return undefined // total guard - never throws
@@ -272,7 +272,7 @@ adopt({ element: 'bogus' }) // undefined - rejected before Markdown ever adopts 
 ### Filter and flatten
 
 ```ts
-import { Markdown, isLinkNode, flattenText } from '@src/core'
+import { Markdown, isLinkNode, flattenText } from '@orkestrel/markdown'
 
 const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
 const links = markdown.filter(isLinkNode) // readonly LinkNode[]
@@ -282,7 +282,7 @@ const labels = links.map((link) => flattenText(link)) // ['one', 'two']
 ### Chain `map` rewrites, then write back with `renderMarkdown`
 
 ```ts
-import { Markdown, renderMarkdown } from '@src/core'
+import { Markdown, renderMarkdown } from '@orkestrel/markdown'
 
 const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
 
@@ -302,7 +302,7 @@ transform pipeline is a chain of small, composable, side-effect-free rewrites en
 ### Reduce into an accumulator
 
 ```ts
-import { Markdown, isHeadingNode } from '@src/core'
+import { Markdown, isHeadingNode } from '@orkestrel/markdown'
 
 const markdown = new Markdown('# One\n\n## Two\n\nBody text.')
 
@@ -315,8 +315,8 @@ const levels = markdown.reduce<readonly number[]>(
 ### Environment-agnostic fold
 
 ```ts
-import { Markdown } from '@src/core'
-import type { MarkdownHandlers } from '@src/core'
+import { Markdown } from '@orkestrel/markdown'
+import type { MarkdownHandlers } from '@orkestrel/markdown'
 
 // Mirrors what a browser DOM build would do with document.createElement — environment-agnostic:
 // no DOM, no browser, no HTML-string coupling baked into the handler table itself.
@@ -349,7 +349,7 @@ call (one block enqueued per `pull`, so a slow reader's backpressure is respecte
 ways to consume it:
 
 ```ts
-import { Markdown } from '@src/core'
+import { Markdown } from '@orkestrel/markdown'
 
 const markdown = new Markdown('# Title\n\nFirst.\n\nSecond.')
 
@@ -369,7 +369,7 @@ for await (const block of markdown.stream()) topsAsync.push(block.element)
 ### Sync deep iteration
 
 ```ts
-import { Markdown } from '@src/core'
+import { Markdown } from '@orkestrel/markdown'
 
 const markdown = new Markdown('# Title\n\nA **bold** word.')
 
@@ -380,7 +380,7 @@ for (const node of markdown.walk()) all.push(node.element) // deep, depth-first,
 ### Async iteration with `for await…of`
 
 ```ts
-import { Markdown } from '@src/core'
+import { Markdown } from '@orkestrel/markdown'
 
 const markdown = new Markdown('# Title\n\nA **bold** word.')
 
@@ -412,8 +412,8 @@ import {
 	rewriteDocument,
 	parseInline,
 	parseDocument,
-} from '@src/core'
-import type { MarkdownHandlers } from '@src/core'
+} from '@orkestrel/markdown'
+import type { MarkdownHandlers } from '@orkestrel/markdown'
 
 const markdown = new Markdown('# Hi\n\nText.')
 
@@ -454,7 +454,7 @@ const fragment = parseInline('a **bold** span') // readonly InlineNode[], no blo
 ### Guide-parity extraction
 
 ```ts
-import { Markdown, isTableNode, flattenText } from '@src/core'
+import { Markdown, isTableNode, flattenText } from '@orkestrel/markdown'
 
 // Extract every Surface-table first-column identifier from this very guide.
 function extractSurfaceNames(source: string): readonly string[] {
@@ -469,7 +469,7 @@ function extractSurfaceNames(source: string): readonly string[] {
 ### Contract-backed fixture generation
 
 ```ts
-import { createTextContract } from '@src/core'
+import { createTextContract } from '@orkestrel/markdown'
 import { seededRandom } from '@orkestrel/contract'
 
 const text = createTextContract()
