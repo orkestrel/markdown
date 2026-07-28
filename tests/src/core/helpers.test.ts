@@ -1,6 +1,7 @@
 import type {
 	BlockNode,
 	BlockquoteNode,
+	InlineNode,
 	MarkdownDocument,
 	MarkdownHandlers,
 	MarkdownNode,
@@ -1113,6 +1114,46 @@ describe('foldNode', () => {
 			'# Title\n\nAn intro with **bold** and `code`.\n\n- one\n- two\n\n| a | b |\n| - | - |\n| 1 | 2 |',
 		)
 		expect(foldNode(document, countHandlers, 0)).toBe([...walkNodes(document)].length)
+	})
+
+	it('keeps every iterative AST engine total across a very wide document', () => {
+		const blocks: BlockNode[] = []
+		for (let index = 0; index < 150_000; index += 1) blocks.push({ element: 'thematicBreak' })
+		const document: MarkdownDocument = { element: 'document', children: blocks }
+
+		expect(() => renderHTML(document)).not.toThrow()
+		expect(() => renderMarkdown(document)).not.toThrow()
+		const walked = [...walkNodes(document)].length
+		expect(walked).toBe(blocks.length + 1)
+		expect(foldNode(document, countHandlers, 0)).toBe(blocks.length + 1)
+		expect(rewriteDocument(document, (node) => node).children).toHaveLength(blocks.length)
+		expect(flattenText(document)).toBe('')
+	})
+
+	it('keeps sparse adopted arrays isolated instead of consuming a sibling result', () => {
+		const inlines: InlineNode[] = []
+		inlines[1] = { element: 'text', value: 'b' }
+		const blocks: BlockNode[] = [
+			{ element: 'heading', level: 1, children: [{ element: 'text', value: 'a' }] },
+		]
+		blocks[2] = { element: 'paragraph', children: inlines }
+		const document: MarkdownDocument = { element: 'document', children: blocks }
+
+		expect(renderHTML(document)).toBe('<h1>a</h1>\n<p>b</p>')
+		expect(renderMarkdown(document)).toBe('# a\n\nb')
+		expect([...walkNodes(document)].map((node) => node.element)).toEqual([
+			'document',
+			'heading',
+			'text',
+			'paragraph',
+			'text',
+		])
+		expect(foldNode(document, countHandlers, 0)).toBe(5)
+		const rewritten = rewriteDocument(document, (node) =>
+			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
+		)
+		expect(renderHTML(rewritten)).toBe('<h1>A</h1>\n<p>B</p>')
+		expect(flattenText(document)).toBe('ab')
 	})
 })
 

@@ -470,6 +470,24 @@ describe('parseDocument — MAX_DEPTH recursion cap (block phase)', () => {
 	it('degrades a deeply indented nested list past MAX_DEPTH without throwing', () => {
 		expect(() => parseDocument(buildDeepListInput(200, 'leaf'))).not.toThrow()
 	})
+
+	it('pins deep-list degradation at MAX_DEPTH and retains the residual source', () => {
+		let node = firstBlock(buildDeepListInput(100, 'leaf'))
+		let depth = 0
+		while (node.element === 'list') {
+			const item = assertListNode(node).items[0]
+			if (item === undefined) throw new Error('expected a nested list item')
+			const child = item.children[0]
+			if (child === undefined) throw new Error('expected nested list content')
+			node = child
+			depth += 1
+		}
+		const paragraph = assertParagraphNode(node)
+		const residual = inlineText(paragraph.children)
+		expect(depth).toBe(MAX_DEPTH)
+		expect(residual.startsWith('\n- ')).toBe(true)
+		expect(residual.endsWith('leaf')).toBe(true)
+	})
 })
 
 describe('parseDocument — total / malformed input never throws', () => {
@@ -661,6 +679,41 @@ describe('collectList', () => {
 		expect(node.ordered).toBe(true)
 		expect(node.start).toBe(3)
 		expect(next).toBe(3)
+	})
+
+	it('preserves mixed markers and residual source when a mid-array chain reaches the cap', () => {
+		const lines = ['plain', '- ', '  3. ', '     - leaf']
+		const { node, next } = collectList(lines, 1, MAX_DEPTH - 2)
+
+		expect(next).toBe(lines.length)
+		expect(node).toEqual({
+			element: 'list',
+			ordered: false,
+			start: 1,
+			items: [
+				{
+					element: 'listItem',
+					children: [
+						{
+							element: 'list',
+							ordered: true,
+							start: 3,
+							items: [
+								{
+									element: 'listItem',
+									children: [
+										{
+											element: 'paragraph',
+											children: [{ element: 'text', value: '\n- leaf' }],
+										},
+									],
+								},
+							],
+						},
+					],
+				},
+			],
+		})
 	})
 })
 

@@ -4,8 +4,8 @@
 // isMarkdownDocument) validate arbitrary `unknown` input against the full AST
 // shape. Every guard is total and returns false for non-matches (AGENTS section 14).
 
+import type { MarkdownNode } from '@src/core'
 import {
-	MarkdownNode,
 	isBlankLine,
 	isBlockNode,
 	isBlockquoteNode,

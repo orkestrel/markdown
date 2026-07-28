@@ -2,6 +2,7 @@ import type {
 	BlockNode,
 	InlineNode,
 	ListItemNode,
+	ListItemParts,
 	ListNode,
 	MarkdownDocument,
 	TableAlign,
@@ -181,6 +182,49 @@ export function collectList(
 	const startOrdinal = first?.start ?? 1
 	const topIndent = first?.indent ?? 0
 	const items: ListItemNode[] = []
+	// A single nested-item chain would otherwise rescan and slice the whole suffix
+	// once per level before reaching the cap. Recognize that shape in one pass and
+	// build the same bounded AST bottom-up.
+	const chain: ListItemParts[] = []
+	let nested = true
+	for (let cursor = start; cursor < lines.length; cursor += 1) {
+		const parsed = extractListItem(lines[cursor] ?? '')
+		const previous = chain[chain.length - 1]
+		if (
+			parsed === undefined ||
+			(previous !== undefined && (previous.content.length > 0 || parsed.indent !== previous.marker))
+		) {
+			nested = false
+			break
+		}
+		chain.push(parsed)
+	}
+	const remaining = MAX_DEPTH - depth
+	if (nested && remaining > 0 && chain.length > remaining) {
+		const terminal = chain[remaining - 1]
+		if (terminal !== undefined) {
+			const source = [terminal.content]
+			for (let cursor = start + remaining; cursor < lines.length; cursor += 1) {
+				source.push((lines[cursor] ?? '').slice(terminal.marker))
+			}
+			let children: readonly BlockNode[] = [
+				{ element: 'paragraph', children: [{ element: 'text', value: source.join('\n') }] },
+			]
+			let node: ListNode | undefined
+			for (let cursor = remaining - 1; cursor >= 0; cursor -= 1) {
+				const parsed = chain[cursor]
+				if (parsed === undefined) continue
+				node = {
+					element: 'list',
+					ordered: parsed.ordered,
+					start: parsed.start,
+					items: [{ element: 'listItem', children }],
+				}
+				children = [node]
+			}
+			if (node !== undefined) return { node, next: lines.length }
+		}
+	}
 	let index = start
 	while (index < lines.length) {
 		const parsed = extractListItem(lines[index] ?? '')

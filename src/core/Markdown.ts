@@ -134,7 +134,12 @@ export class Markdown implements MarkdownInterface {
 		return new ReadableStream<BlockNode>({
 			pull(controller) {
 				if (index < blocks.length) {
-					controller.enqueue(blocks[index])
+					const block = blocks[index]
+					if (block === undefined) {
+						controller.close()
+						return
+					}
+					controller.enqueue(block)
 					index += 1
 				} else {
 					controller.close()

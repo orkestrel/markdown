@@ -10,7 +10,6 @@ import type {
 	MarkdownNode,
 	MarkdownRewriteHandler,
 	TableAlign,
-	TableNode,
 } from './types.js'
 import { MAX_DEPTH, SAFE_URL_SCHEMES } from './constants.js'
 import {
@@ -538,12 +537,6 @@ export function scanInline(
 	const nodes: InlineNode[] = []
 	let index = from
 	let pending = ''
-	const flush = (): void => {
-		if (pending.length > 0) {
-			nodes.push({ element: 'text', value: pending })
-			pending = ''
-		}
-	}
 	while (index < to) {
 		const character = source[index] ?? ''
 		if (character === '\\' && index + 1 < to && isEscapable(source[index + 1] ?? '')) {
@@ -551,37 +544,42 @@ export function scanInline(
 			index += 2
 			continue
 		}
+		let scanned: InlineNode | undefined
+		let end = index
 		if (character === '`') {
 			const span = scanCode(source, index, to)
 			if (span) {
-				flush()
-				nodes.push({ element: 'codeSpan', value: span.value })
-				index = span.end
-				continue
+				scanned = { element: 'codeSpan', value: span.value }
+				end = span.end
 			}
 		}
 		if (character === '[') {
 			const link = scanLink(source, index, to, depth)
 			if (link) {
-				flush()
-				nodes.push(link.node)
-				index = link.end
-				continue
+				scanned = link.node
+				end = link.end
 			}
 		}
 		if (character === '*' || character === '_') {
 			const emphasis = scanEmphasis(source, index, to, depth)
 			if (emphasis) {
-				flush()
-				nodes.push(emphasis.node)
-				index = emphasis.end
-				continue
+				scanned = emphasis.node
+				end = emphasis.end
 			}
+		}
+		if (scanned !== undefined) {
+			if (pending.length > 0) {
+				nodes.push({ element: 'text', value: pending })
+				pending = ''
+			}
+			nodes.push(scanned)
+			index = end
+			continue
 		}
 		pending += character
 		index += 1
 	}
-	flush()
+	if (pending.length > 0) nodes.push({ element: 'text', value: pending })
 	return nodes
 }
 
@@ -653,10 +651,7 @@ export function sanitizeUrl(href: string): string {
  * @remarks
  * Total: never throws. At {@link MAX_DEPTH} a value-bearing node (`text` / `codeSpan`)
  * degrades to its escaped `value`; any other node degrades to `''` instead of
- * recursing further, so pathologically deep input cannot exhaust the call stack. The
- * recursive engine and its per-shape sub-steps (inline concatenation, table cell,
- * tight list-item) are nested inner functions - the only exported surface is
- * `renderHTML` itself.
+ * recursing further, so pathologically deep input cannot exhaust the call stack.
  *
  * @param node - The AST node to render (a full document, or any sub-node)
  * @returns The rendered, XSS-safe HTML string
@@ -670,90 +665,170 @@ export function sanitizeUrl(href: string): string {
  * ```
  */
 export function renderHTML(node: MarkdownNode): string {
-	function render(current: MarkdownNode, depth: number): string {
-		if (depth >= MAX_DEPTH)
-			return 'value' in current && typeof current.value === 'string'
-				? escapeHtml(current.value)
-				: ''
+	const stack: {
+		readonly node: MarkdownNode
+		readonly depth: number
+		readonly expanded: boolean
+		readonly count: number
+	}[] = [{ node, depth: 0, expanded: false, count: 0 }]
+	const values: string[] = []
+	while (stack.length > 0) {
+		const frame = stack.pop()
+		if (frame === undefined) continue
+		const current = frame.node
+		if (!frame.expanded) {
+			if (frame.depth >= MAX_DEPTH) {
+				values.push(
+					'value' in current && typeof current.value === 'string' ? escapeHtml(current.value) : '',
+				)
+				continue
+			}
+			const children: MarkdownNode[] = []
+			let depth = frame.depth + 1
+			switch (current.element) {
+				case 'document':
+				case 'heading':
+				case 'paragraph':
+				case 'blockquote':
+					for (const child of current.children) if (child !== undefined) children.push(child)
+					break
+				case 'listItem': {
+					const only = current.children[0]
+					if (current.children.length === 1 && only !== undefined && only.element === 'paragraph') {
+						for (const child of only.children) if (child !== undefined) children.push(child)
+					} else {
+						for (const child of current.children) if (child !== undefined) children.push(child)
+					}
+					break
+				}
+				case 'emphasis':
+				case 'link':
+					for (const child of current.children) if (child !== undefined) children.push(child)
+					depth += 1
+					break
+				case 'list':
+					for (const child of current.items) if (child !== undefined) children.push(child)
+					break
+				case 'table':
+					for (const cell of current.header)
+						if (cell !== undefined)
+							for (const child of cell) if (child !== undefined) children.push(child)
+					for (const row of current.rows)
+						if (row !== undefined)
+							for (const cell of row)
+								if (cell !== undefined)
+									for (const child of cell) if (child !== undefined) children.push(child)
+					depth += 1
+					break
+			}
+			stack.push({ ...frame, expanded: true, count: children.length })
+			for (let index = children.length - 1; index >= 0; index -= 1) {
+				const child = children[index]
+				if (child !== undefined) stack.push({ node: child, depth, expanded: false, count: 0 })
+			}
+			continue
+		}
+		const children =
+			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
+		let value = ''
 		switch (current.element) {
 			case 'document':
-				return current.children.map((child) => render(child, depth + 1)).join('\n')
+				value = children.join('\n')
+				break
 			case 'heading':
-				return `<h${current.level}>${renderInline(current.children, depth)}</h${current.level}>`
+				value = `<h${current.level}>${children.join('')}</h${current.level}>`
+				break
 			case 'paragraph':
-				return `<p>${renderInline(current.children, depth)}</p>`
+				value = `<p>${children.join('')}</p>`
+				break
 			case 'thematicBreak':
-				return '<hr>'
+				value = '<hr>'
+				break
 			case 'blockquote':
-				return `<blockquote>\n${current.children.map((child) => render(child, depth + 1)).join('\n')}\n</blockquote>`
+				value = `<blockquote>\n${children.join('\n')}\n</blockquote>`
+				break
 			case 'codeBlock': {
 				const open =
 					current.lang === undefined
 						? '<code>'
 						: `<code class="language-${escapeHtml(current.lang)}">`
-				return `<pre>${open}${escapeHtml(current.code)}</code></pre>`
+				value = `<pre>${open}${escapeHtml(current.code)}</code></pre>`
+				break
 			}
 			case 'list': {
-				const items = current.items.map((item) => render(item, depth + 1)).join('\n')
-				if (!current.ordered) return `<ul>\n${items}\n</ul>`
+				const items = children.join('\n')
+				if (!current.ordered) {
+					value = `<ul>\n${items}\n</ul>`
+					break
+				}
 				const start = current.start !== 1 ? ` start="${current.start}"` : ''
-				return `<ol${start}>\n${items}\n</ol>`
+				value = `<ol${start}>\n${items}\n</ol>`
+				break
 			}
 			case 'listItem':
-				return `<li>${renderItem(current.children, depth)}</li>`
+				value = `<li>${children.join(
+					current.children.length === 1 && current.children[0]?.element === 'paragraph' ? '' : '\n',
+				)}</li>`
+				break
 			case 'table': {
-				const head = `<tr>${current.header.map((cell, column) => renderCell('th', cell, current.align[column], depth)).join('')}</tr>`
-				const body = current.rows
-					.map(
-						(row) =>
-							`<tr>${row.map((cell, column) => renderCell('td', cell, current.align[column], depth)).join('')}</tr>`,
-					)
-					.join('\n')
+				let offset = 0
+				const header: string[] = []
+				for (const [column, cell] of current.header.entries()) {
+					if (cell === undefined) continue
+					const align = current.align[column]
+					const style =
+						align === 'left' || align === 'right' || align === 'center'
+							? ` style="text-align:${align}"`
+							: ''
+					let count = 0
+					for (const child of cell) if (child !== undefined) count += 1
+					header.push(`<th${style}>${children.slice(offset, offset + count).join('')}</th>`)
+					offset += count
+				}
+				const rows: string[] = []
+				for (const row of current.rows) {
+					const cells: string[] = []
+					for (const [column, cell] of row.entries()) {
+						if (cell === undefined) continue
+						const align = current.align[column]
+						const style =
+							align === 'left' || align === 'right' || align === 'center'
+								? ` style="text-align:${align}"`
+								: ''
+						let count = 0
+						for (const child of cell) if (child !== undefined) count += 1
+						cells.push(`<td${style}>${children.slice(offset, offset + count).join('')}</td>`)
+						offset += count
+					}
+					rows.push(`<tr>${cells.join('')}</tr>`)
+				}
+				const body = rows.join('\n')
 				const bodyHtml = isNonEmptyArray(current.rows) ? `\n<tbody>\n${body}\n</tbody>` : ''
-				return `<table>\n<thead>\n${head}\n</thead>${bodyHtml}\n</table>`
+				value = `<table>\n<thead>\n<tr>${header.join('')}</tr>\n</thead>${bodyHtml}\n</table>`
+				break
 			}
 			case 'text':
-				return escapeHtml(current.value)
+				value = escapeHtml(current.value)
+				break
 			case 'emphasis':
-				return current.strong
-					? `<strong>${renderInline(current.children, depth + 1)}</strong>`
-					: `<em>${renderInline(current.children, depth + 1)}</em>`
+				value = current.strong
+					? `<strong>${children.join('')}</strong>`
+					: `<em>${children.join('')}</em>`
+				break
 			case 'codeSpan':
-				return `<code>${escapeHtml(current.value)}</code>`
+				value = `<code>${escapeHtml(current.value)}</code>`
+				break
 			case 'link':
-				return `<a href="${sanitizeUrl(current.href)}">${renderInline(current.children, depth + 1)}</a>`
+				value = `<a href="${sanitizeUrl(current.href)}">${children.join('')}</a>`
+				break
 			default:
-				return ''
+				value = ''
+				break
 		}
+		if (stack.length === 0) return value
+		values.push(value)
 	}
-
-	function renderInline(nodes: readonly InlineNode[], depth: number): string {
-		return nodes.map((child) => render(child, depth + 1)).join('')
-	}
-
-	function renderCell(
-		tag: 'th' | 'td',
-		cell: readonly InlineNode[],
-		align: TableAlign | undefined,
-		depth: number,
-	): string {
-		const style =
-			align === 'left' || align === 'right' || align === 'center'
-				? ` style="text-align:${align}"`
-				: ''
-		return `<${tag}${style}>${renderInline(cell, depth + 1)}</${tag}>`
-	}
-
-	function renderItem(children: readonly BlockNode[], depth: number): string {
-		if (children.length === 1) {
-			const only = children[0]
-			if (only !== undefined && only.element === 'paragraph')
-				return renderInline(only.children, depth)
-		}
-		return children.map((child) => render(child, depth + 1)).join('\n')
-	}
-
-	return render(node, 0)
+	return ''
 }
 
 /**
@@ -784,176 +859,248 @@ export function renderHTML(node: MarkdownNode): string {
  * ```
  */
 export function renderMarkdown(node: MarkdownNode): string {
-	function escapeText(value: string): string {
-		let out = ''
-		for (let index = 0; index < value.length; index += 1) {
-			const character = value[index] ?? ''
-			const atLineStart = index === 0 || value[index - 1] === '\n'
+	const stack: {
+		readonly node: MarkdownNode
+		readonly depth: number
+		readonly expanded: boolean
+		readonly count: number
+		readonly escaped: string
+	}[] = [{ node, depth: 0, expanded: false, count: 0, escaped: '' }]
+	const values: string[] = []
+	while (stack.length > 0) {
+		const frame = stack.pop()
+		if (frame === undefined) continue
+		const current = frame.node
+		if (!frame.expanded) {
+			let escaped = ''
 			if (
-				character === '\\' ||
-				character === '*' ||
-				character === '_' ||
-				character === '`' ||
-				character === '[' ||
-				character === ']'
+				(frame.depth >= MAX_DEPTH || current.element === 'text') &&
+				'value' in current &&
+				typeof current.value === 'string'
 			) {
-				out += `\\${character}`
-				continue
-			}
-			if (atLineStart) {
-				if (character === '#' || character === '>') {
-					out += `\\${character}`
-					continue
-				}
-				if ((character === '-' || character === '+') && (value[index + 1] ?? ' ') === ' ') {
-					out += `\\${character}`
-					continue
-				}
-				if (/[0-9]/.test(character)) {
-					let end = index
-					while (end < value.length && /[0-9]/.test(value[end] ?? '')) end += 1
-					const marker = value[end]
-					if ((marker === '.' || marker === ')') && value[end + 1] === ' ') {
-						out += `${value.slice(index, end)}\\${marker}`
-						index = end
+				for (let index = 0; index < current.value.length; index += 1) {
+					const character = current.value[index] ?? ''
+					const atLineStart = index === 0 || current.value[index - 1] === '\n'
+					if (
+						character === '\\' ||
+						character === '*' ||
+						character === '_' ||
+						character === '`' ||
+						character === '[' ||
+						character === ']'
+					) {
+						escaped += `\\${character}`
 						continue
 					}
+					if (atLineStart) {
+						if (character === '#' || character === '>') {
+							escaped += `\\${character}`
+							continue
+						}
+						if (
+							(character === '-' || character === '+') &&
+							(current.value[index + 1] ?? ' ') === ' '
+						) {
+							escaped += `\\${character}`
+							continue
+						}
+						if (/[0-9]/.test(character)) {
+							let end = index
+							while (end < current.value.length && /[0-9]/.test(current.value[end] ?? '')) end += 1
+							const marker = current.value[end]
+							if ((marker === '.' || marker === ')') && current.value[end + 1] === ' ') {
+								escaped += `${current.value.slice(index, end)}\\${marker}`
+								index = end
+								continue
+							}
+						}
+					}
+					escaped += character
 				}
 			}
-			out += character
-		}
-		return out
-	}
-
-	function fenceFor(body: string, minimum: number): string {
-		let longest = 0
-		let run = 0
-		for (const character of body) {
-			if (character === '`') {
-				run += 1
-				longest = Math.max(longest, run)
-			} else {
-				run = 0
+			if (frame.depth >= MAX_DEPTH) {
+				values.push(escaped)
+				continue
 			}
-		}
-		return '`'.repeat(Math.max(minimum, longest + 1))
-	}
-
-	function renderInline(nodes: readonly InlineNode[], depth: number): string {
-		return nodes.map((child) => render(child, depth + 1)).join('')
-	}
-
-	function renderBlocks(blocks: readonly BlockNode[], depth: number): string {
-		return blocks.map((block) => render(block, depth + 1)).join('\n\n')
-	}
-
-	function renderItem(item: ListItemNode, marker: string, depth: number): string {
-		const body = renderBlocks(item.children, depth + 1)
-		const pad = ' '.repeat(marker.length)
-		return body
-			.split('\n')
-			.map((line, index) => (index === 0 ? marker + line : line === '' ? '' : pad + line))
-			.join('\n')
-	}
-
-	function renderCell(cell: readonly InlineNode[], depth: number): string {
-		return renderInline(cell, depth + 1).replace(/\|/g, '\\|')
-	}
-
-	function renderTable(current: TableNode, depth: number): string {
-		const columns = current.header.length
-		const headerRow = `| ${current.header.map((cell) => renderCell(cell, depth)).join(' | ')} |`
-		const delimiterRow = `| ${current.align
-			.map((align) => {
-				if (align === 'left') return ':--'
-				if (align === 'right') return '--:'
-				if (align === 'center') return ':-:'
-				return '---'
-			})
-			.join(' | ')} |`
-		const bodyRows = current.rows.map((row) => {
-			const cells: string[] = []
-			for (let column = 0; column < columns; column += 1) {
-				const cell = row[column]
-				cells.push(cell === undefined ? '' : renderCell(cell, depth))
+			const children: MarkdownNode[] = []
+			let depth = frame.depth + 1
+			switch (current.element) {
+				case 'document':
+				case 'heading':
+				case 'paragraph':
+				case 'blockquote':
+				case 'listItem':
+				case 'emphasis':
+				case 'link':
+					for (const child of current.children) if (child !== undefined) children.push(child)
+					break
+				case 'list':
+					for (const child of current.items) if (child !== undefined) children.push(child)
+					break
+				case 'table':
+					for (const cell of current.header)
+						if (cell !== undefined)
+							for (const child of cell) if (child !== undefined) children.push(child)
+					for (const row of current.rows) {
+						if (row === undefined) continue
+						for (let column = 0; column < current.header.length; column += 1) {
+							const cell = row[column]
+							if (cell !== undefined)
+								for (const child of cell) if (child !== undefined) children.push(child)
+						}
+					}
+					depth += 1
+					break
 			}
-			return `| ${cells.join(' | ')} |`
-		})
-		return [headerRow, delimiterRow, ...bodyRows].join('\n')
-	}
-
-	function render(current: MarkdownNode, depth: number): string {
-		if (depth >= MAX_DEPTH)
-			return 'value' in current && typeof current.value === 'string'
-				? escapeText(current.value)
-				: ''
+			stack.push({ ...frame, expanded: true, count: children.length, escaped })
+			for (let index = children.length - 1; index >= 0; index -= 1) {
+				const child = children[index]
+				if (child !== undefined)
+					stack.push({ node: child, depth, expanded: false, count: 0, escaped: '' })
+			}
+			continue
+		}
+		const children =
+			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
+		let value = ''
 		switch (current.element) {
+			case 'codeBlock':
+			case 'codeSpan': {
+				const body = current.element === 'codeBlock' ? current.code : current.value
+				let longest = 0
+				let run = 0
+				for (const character of body) {
+					if (character === '`') {
+						run += 1
+						longest = Math.max(longest, run)
+					} else {
+						run = 0
+					}
+				}
+				const fence = '`'.repeat(Math.max(current.element === 'codeBlock' ? 3 : 1, longest + 1))
+				if (current.element === 'codeBlock') {
+					const lang = current.lang === undefined ? '' : current.lang
+					value = `${fence}${lang}\n${current.code}\n${fence}`
+					break
+				}
+				const pad = current.value.startsWith('`') || current.value.endsWith('`') ? ' ' : ''
+				value = `${fence}${pad}${current.value}${pad}${fence}`
+				break
+			}
 			case 'document':
-				return renderBlocks(current.children, depth)
+				value = children.join('\n\n')
+				break
 			case 'heading': {
-				const text = renderInline(current.children, depth)
-				// A trailing `#` run reads back as an ATX closing sequence on reparse -
-				// escape the FIRST `#` of that run so it can't be stripped. Only fire when
-				// the char preceding the run isn't a backslash - escapeText already escapes
-				// a line-start `#`, and re-escaping it here would double-escape (`## #` -> text
-				// "#" -> escapeText "\#" -> would become "\\#" and break round-trip).
-				const escaped = text.replace(/(^|[^\\])(#+)$/, (_match, pre: string, hashes: string) => {
+				const text = children.join('')
+				const escaped = text.replace(/(^|[^\\])(#+)$/, (_match, before: string, hashes: string) => {
 					const first = hashes[0] ?? ''
-					return `${pre}\\${first}${hashes.slice(1)}`
+					return `${before}\\${first}${hashes.slice(1)}`
 				})
-				return `${'#'.repeat(current.level)} ${escaped}`
+				value = `${'#'.repeat(current.level)} ${escaped}`
+				break
 			}
 			case 'paragraph':
-				return renderInline(current.children, depth)
+				value = children.join('')
+				break
 			case 'thematicBreak':
-				return '---'
-			case 'blockquote': {
-				const inner = renderBlocks(current.children, depth)
-				return inner
+				value = '---'
+				break
+			case 'blockquote':
+				value = children
+					.join('\n\n')
 					.split('\n')
 					.map((line) => (line === '' ? '>' : `> ${line}`))
 					.join('\n')
-			}
-			case 'codeBlock': {
-				const fence = fenceFor(current.code, 3)
-				const lang = current.lang === undefined ? '' : current.lang
-				return `${fence}${lang}\n${current.code}\n${fence}`
-			}
+				break
 			case 'list': {
+				const items: string[] = []
 				let ordinal = current.start
-				const items = current.items.map((item) => {
-					const marker = current.ordered ? `${ordinal++}. ` : '- '
-					return renderItem(item, marker, depth)
-				})
-				return items.join('\n')
+				for (const body of children) {
+					const marker = current.ordered ? `${ordinal}. ` : '- '
+					ordinal += 1
+					const pad = ' '.repeat(marker.length)
+					items.push(
+						body
+							.split('\n')
+							.map((line, index) => (index === 0 ? marker + line : line === '' ? '' : pad + line))
+							.join('\n'),
+					)
+				}
+				value = items.join('\n')
+				break
 			}
 			case 'listItem':
-				return renderBlocks(current.children, depth)
-			case 'table':
-				return renderTable(current, depth)
+				value = children.join('\n\n')
+				break
+			case 'table': {
+				let offset = 0
+				const header: string[] = []
+				for (const cell of current.header) {
+					if (cell === undefined) {
+						header.push('')
+						continue
+					}
+					let count = 0
+					for (const child of cell) if (child !== undefined) count += 1
+					header.push(
+						children
+							.slice(offset, offset + count)
+							.join('')
+							.replace(/\|/g, '\\|'),
+					)
+					offset += count
+				}
+				const delimiter = current.align.map((align) => {
+					if (align === 'left') return ':--'
+					if (align === 'right') return '--:'
+					if (align === 'center') return ':-:'
+					return '---'
+				})
+				const rows: string[] = []
+				for (const row of current.rows) {
+					const cells: string[] = []
+					for (let column = 0; column < current.header.length; column += 1) {
+						const cell = row[column]
+						if (cell === undefined) {
+							cells.push('')
+							continue
+						}
+						let count = 0
+						for (const child of cell) if (child !== undefined) count += 1
+						cells.push(
+							children
+								.slice(offset, offset + count)
+								.join('')
+								.replace(/\|/g, '\\|'),
+						)
+						offset += count
+					}
+					rows.push(`| ${cells.join(' | ')} |`)
+				}
+				value = [`| ${header.join(' | ')} |`, `| ${delimiter.join(' | ')} |`, ...rows].join('\n')
+				break
+			}
 			case 'text':
-				return escapeText(current.value)
+				value = frame.escaped
+				break
 			case 'emphasis': {
 				const marker = current.strong ? '**' : '*'
-				return `${marker}${renderInline(current.children, depth)}${marker}`
-			}
-			case 'codeSpan': {
-				const fence = fenceFor(current.value, 1)
-				const pad = current.value.startsWith('`') || current.value.endsWith('`') ? ' ' : ''
-				return `${fence}${pad}${current.value}${pad}${fence}`
+				value = `${marker}${children.join('')}${marker}`
+				break
 			}
 			case 'link': {
-				// Mirror scanLink's unescape - a href containing `\`, `(`, or `)` must
-				// round-trip through the same balanced-paren + backslash-escape scan.
 				const href = current.href.replace(/[\\()]/g, (character) => `\\${character}`)
-				return `[${renderInline(current.children, depth)}](${href})`
+				value = `[${children.join('')}](${href})`
+				break
 			}
 			default:
-				return ''
+				value = ''
+				break
 		}
+		if (stack.length === 0) return value
+		values.push(value)
 	}
-
-	return render(node, 0)
+	return ''
 }
 
 /**
@@ -976,10 +1123,14 @@ export function renderMarkdown(node: MarkdownNode): string {
  * ```
  */
 export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
-	function* walk(current: MarkdownNode, depth: number): Generator<MarkdownNode> {
-		yield current
-		if (depth >= MAX_DEPTH) return
-		switch (current.element) {
+	const stack: { readonly node: MarkdownNode; readonly depth: number }[] = [{ node, depth: 0 }]
+	while (stack.length > 0) {
+		const frame = stack.pop()
+		if (frame === undefined) continue
+		yield frame.node
+		if (frame.depth >= MAX_DEPTH) continue
+		const children: MarkdownNode[] = []
+		switch (frame.node.element) {
 			case 'document':
 			case 'heading':
 			case 'paragraph':
@@ -987,21 +1138,27 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
 			case 'listItem':
 			case 'emphasis':
 			case 'link':
-				for (const child of current.children) yield* walk(child, depth + 1)
-				return
+				for (const child of frame.node.children) if (child !== undefined) children.push(child)
+				break
 			case 'list':
-				for (const item of current.items) yield* walk(item, depth + 1)
-				return
+				for (const child of frame.node.items) if (child !== undefined) children.push(child)
+				break
 			case 'table':
-				for (const cell of current.header) for (const inline of cell) yield* walk(inline, depth + 1)
-				for (const row of current.rows)
-					for (const cell of row) for (const inline of cell) yield* walk(inline, depth + 1)
-				return
-			default:
-				return
+				for (const cell of frame.node.header)
+					if (cell !== undefined)
+						for (const child of cell) if (child !== undefined) children.push(child)
+				for (const row of frame.node.rows)
+					if (row !== undefined)
+						for (const cell of row)
+							if (cell !== undefined)
+								for (const child of cell) if (child !== undefined) children.push(child)
+				break
+		}
+		for (let index = children.length - 1; index >= 0; index -= 1) {
+			const child = children[index]
+			if (child !== undefined) stack.push({ node: child, depth: frame.depth + 1 })
 		}
 	}
-	yield* walk(node, 0)
 }
 
 /**
@@ -1036,66 +1193,133 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
  * ```
  */
 export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, depth: number): T {
-	function dispatch(current: MarkdownNode, children: readonly T[]): T {
-		switch (current.element) {
-			case 'document':
-				return handlers.document(current, children)
-			case 'heading':
-				return handlers.heading(current, children)
-			case 'paragraph':
-				return handlers.paragraph(current, children)
-			case 'thematicBreak':
-				return handlers.thematicBreak(current, children)
-			case 'blockquote':
-				return handlers.blockquote(current, children)
-			case 'codeBlock':
-				return handlers.codeBlock(current, children)
-			case 'list':
-				return handlers.list(current, children)
-			case 'listItem':
-				return handlers.listItem(current, children)
-			case 'table':
-				return handlers.table(current, children)
-			case 'text':
-				return handlers.text(current, children)
-			case 'emphasis':
-				return handlers.emphasis(current, children)
-			case 'codeSpan':
-				return handlers.codeSpan(current, children)
-			case 'link':
-				return handlers.link(current, children)
-		}
-	}
-
-	function childNodes(current: MarkdownNode): readonly MarkdownNode[] {
-		switch (current.element) {
-			case 'document':
-			case 'heading':
-			case 'paragraph':
-			case 'blockquote':
-			case 'listItem':
-			case 'emphasis':
-			case 'link':
-				return current.children
-			case 'list':
-				return current.items
-			case 'table': {
-				const header = current.header.flatMap((cell) => cell)
-				const rows = current.rows.flatMap((row) => row.flatMap((cell) => cell))
-				return [...header, ...rows]
+	const stack: {
+		readonly node: MarkdownNode
+		readonly depth: number
+		readonly expanded: boolean
+		readonly count: number
+	}[] = [{ node, depth, expanded: false, count: 0 }]
+	const values: T[] = []
+	while (stack.length > 0) {
+		const frame = stack.pop()
+		if (frame === undefined) continue
+		if (!frame.expanded) {
+			const children: MarkdownNode[] = []
+			if (frame.depth < MAX_DEPTH) {
+				switch (frame.node.element) {
+					case 'document':
+					case 'heading':
+					case 'paragraph':
+					case 'blockquote':
+					case 'listItem':
+					case 'emphasis':
+					case 'link':
+						for (const child of frame.node.children) if (child !== undefined) children.push(child)
+						break
+					case 'list':
+						for (const child of frame.node.items) if (child !== undefined) children.push(child)
+						break
+					case 'table':
+						for (const cell of frame.node.header)
+							if (cell !== undefined)
+								for (const child of cell) if (child !== undefined) children.push(child)
+						for (const row of frame.node.rows)
+							if (row !== undefined)
+								for (const cell of row)
+									if (cell !== undefined)
+										for (const child of cell) if (child !== undefined) children.push(child)
+						break
+				}
 			}
-			default:
-				return []
+			stack.push({ ...frame, expanded: true, count: children.length })
+			for (let index = children.length - 1; index >= 0; index -= 1) {
+				const child = children[index]
+				if (child !== undefined) {
+					stack.push({
+						node: child,
+						depth: frame.depth + 1,
+						expanded: false,
+						count: 0,
+					})
+				}
+			}
+			continue
 		}
+		const children =
+			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
+		let value: T
+		switch (frame.node.element) {
+			case 'document':
+				value = handlers.document(frame.node, children)
+				break
+			case 'heading':
+				value = handlers.heading(frame.node, children)
+				break
+			case 'paragraph':
+				value = handlers.paragraph(frame.node, children)
+				break
+			case 'thematicBreak':
+				value = handlers.thematicBreak(frame.node, children)
+				break
+			case 'blockquote':
+				value = handlers.blockquote(frame.node, children)
+				break
+			case 'codeBlock':
+				value = handlers.codeBlock(frame.node, children)
+				break
+			case 'list':
+				value = handlers.list(frame.node, children)
+				break
+			case 'listItem':
+				value = handlers.listItem(frame.node, children)
+				break
+			case 'table':
+				value = handlers.table(frame.node, children)
+				break
+			case 'text':
+				value = handlers.text(frame.node, children)
+				break
+			case 'emphasis':
+				value = handlers.emphasis(frame.node, children)
+				break
+			case 'codeSpan':
+				value = handlers.codeSpan(frame.node, children)
+				break
+			case 'link':
+				value = handlers.link(frame.node, children)
+				break
+		}
+		if (stack.length === 0) return value
+		values.push(value)
 	}
-
-	function fold(current: MarkdownNode, level: number): T {
-		if (level >= MAX_DEPTH) return dispatch(current, [])
-		const children = childNodes(current).map((child) => fold(child, level + 1))
-		return dispatch(current, children)
+	switch (node.element) {
+		case 'document':
+			return handlers.document(node, [])
+		case 'heading':
+			return handlers.heading(node, [])
+		case 'paragraph':
+			return handlers.paragraph(node, [])
+		case 'thematicBreak':
+			return handlers.thematicBreak(node, [])
+		case 'blockquote':
+			return handlers.blockquote(node, [])
+		case 'codeBlock':
+			return handlers.codeBlock(node, [])
+		case 'list':
+			return handlers.list(node, [])
+		case 'listItem':
+			return handlers.listItem(node, [])
+		case 'table':
+			return handlers.table(node, [])
+		case 'text':
+			return handlers.text(node, [])
+		case 'emphasis':
+			return handlers.emphasis(node, [])
+		case 'codeSpan':
+			return handlers.codeSpan(node, [])
+		case 'link':
+			return handlers.link(node, [])
 	}
-
-	return fold(node, depth)
 }
 
 /**
@@ -1134,67 +1358,195 @@ export function rewriteDocument(
 	document: MarkdownDocument,
 	rewrite: MarkdownRewriteHandler,
 ): MarkdownDocument {
-	function rewriteInline(node: InlineNode, depth: number): InlineNode {
-		if (depth >= MAX_DEPTH) return node
-		const rebuilt = rebuildInline(node, depth)
-		const result = rewrite(rebuilt)
-		return isInlineNode(result) ? result : rebuilt
-	}
-
-	function rewriteBlock(node: BlockNode, depth: number): BlockNode {
-		if (depth >= MAX_DEPTH) return node
-		const rebuilt = rebuildBlock(node, depth)
-		const result = rewrite(rebuilt)
-		return isBlockNode(result) ? result : rebuilt
-	}
-
-	function rewriteItem(item: ListItemNode, depth: number): ListItemNode {
-		if (depth >= MAX_DEPTH) return item
-		const rebuilt: ListItemNode = {
-			element: 'listItem',
-			children: item.children.map((child) => rewriteBlock(child, depth + 1)),
+	const stack: {
+		readonly node: MarkdownNode
+		readonly depth: number
+		readonly expanded: boolean
+		readonly count: number
+	}[] = [{ node: document, depth: -1, expanded: false, count: 0 }]
+	const values: MarkdownNode[] = []
+	while (stack.length > 0) {
+		const frame = stack.pop()
+		if (frame === undefined) continue
+		const current = frame.node
+		if (!frame.expanded) {
+			if (current.element !== 'document' && frame.depth >= MAX_DEPTH) {
+				values.push(current)
+				continue
+			}
+			const children: MarkdownNode[] = []
+			switch (current.element) {
+				case 'document':
+				case 'heading':
+				case 'paragraph':
+				case 'blockquote':
+				case 'listItem':
+				case 'emphasis':
+				case 'link':
+					for (const child of current.children) if (child !== undefined) children.push(child)
+					break
+				case 'list':
+					for (const child of current.items) if (child !== undefined) children.push(child)
+					break
+				case 'table':
+					for (const cell of current.header)
+						if (cell !== undefined)
+							for (const child of cell) if (child !== undefined) children.push(child)
+					for (const row of current.rows)
+						if (row !== undefined)
+							for (const cell of row)
+								if (cell !== undefined)
+									for (const child of cell) if (child !== undefined) children.push(child)
+					break
+			}
+			stack.push({ ...frame, expanded: true, count: children.length })
+			const depth = current.element === 'document' ? 0 : frame.depth + 1
+			for (let index = children.length - 1; index >= 0; index -= 1) {
+				const child = children[index]
+				if (child !== undefined) stack.push({ node: child, depth, expanded: false, count: 0 })
+			}
+			continue
 		}
-		const result = rewrite(rebuilt)
-		return result.element === 'listItem' ? result : rebuilt
-	}
-
-	function rebuildInline(node: InlineNode, depth: number): InlineNode {
-		switch (node.element) {
-			case 'emphasis':
-				return { ...node, children: node.children.map((child) => rewriteInline(child, depth + 1)) }
-			case 'link':
-				return { ...node, children: node.children.map((child) => rewriteInline(child, depth + 1)) }
-			case 'text':
-			case 'codeSpan':
-				return node
-		}
-	}
-
-	function rebuildBlock(node: BlockNode, depth: number): BlockNode {
-		switch (node.element) {
-			case 'heading':
-				return { ...node, children: node.children.map((child) => rewriteInline(child, depth + 1)) }
-			case 'paragraph':
-				return { ...node, children: node.children.map((child) => rewriteInline(child, depth + 1)) }
-			case 'blockquote':
-				return { ...node, children: node.children.map((child) => rewriteBlock(child, depth + 1)) }
-			case 'list':
-				return { ...node, items: node.items.map((item) => rewriteItem(item, depth + 1)) }
-			case 'table':
-				return {
-					...node,
-					header: node.header.map((cell) => cell.map((inline) => rewriteInline(inline, depth + 1))),
-					rows: node.rows.map((row) =>
-						row.map((cell) => cell.map((inline) => rewriteInline(inline, depth + 1))),
-					),
+		const children =
+			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
+		let rebuilt: MarkdownNode = current
+		switch (current.element) {
+			case 'document': {
+				const blocks: BlockNode[] = []
+				let offset = 0
+				for (const block of current.children) {
+					if (block === undefined) continue
+					const child = children[offset]
+					blocks.push(child !== undefined && isBlockNode(child) ? child : block)
+					offset += 1
 				}
-			case 'codeBlock':
-			case 'thematicBreak':
-				return node
+				const result: MarkdownDocument = { element: 'document', children: blocks }
+				if (stack.length === 0) return result
+				values.push(result)
+				continue
+			}
+			case 'heading':
+			case 'paragraph': {
+				const inlines: InlineNode[] = []
+				let offset = 0
+				for (const inline of current.children) {
+					if (inline === undefined) continue
+					const child = children[offset]
+					inlines.push(child !== undefined && isInlineNode(child) ? child : inline)
+					offset += 1
+				}
+				rebuilt = { ...current, children: inlines }
+				break
+			}
+			case 'blockquote': {
+				const blocks: BlockNode[] = []
+				let offset = 0
+				for (const block of current.children) {
+					if (block === undefined) continue
+					const child = children[offset]
+					blocks.push(child !== undefined && isBlockNode(child) ? child : block)
+					offset += 1
+				}
+				rebuilt = { ...current, children: blocks }
+				break
+			}
+			case 'listItem': {
+				const blocks: BlockNode[] = []
+				let offset = 0
+				for (const block of current.children) {
+					if (block === undefined) continue
+					const child = children[offset]
+					blocks.push(child !== undefined && isBlockNode(child) ? child : block)
+					offset += 1
+				}
+				rebuilt = { element: 'listItem', children: blocks }
+				break
+			}
+			case 'emphasis':
+			case 'link': {
+				const inlines: InlineNode[] = []
+				let offset = 0
+				for (const inline of current.children) {
+					if (inline === undefined) continue
+					const child = children[offset]
+					inlines.push(child !== undefined && isInlineNode(child) ? child : inline)
+					offset += 1
+				}
+				rebuilt = { ...current, children: inlines }
+				break
+			}
+			case 'list': {
+				const items: ListItemNode[] = []
+				let offset = 0
+				for (const item of current.items) {
+					if (item === undefined) continue
+					const child = children[offset]
+					items.push(child?.element === 'listItem' ? child : item)
+					offset += 1
+				}
+				rebuilt = { ...current, items }
+				break
+			}
+			case 'table': {
+				let offset = 0
+				const header: (readonly InlineNode[])[] = []
+				for (const cell of current.header) {
+					if (cell === undefined) continue
+					const inlines: InlineNode[] = []
+					for (const inline of cell) {
+						if (inline === undefined) continue
+						const child = children[offset]
+						inlines.push(child !== undefined && isInlineNode(child) ? child : inline)
+						offset += 1
+					}
+					header.push(inlines)
+				}
+				const rows: (readonly (readonly InlineNode[])[])[] = []
+				for (const row of current.rows) {
+					if (row === undefined) continue
+					const cells: (readonly InlineNode[])[] = []
+					for (const cell of row) {
+						if (cell === undefined) continue
+						const inlines: InlineNode[] = []
+						for (const inline of cell) {
+							if (inline === undefined) continue
+							const child = children[offset]
+							inlines.push(child !== undefined && isInlineNode(child) ? child : inline)
+							offset += 1
+						}
+						cells.push(inlines)
+					}
+					rows.push(cells)
+				}
+				rebuilt = { ...current, header, rows }
+				break
+			}
 		}
+		const result = rewrite(rebuilt)
+		let accepted = rebuilt
+		switch (current.element) {
+			case 'text':
+			case 'emphasis':
+			case 'codeSpan':
+			case 'link':
+				if (isInlineNode(result)) accepted = result
+				break
+			case 'heading':
+			case 'paragraph':
+			case 'list':
+			case 'table':
+			case 'codeBlock':
+			case 'blockquote':
+			case 'thematicBreak':
+				if (isBlockNode(result)) accepted = result
+				break
+			case 'listItem':
+				if (result.element === 'listItem') accepted = result
+				break
+		}
+		values.push(accepted)
 	}
-
-	return { element: 'document', children: document.children.map((child) => rewriteBlock(child, 0)) }
+	return { element: 'document', children: [...document.children] }
 }
 
 /**
@@ -1219,15 +1571,20 @@ export function rewriteDocument(
  * ```
  */
 export function flattenText(node: MarkdownNode): string {
-	function flatten(current: MarkdownNode, depth: number): string {
-		if (depth >= MAX_DEPTH) return ''
-		switch (current.element) {
+	const stack: { readonly node: MarkdownNode; readonly depth: number }[] = [{ node, depth: 0 }]
+	let value = ''
+	while (stack.length > 0) {
+		const frame = stack.pop()
+		if (frame === undefined || frame.depth >= MAX_DEPTH) continue
+		const children: MarkdownNode[] = []
+		switch (frame.node.element) {
 			case 'text':
-				return current.value
 			case 'codeSpan':
-				return current.value
+				value += frame.node.value
+				break
 			case 'codeBlock':
-				return current.code
+				value += frame.node.code
+				break
 			case 'document':
 			case 'heading':
 			case 'paragraph':
@@ -1235,25 +1592,26 @@ export function flattenText(node: MarkdownNode): string {
 			case 'listItem':
 			case 'emphasis':
 			case 'link':
-				return current.children.map((child) => flatten(child, depth + 1)).join('')
+				for (const child of frame.node.children) if (child !== undefined) children.push(child)
+				break
 			case 'list':
-				return current.items.map((item) => flatten(item, depth + 1)).join('')
-			case 'table': {
-				const header = current.header
-					.map((cell) => cell.map((inline) => flatten(inline, depth + 1)).join(''))
-					.join('')
-				const rows = current.rows
-					.map((row) =>
-						row.map((cell) => cell.map((inline) => flatten(inline, depth + 1)).join('')).join(''),
-					)
-					.join('')
-				return header + rows
-			}
-			case 'thematicBreak':
-				return ''
-			default:
-				return ''
+				for (const child of frame.node.items) if (child !== undefined) children.push(child)
+				break
+			case 'table':
+				for (const cell of frame.node.header)
+					if (cell !== undefined)
+						for (const child of cell) if (child !== undefined) children.push(child)
+				for (const row of frame.node.rows)
+					if (row !== undefined)
+						for (const cell of row)
+							if (cell !== undefined)
+								for (const child of cell) if (child !== undefined) children.push(child)
+				break
+		}
+		for (let index = children.length - 1; index >= 0; index -= 1) {
+			const child = children[index]
+			if (child !== undefined) stack.push({ node: child, depth: frame.depth + 1 })
 		}
 	}
-	return flatten(node, 0)
+	return value
 }
