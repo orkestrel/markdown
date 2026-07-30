@@ -2,7 +2,7 @@ import type {
 	BlockNode,
 	InlineNode,
 	ListItemNode,
-	ListItemParts,
+	ListItemMatch,
 	ListNode,
 	MarkdownDocument,
 	TableAlign,
@@ -10,7 +10,7 @@ import type {
 } from './types.js'
 import {
 	coalesceText,
-	leadingIndent,
+	countIndent,
 	extractFence,
 	extractHeading,
 	extractListItem,
@@ -19,7 +19,7 @@ import {
 	splitTableRow,
 	startsBlock,
 	stripQuote,
-	tableAlignments,
+	delimiterToAlignments,
 } from './helpers.js'
 import { isBlankLine, isFenceClose, isQuote, isTableStart, isThematicBreak } from './validators.js'
 import { MAX_DEPTH } from './constants.js'
@@ -145,7 +145,7 @@ export function collectTable(
 	const headerCells = splitTableRow(lines[start] ?? '')
 	const columns = headerCells.length
 	const header = headerCells.map((cell) => parseInline(cell.trim()))
-	const align = tableAlignments(lines[start + 1] ?? '')
+	const align = delimiterToAlignments(lines[start + 1] ?? '')
 	const padded: (TableAlign | null)[] = []
 	for (let column = 0; column < columns; column += 1) padded.push(align[column] ?? null)
 	const rows: (readonly InlineNode[])[][] = []
@@ -192,7 +192,7 @@ export function collectList(
 	// A single nested-item chain would otherwise rescan and slice the whole suffix
 	// once per level before reaching the cap. Recognize that shape in one pass and
 	// build the same bounded AST bottom-up.
-	const chain: ListItemParts[] = []
+	const chain: ListItemMatch[] = []
 	let nested = true
 	for (let cursor = start; cursor < lines.length; cursor += 1) {
 		const parsed = extractListItem(lines[cursor] ?? '')
@@ -245,18 +245,14 @@ export function collectList(
 			const next = lines[index] ?? ''
 			if (isBlankLine(next)) {
 				const after = lines[index + 1] ?? ''
-				if (
-					index + 1 < lines.length &&
-					!isBlankLine(after) &&
-					leadingIndent(after) >= continuation
-				) {
+				if (index + 1 < lines.length && !isBlankLine(after) && countIndent(after) >= continuation) {
 					itemLines.push('')
 					index += 1
 					continue
 				}
 				break
 			}
-			if (leadingIndent(next) >= continuation) {
+			if (countIndent(next) >= continuation) {
 				itemLines.push(next.slice(continuation))
 				index += 1
 				continue

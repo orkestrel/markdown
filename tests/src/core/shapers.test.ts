@@ -2,7 +2,7 @@ import type {
 	CodeBlockNode,
 	CodeSpanNode,
 	LineBreakNode,
-	ListItemParts,
+	ListItemMatch,
 	TableAlign,
 	TextNode,
 	ThematicBreakNode,
@@ -13,7 +13,7 @@ import {
 	codeSpanShape,
 	isBlockNode,
 	lineBreakShape,
-	listItemPartsShape,
+	listItemMatchShape,
 	tableAlignShape,
 	textShape,
 	thematicBreakShape,
@@ -311,11 +311,11 @@ describe('table alignment array contract', () => {
 	})
 })
 
-describe('listItemPartsShape', () => {
-	const contract = createContract(listItemPartsShape)
+describe('listItemMatchShape', () => {
+	const contract = createContract(listItemMatchShape)
 	const valid = { ordered: false, start: 1, content: 'hi', indent: 0, marker: 2 }
 
-	it('is: accepts a valid ListItemParts value', () => {
+	it('is: accepts a valid ListItemMatch value', () => {
 		expect(contract.is(valid)).toBe(true)
 		expect(contract.is({ ...valid, ordered: true, start: 3 })).toBe(true)
 	})
@@ -358,8 +358,8 @@ describe('listItemPartsShape', () => {
 		expect(contract.parse(null)).toBeUndefined()
 	})
 
-	it('type parity: Infer<typeof listItemPartsShape> matches ListItemParts both ways', () => {
-		expectTypeOf<Infer<typeof listItemPartsShape>>().toEqualTypeOf<ListItemParts>()
-		expectTypeOf<ListItemParts>().toEqualTypeOf<Infer<typeof listItemPartsShape>>()
+	it('type parity: Infer<typeof listItemMatchShape> matches ListItemMatch both ways', () => {
+		expectTypeOf<Infer<typeof listItemMatchShape>>().toEqualTypeOf<ListItemMatch>()
+		expectTypeOf<ListItemMatch>().toEqualTypeOf<Infer<typeof listItemMatchShape>>()
 	})
 })

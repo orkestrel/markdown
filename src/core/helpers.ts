@@ -12,7 +12,7 @@ import type {
 	InlineNode,
 	LinkNode,
 	ListItemNode,
-	ListItemParts,
+	ListItemMatch,
 	MarkdownCell,
 	MarkdownDocument,
 	MarkdownHandlers,
@@ -90,10 +90,10 @@ export function splitLines(markdown: string): readonly string[] {
  *
  * @example
  * ```ts
- * leadingIndent('  text') // 2
+ * countIndent('  text') // 2
  * ```
  */
-export function leadingIndent(line: string): number {
+export function countIndent(line: string): number {
 	let count = 0
 	for (const character of line) {
 		if (character === ' ' || character === '\t') count += 1
@@ -156,7 +156,7 @@ export function extractFence(
 
 /**
  * Extract a list-item line (`-` / `*` / `+` bullet, or `1.` / `1)` ordinal, followed by
- * a space) into its {@link ListItemParts}, or `undefined` when `line` is not a list
+ * a space) into its {@link ListItemMatch}, or `undefined` when `line` is not a list
  * item. `content` is the text after the marker; `marker` is the full marker-plus-space
  * width (for measuring a continuation's indent).
  *
@@ -168,7 +168,7 @@ export function extractFence(
  * extractListItem('- item') // { ordered: false, start: 1, content: 'item', indent: 0, marker: 2 }
  * ```
  */
-export function extractListItem(line: string): ListItemParts | undefined {
+export function extractListItem(line: string): ListItemMatch | undefined {
 	const unordered = /^(\s*)([-*+])\s+(.*)$/.exec(line)
 	if (unordered && unordered[1] !== undefined) {
 		const indent = unordered[1].length
@@ -252,10 +252,10 @@ export function splitTableRow(row: string): readonly string[] {
  *
  * @example
  * ```ts
- * tableAlignments('| :--- | ---: |') // ['left', 'right']
+ * delimiterToAlignments('| :--- | ---: |') // ['left', 'right']
  * ```
  */
-export function tableAlignments(delimiter: string): readonly (TableAlign | null)[] {
+export function delimiterToAlignments(delimiter: string): readonly (TableAlign | null)[] {
 	return splitTableRow(delimiter).map((cell) => {
 		const text = cell.trim()
 		const left = text.startsWith(':')

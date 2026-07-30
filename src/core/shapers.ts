@@ -122,20 +122,20 @@ export const thematicBreakShape = objectShape({
 export const tableAlignShape = literalShape(['left', 'right', 'center'])
 
 /**
- * The shape of {@link ListItemParts} - the parsed parts of a single list-item
+ * The shape of {@link ListItemMatch} - the parsed parts of a single list-item
  * line the block phase's list detector returns. Fully non-recursive (no
  * nested node fields), so every field shapes directly.
  *
  * @example
  * ```ts
  * import { createContract } from '@orkestrel/contract'
- * import { listItemPartsShape } from '@src/core'
+ * import { listItemMatchShape } from '@src/core'
  *
- * const listItemParts = createContract(listItemPartsShape)
+ * const listItemParts = createContract(listItemMatchShape)
  * listItemParts.is({ ordered: false, start: 1, content: 'hi', indent: 0, marker: 2 }) // true
  * ```
  */
-export const listItemPartsShape = objectShape({
+export const listItemMatchShape = objectShape({
 	ordered: booleanShape(),
 	start: integerShape(),
 	content: stringShape(),

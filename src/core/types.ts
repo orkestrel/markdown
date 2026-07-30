@@ -21,7 +21,7 @@ export type TableAlign = 'left' | 'right' | 'center'
  * The parsed parts of a single list-item line - the value the block phase's
  * list detector returns for a `-` / `*` / `+` bullet or a `1.` / `1)` ordinal line.
  */
-export interface ListItemParts {
+export interface ListItemMatch {
 	/** `true` for an ordered (`1.` / `1)`) item, `false` for a bullet (`-` / `*` / `+`). */
 	readonly ordered: boolean
 	/** The ordinal of an ordered item (its number); `1` for a bullet. */

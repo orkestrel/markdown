@@ -18,7 +18,7 @@ import {
 	flattenText,
 	foldNode,
 	htmlToMarkdown,
-	leadingIndent,
+	countIndent,
 	markdownToHTML,
 	mergeProjections,
 	normalizeInlines,
@@ -38,7 +38,7 @@ import {
 	splitTableRow,
 	startsBlock,
 	stripQuote,
-	tableAlignments,
+	delimiterToAlignments,
 	trimInlines,
 	unescapeText,
 	walkNodes,
@@ -93,23 +93,23 @@ describe('splitLines', () => {
 	})
 })
 
-describe('leadingIndent', () => {
+describe('countIndent', () => {
 	it('counts leading spaces and tabs', () => {
-		expect(leadingIndent('   x')).toBe(3)
-		expect(leadingIndent('\t\tx')).toBe(2)
-		expect(leadingIndent('x')).toBe(0)
+		expect(countIndent('   x')).toBe(3)
+		expect(countIndent('\t\tx')).toBe(2)
+		expect(countIndent('x')).toBe(0)
 	})
 
 	it('counts mixed spaces and tabs, stopping at the first non-whitespace', () => {
-		expect(leadingIndent(' \t x')).toBe(3)
+		expect(countIndent(' \t x')).toBe(3)
 	})
 
 	it('returns the full length for an all-whitespace line', () => {
-		expect(leadingIndent('   ')).toBe(3)
+		expect(countIndent('   ')).toBe(3)
 	})
 
 	it('returns 0 for an empty string', () => {
-		expect(leadingIndent('')).toBe(0)
+		expect(countIndent('')).toBe(0)
 	})
 })
 
@@ -231,7 +231,7 @@ describe('stripQuote', () => {
 	})
 })
 
-describe('splitTableRow / tableAlignments', () => {
+describe('splitTableRow / delimiterToAlignments', () => {
 	it('splits cells and drops outer pipes (inner cell whitespace preserved)', () => {
 		expect(splitTableRow('| a | b | c |')).toEqual([' a ', ' b ', ' c '])
 		expect(splitTableRow('a | b')).toEqual(['a ', ' b'])
@@ -250,7 +250,12 @@ describe('splitTableRow / tableAlignments', () => {
 	})
 
 	it('derives per-column alignment (left / right / center / absence)', () => {
-		expect(tableAlignments('| :- | :-: | -: | - |')).toEqual(['left', 'center', 'right', null])
+		expect(delimiterToAlignments('| :- | :-: | -: | - |')).toEqual([
+			'left',
+			'center',
+			'right',
+			null,
+		])
 	})
 })
 
