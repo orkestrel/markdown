@@ -10,10 +10,12 @@
 
 /**
  * The horizontal alignment of a GFM table column, as declared by its delimiter row
- * (`:---` left, `---:` right, `:---:` center) - `'none'` when the delimiter carries
- * no alignment colon. One entry per column, in column order.
+ * (`:---` left, `---:` right, `:---:` center). A bare `---` delimiter is represented
+ * by `null` in {@link TableNode.align}: the positional array requires one entry per
+ * column, JSON cannot carry `undefined` in an array, and the bare delimiter is an
+ * explicit no-alignment marker rather than an omitted value.
  */
-export type TableAlign = 'none' | 'left' | 'right' | 'center'
+export type TableAlign = 'left' | 'right' | 'center'
 
 /**
  * The parsed parts of a single list-item line - the value the block phase's
@@ -138,8 +140,13 @@ export interface TableNode {
 	readonly header: readonly (readonly InlineNode[])[]
 	/** The body rows - each a list of cells, each cell inline content. */
 	readonly rows: readonly (readonly (readonly InlineNode[])[])[]
-	/** The per-column alignment from the delimiter row, in column order. */
-	readonly align: readonly TableAlign[]
+	/**
+	 * The per-column alignment from the delimiter row, in column order. `null`
+	 * represents a bare `---` delimiter because this positional array requires one
+	 * entry per column, JSON cannot carry `undefined` in an array, and the delimiter
+	 * is an explicit no-alignment marker rather than an omitted value.
+	 */
+	readonly align: readonly (TableAlign | null)[]
 }
 
 /**

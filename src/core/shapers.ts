@@ -103,7 +103,7 @@ export const thematicBreakShape = objectShape({
  * tableAlign.is('top')    // false
  * ```
  */
-export const tableAlignShape = literalShape(['none', 'left', 'right', 'center'])
+export const tableAlignShape = literalShape(['left', 'right', 'center'])
 
 /**
  * The shape of {@link ListItemParts} - the parsed parts of a single list-item

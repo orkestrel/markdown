@@ -40,6 +40,7 @@ import {
 	URL_SAFETY_GROUPS,
 	buildDeepEmphasisInput,
 	buildURLSafetyCorpus,
+	assertTableNode,
 	firstBlock,
 } from '../../setup'
 import { describe, expect, it } from 'vitest'
@@ -233,8 +234,8 @@ describe('splitTableRow / tableAlignments', () => {
 		expect(splitTableRow('single')).toEqual(['single'])
 	})
 
-	it('derives per-column alignment (left / right / center / none)', () => {
-		expect(tableAlignments('| :- | :-: | -: | - |')).toEqual(['left', 'center', 'right', 'none'])
+	it('derives per-column alignment (left / right / center / absence)', () => {
+		expect(tableAlignments('| :- | :-: | -: | - |')).toEqual(['left', 'center', 'right', null])
 	})
 })
 
@@ -805,11 +806,11 @@ describe('renderMarkdown — canonical forms', () => {
 		expect(renderMarkdown(parseDocument('> hi'))).toBe('> hi')
 	})
 
-	it('renders a table alignment row with :--/--:/:-: delimiters', () => {
+	it('renders a table alignment row with :---/---:/:---: delimiters', () => {
 		const markdown = renderMarkdown(
 			parseDocument('| l | c | r |\n| :- | :-: | -: |\n| 1 | 2 | 3 |'),
 		)
-		expect(markdown).toContain('| :-- | :-: | --: |')
+		expect(markdown).toContain('| :--- | :---: | ---: |')
 	})
 
 	it('renders a link as [text](href) with the raw href', () => {
@@ -890,11 +891,22 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 					element: 'table',
 					header: [[{ element: 'text', value: 'a|b' }]],
 					rows: [[[{ element: 'text', value: 'c|d' }]]],
-					align: ['none'],
+					align: [null],
 				},
 			],
 		}
 		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+	})
+
+	it('round-trips an absent table alignment through parse, render, and parse', () => {
+		const source = '| a |\n| --- |'
+		const document = parseDocument(source)
+		const table = assertTableNode(firstBlock(source))
+
+		expect(table.align).toEqual([null])
+		const rendered = renderMarkdown(document)
+		expect(rendered).toBe('| a |\n| --- |')
+		expect(parseDocument(rendered)).toEqual(document)
 	})
 
 	it('round-trips inline code containing backticks', () => {
@@ -1138,7 +1150,7 @@ describe('foldNode', () => {
 			element: 'table',
 			header: [[{ element: 'text', value: 'h1' }], [{ element: 'text', value: 'h2' }]],
 			rows: [[[{ element: 'text', value: 'r1c1' }], [{ element: 'text', value: 'r1c2' }]]],
-			align: ['none', 'none'],
+			align: [null, null],
 		}
 		const textHandlers: MarkdownHandlers<string> = {
 			document: (_, children) => children.join(''),

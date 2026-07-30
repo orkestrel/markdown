@@ -10,12 +10,13 @@ import type { Infer } from '@orkestrel/contract'
 import {
 	codeBlockShape,
 	codeSpanShape,
+	isBlockNode,
 	listItemPartsShape,
 	tableAlignShape,
 	textShape,
 	thematicBreakShape,
 } from '@src/core'
-import { createContract, seededRandom } from '@orkestrel/contract'
+import { arrayShape, createContract, nullableShape, seededRandom } from '@orkestrel/contract'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { TEST_SEED } from '../../setup.js'
 
@@ -215,7 +216,6 @@ describe('tableAlignShape', () => {
 	const contract = createContract(tableAlignShape)
 
 	it('is: accepts each allowed literal, rejects other values', () => {
-		expect(contract.is('none')).toBe(true)
 		expect(contract.is('left')).toBe(true)
 		expect(contract.is('right')).toBe(true)
 		expect(contract.is('center')).toBe(true)
@@ -225,8 +225,8 @@ describe('tableAlignShape', () => {
 		expect(contract.is(undefined)).toBe(false)
 	})
 
-	it('schema: enum of the four literals', () => {
-		expect(contract.schema.enum).toEqual(['none', 'left', 'right', 'center'])
+	it('schema: enum of the three alignment literals', () => {
+		expect(contract.schema.enum).toEqual(['left', 'right', 'center'])
 	})
 
 	it('generate: round-trips through is and is deterministic per seed', () => {
@@ -246,6 +246,24 @@ describe('tableAlignShape', () => {
 	it('type parity: Infer<typeof tableAlignShape> matches TableAlign both ways', () => {
 		expectTypeOf<Infer<typeof tableAlignShape>>().toEqualTypeOf<TableAlign>()
 		expectTypeOf<TableAlign>().toEqualTypeOf<Infer<typeof tableAlignShape>>()
+	})
+})
+
+describe('table alignment array contract', () => {
+	const contract = createContract(arrayShape(nullableShape(tableAlignShape), { min: 1, max: 1 }))
+
+	it('accepts null entries and rejects undefined entries in the table guard', () => {
+		expect(isBlockNode({ element: 'table', header: [], rows: [], align: [null] })).toBe(true)
+		expect(isBlockNode({ element: 'table', header: [], rows: [], align: [undefined] })).toBe(false)
+	})
+
+	it('generates alignment arrays accepted by the table guard', () => {
+		const align = contract.generate(seededRandom(0))
+		const table = { element: 'table', header: [], rows: [], align }
+
+		expect(align).toEqual([null])
+		expect(contract.is(align)).toBe(true)
+		expect(isBlockNode(table)).toBe(true)
 	})
 })
 

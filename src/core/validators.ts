@@ -24,6 +24,7 @@ import {
 	isString,
 	literalOf,
 	lazyOf,
+	nullableOf,
 	recordOf,
 	unionOf,
 } from '@orkestrel/contract'
@@ -403,7 +404,7 @@ export const isBlockNode: Guard<BlockNode> = unionOf(
 		element: literalOf('table'),
 		header: arrayOf(arrayOf(isInlineNode)),
 		rows: arrayOf(arrayOf(arrayOf(isInlineNode))),
-		align: arrayOf(literalOf('none', 'left', 'right', 'center')),
+		align: arrayOf(nullableOf(literalOf('left', 'right', 'center'))),
 	}),
 	recordOf({ element: literalOf('codeBlock'), lang: isString, code: isString }, ['lang']),
 	recordOf({ element: literalOf('blockquote'), children: arrayOf(lazyOf(() => isBlockNode)) }),

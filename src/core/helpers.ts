@@ -221,7 +221,8 @@ export function splitTableRow(row: string): readonly string[] {
 
 /**
  * Derive the per-column {@link TableAlign} list from a GFM delimiter row - `:---`
- * left, `---:` right, `:---:` center, `---` none.
+ * left, `---:` right, `:---:` center, and `---` as the explicit no-alignment
+ * marker represented by `null`.
  *
  * @param delimiter - The table's delimiter row
  * @returns One alignment per column, in column order
@@ -231,7 +232,7 @@ export function splitTableRow(row: string): readonly string[] {
  * tableAlignments('| :--- | ---: |') // ['left', 'right']
  * ```
  */
-export function tableAlignments(delimiter: string): readonly TableAlign[] {
+export function tableAlignments(delimiter: string): readonly (TableAlign | null)[] {
 	return splitTableRow(delimiter).map((cell) => {
 		const text = cell.trim()
 		const left = text.startsWith(':')
@@ -239,7 +240,7 @@ export function tableAlignments(delimiter: string): readonly TableAlign[] {
 		if (left && right) return 'center'
 		if (right) return 'right'
 		if (left) return 'left'
-		return 'none'
+		return null
 	})
 }
 
@@ -1051,9 +1052,10 @@ export function renderMarkdown(node: MarkdownNode): string {
 					offset += count
 				}
 				const delimiter = current.align.map((align) => {
-					if (align === 'left') return ':--'
-					if (align === 'right') return '--:'
-					if (align === 'center') return ':-:'
+					if (align === null) return '---'
+					if (align === 'left') return ':---'
+					if (align === 'right') return '---:'
+					if (align === 'center') return ':---:'
 					return '---'
 				})
 				const rows: string[] = []

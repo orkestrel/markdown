@@ -139,8 +139,8 @@ export function collectTable(
 	const columns = headerCells.length
 	const header = headerCells.map((cell) => parseInline(cell.trim()))
 	const align = tableAlignments(lines[start + 1] ?? '')
-	const padded: TableAlign[] = []
-	for (let column = 0; column < columns; column += 1) padded.push(align[column] ?? 'none')
+	const padded: (TableAlign | null)[] = []
+	for (let column = 0; column < columns; column += 1) padded.push(align[column] ?? null)
 	const rows: (readonly InlineNode[])[][] = []
 	let index = start + 2
 	while (

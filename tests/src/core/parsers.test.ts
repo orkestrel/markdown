@@ -290,7 +290,13 @@ describe('parseDocument — GFM tables', () => {
 		const table = assertTableNode(
 			firstBlock('| l | c | r | n |\n| :- | :-: | -: | - |\n| 1 | 2 | 3 | 4 |'),
 		)
-		expect(table.align).toEqual(['left', 'center', 'right', 'none'])
+		expect(table.align).toEqual(['left', 'center', 'right', null])
+	})
+
+	it('pads a short delimiter row with absent alignment entries', () => {
+		const table = assertTableNode(firstBlock('| a | b |\n| :- |'))
+
+		expect(table.align).toEqual(['left', null])
 	})
 
 	it('parses inline content inside a cell', () => {
