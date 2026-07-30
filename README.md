@@ -62,6 +62,10 @@ bundle of guard, parser, JSON Schema, and seeded generator.
 - **Projection anchor** — `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals
   `htmlToMarkdown(x)`: whatever the projection emits, markdown can write it and read it back
   unchanged.
+
+Both round-trip laws hold within the depth budget — markdown's `MAX_DEPTH`, plus html's own cap on
+the inbound trip; beyond it only totality is promised.
+
 - **Sanitized output** — `renderHTML` refuses `javascript:`, `data:`, `vbscript:`, `file:`, and
   protocol-relative destinations, removes unsafe subtrees whole, and strips every handler and
   styling attribute, whatever the input AST claims.

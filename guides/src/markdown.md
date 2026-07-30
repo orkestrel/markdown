@@ -4,7 +4,7 @@
 
 Markdown here is: parse once into a stateful `Markdown` workspace, then treat every output as a projection of it. `parseDocument` runs a block phase (headings / paragraphs / lists / GFM tables / fenced code / blockquotes / thematic breaks) then an inline phase (emphasis / inline code / links / images / hard breaks) over each block's text, and returns a render-agnostic `MarkdownDocument` — a discriminated union of node values keyed by `element` (the axis that varies, AGENTS §4.4: never `kind` / `type`). A `Markdown` instance wraps that AST with query (`find` / `filter` / `reduce` / iteration), rewrite (`map`), fold, and streaming operations. The AST itself is the primary contract — render-agnostic and exhaustively testable — with a from-unknown validation surface (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) for when an AST arrives from outside `parseDocument` (a deserialized document, a value crossing a process/RPC boundary).
 
-**Both conversion directions live here**, because what an HTML subtree becomes in markdown — and what a markdown node becomes in HTML — is markdown-format knowledge, not HTML knowledge. `@orkestrel/html` owns the HTML AST, its total parser, its canonical serializer, and its sanitize floor; this package owns the two projections across the boundary and never asks html to know a markdown word. Outbound: `markdownToHTML` projects a `MarkdownNode` onto html's AST, `renderHTML` composes that projection with html's sanitizer and serializer into one sanitized string, and `renderMarkdown` writes canonical markdown source instead (§ [`renderMarkdown` round-trip](#rendermarkdown-round-trip)). Inbound: `htmlToMarkdown` folds an html `HTMLNode` back down to a `MarkdownDocument` (§ [`htmlToMarkdown` projection](#htmltomarkdown-projection)). None of the four assumes its input came from a trusted parse, and none of them throws: malformed input degrades to literal text, and adversarially deep nesting degrades at a fixed recursion cap rather than exhausting the call stack (no ReDoS, no stack overflow).
+**Both conversion directions live here**, because what an HTML subtree becomes in markdown — and what a markdown node becomes in HTML — is markdown-format knowledge, not HTML knowledge. `@orkestrel/html` owns the HTML AST, its total parser, its canonical serializer, and its sanitize floor; this package owns the two projections across the boundary and never asks html to know a markdown word. Outbound: `markdownToHTML` projects a `MarkdownNode` onto html's AST, `renderHTML` composes that projection with html's sanitizer and serializer into one sanitized string, and `renderMarkdown` writes canonical markdown source instead (§ [`renderMarkdown` round-trip](#rendermarkdown-round-trip)). Inbound: `htmlToMarkdown` folds an html `HTMLNode` back down to a `MarkdownDocument` (§ [`htmlToMarkdown` projection](#htmltomarkdown-projection)). None of the four assumes its input came from a trusted parse, and none of them throws: malformed markdown degrades to literal text, while at the outbound depth cap value-bearing nodes degrade to text and structural nodes degrade to nothing; the inbound trip inherits html's own cap rather than exhausting the call stack (no ReDoS, no stack overflow).
 
 ## Surface
 
@@ -251,7 +251,7 @@ Only the middle step judges anything. `markdownToHTML` is deliberately inert: it
 
 **The inbound rule is different, and that asymmetry is deliberate.** Outbound, sanitizing at the very end is right: `markdownToHTML` can stay inert because `renderHTML` is the only door to a string and it always sanitizes. Inbound there is no such door. `htmlToMarkdown` produces a `MarkdownDocument`, and the serializer that document eventually reaches — `renderMarkdown` — is NOT a sanitization boundary and must not become one: it writes markdown source, where a destination is content rather than an executed attribute, and where a value dropped late could not be told apart from a value the author wrote. So the projection bakes html's `sanitizeURL(value, SAFE_URL_SCHEMES)` in at PROJECTION time, on every `href` and every `src`, whether or not the AST was ever sanitized — a hand-built one never was. A refused destination empties to `''` and the link or image is KEPT (`[text]()`), because a bad URL is no reason to lose the words around it. Two pipelines, two last responsible moments; the rule sits at each one rather than in the same place twice.
 
-**Wanting a stricter policy.** Because the composition is exposed rather than hidden, a caller who needs a narrower floor does not need an option on `renderHTML`: project with `markdownToHTML`, sanitize with `@orkestrel/html`'s own `HTML` class and whatever `SanitizeOptions` they want, and serialize with html's `renderHTML`. That path can narrow the element set, drop `src` again, or replace the scheme list — and it still cannot go below html's floor, which is the point.
+**Wanting a stricter policy.** Because the composition is exposed rather than hidden, a caller who needs a narrower floor does not need an option on `renderHTML`: project with `markdownToHTML`, sanitize with `@orkestrel/html`'s own `HTML` class and whatever `SanitizeOptions` they want, and serialize with html's `renderHTML`. That path can narrow the element set, drop `src` again, or replace the scheme list — and it still cannot go below html's floor, which is the point. The inbound counterpart is [bringing your own element policy](#bringing-your-own-element-policy): the same composition seam placed where that direction's element mapping varies.
 
 ## `renderMarkdown` round-trip
 
@@ -338,6 +338,8 @@ Depth is the one bound markdown does not set here; see the inherited cap in [Dep
 
 `projectHTMLNode` and `projectHTMLLeaf` are exported as handlers, not hidden inside `htmlToMarkdown`, precisely so that the element mapping is replaceable without forking the projection. The vocabulary a replacement needs is exported alongside them: `createProjection` builds one with the exclusivity invariant enforced, `mergeProjections` combines a node's children into it, `projectionToBlocks` and `projectionToInlines` read one back out, and `trimInlines` and `normalizeInlines` reduce an inline run to a shape markdown can actually write. So a caller with a house rule — an element markdown has no opinion about, a wrapper that should become a blockquote, a `<kbd>` that reads better as code — writes one handler, delegates everything else to the default, and folds with html's `foldNode` exactly as `htmlToMarkdown` does:
 
+The outbound counterpart is the stricter-policy recipe in [Sanitization policy](#sanitization-policy): the same composition seam placed where that direction's sanitize floor varies.
+
 ```ts
 import type { ElementNode, HTMLDocument, HTMLNode } from '@orkestrel/html'
 import type { MarkdownDocument, MarkdownProjection } from '@orkestrel/markdown'
@@ -346,13 +348,13 @@ import {
 	createProjection,
 	mergeProjections,
 	projectHTMLLeaf,
-	projectHTMLNode,
+	projectHTMLNode as projectDefaultHTMLNode,
 	projectionToBlocks,
 	renderMarkdown,
 } from '@orkestrel/markdown'
 
 // House rule: <kbd>Esc</kbd> reads as a code span. Every other element keeps the default.
-function projectNode(
+function projectHTMLNode(
 	node: ElementNode | HTMLDocument,
 	children: readonly MarkdownProjection[],
 ): MarkdownProjection {
@@ -363,7 +365,7 @@ function projectNode(
 			text: merged.text,
 		})
 	}
-	return projectHTMLNode(node, children)
+	return projectDefaultHTMLNode(node, children)
 }
 
 function project(node: HTMLNode): MarkdownDocument {
@@ -371,8 +373,8 @@ function project(node: HTMLNode): MarkdownDocument {
 		element: 'document',
 		children: projectionToBlocks(
 			foldNode<MarkdownProjection>(node, {
-				document: projectNode,
-				element: projectNode,
+				document: projectHTMLNode,
+				element: projectHTMLNode,
 				text: projectHTMLLeaf,
 				comment: projectHTMLLeaf,
 				doctype: projectHTMLLeaf,

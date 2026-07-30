@@ -1,4 +1,4 @@
-import type { ElementNode, HTMLNode } from '@orkestrel/html'
+import type { ElementNode, HTMLDocument, HTMLNode } from '@orkestrel/html'
 import type {
 	BlockNode,
 	BlockquoteNode,
@@ -601,6 +601,38 @@ describe('renderHTML — @orkestrel/html URL-floor composition', () => {
 		expect(renderHTML(parseDocument('[x](javascript:unit) ![alt](data:unit)'))).toBe(
 			'<p><a>x</a> <img alt="alt"></p>',
 		)
+	})
+
+	it('sanitizes every hostile destination in a hand-built markdown document', () => {
+		const hostile: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'link',
+							href: 'javascript:alert(1)',
+							children: [{ element: 'text', value: 'link' }],
+						},
+						{ element: 'text', value: ' ' },
+						{
+							element: 'image',
+							src: 'da\u0000ta:text/html,alert(1)',
+							children: [{ element: 'text', value: 'image' }],
+						},
+						{ element: 'text', value: ' ' },
+						{
+							element: 'link',
+							href: '&#106;avascript:alert(2)',
+							children: [{ element: 'text', value: 'entity' }],
+						},
+					],
+				},
+			],
+		}
+
+		expect(renderHTML(hostile)).toBe('<p><a>link</a> <img alt="image"> <a>entity</a></p>')
 	})
 })
 
@@ -2363,12 +2395,15 @@ describe('htmlToMarkdown — round-trip anchor law', () => {
 })
 
 describe('htmlToMarkdown — the grand round trip', () => {
-	it('carries alignment, an image, and a link through markdown → HTML → markdown', () => {
+	it('carries nested emphasis, alignment, an image, and a link through the grand round trip', () => {
 		const source =
-			'# Title\n\n| Left | Right |\n| :--- | ---: |\n| ![shot](a.png) | [read](/guide) |'
+			'# Title\n\n_a **c** b_\n\n| Left | Right |\n| :--- | ---: |\n| ![shot](a.png) | [read](/guide) |'
+		const canonical =
+			'# Title\n\n*a __c__ b*\n\n| Left | Right |\n| :--- | ---: |\n| ![shot](a.png) | [read](/guide) |'
 		const projected = htmlToMarkdown(parseHTMLDocument(renderHTML(parseDocument(source))))
 		expect(projected).toEqual(parseDocument(source))
-		expect(renderMarkdown(projected)).toBe(source)
+		expect(parseDocument(renderMarkdown(projected))).toEqual(projected)
+		expect(renderMarkdown(projected)).toBe(canonical)
 	})
 
 	it('composes every refusal end to end for a hostile document', () => {
@@ -2394,5 +2429,58 @@ describe('htmlToMarkdown — the grand round trip', () => {
 		// html's floor REMOVES a URL attribute it refuses rather than emptying it, so the
 		// emptied destination does not even reach the output as an attribute.
 		expect(renderHTML(projected)).toBe('<p><a>click</a></p><p><img alt="shot"></p>')
+	})
+
+	it('refuses hostile destinations and unsafe text in a hand-built HTML document', () => {
+		const hostile: HTMLDocument = {
+			category: 'document',
+			children: [
+				{
+					category: 'element',
+					name: 'p',
+					attributes: [],
+					children: [
+						{
+							category: 'element',
+							name: 'a',
+							attributes: [{ name: 'href', value: 'javascript:alert(1)' }],
+							children: [{ category: 'text', value: 'text' }],
+						},
+						{ category: 'text', value: ' ' },
+						{
+							category: 'element',
+							name: 'img',
+							attributes: [
+								{ name: 'src', value: 'da\u0009ta:text/html,alert(2)' },
+								{ name: 'alt', value: 'alt' },
+							],
+							children: [],
+						},
+						{
+							category: 'element',
+							name: 'script',
+							attributes: [],
+							children: [{ category: 'text', value: 'unsafe text' }],
+						},
+					],
+				},
+			],
+		}
+		const projected = htmlToMarkdown(hostile)
+
+		expect(projected).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'link', href: '', children: [{ element: 'text', value: 'text' }] },
+						{ element: 'text', value: ' ' },
+						{ element: 'image', src: '', children: [{ element: 'text', value: 'alt' }] },
+					],
+				},
+			],
+		})
+		expect(renderMarkdown(projected)).toBe('[text]() ![alt]()')
 	})
 })

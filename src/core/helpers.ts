@@ -1854,14 +1854,12 @@ export function projectHTMLNode(
 				direct: boolean
 			}[] = [{ children: node.children, index: 0, direct: false }]
 			while (sources.length > 0) {
-				const source = sources[sources.length - 1]
+				const source = sources.pop()
 				if (source === undefined) continue
-				if (source.index >= source.children.length) {
-					sources.pop()
-					continue
-				}
+				if (source.index >= source.children.length) continue
 				const child = source.children[source.index]
 				source.index += 1
+				sources.push(source)
 				if (child?.category !== 'element') continue
 				if (child.name === 'th' || child.name === 'td') {
 					if (!source.direct) {

@@ -3,8 +3,9 @@
 // A {@link MarkdownInterface} parses a markdown document into a typed AST - a
 // discriminated union of node values keyed by their `element` (the axis that
 // varies, AGENTS §4.4: never `kind` / `type`). The AST is the primary contract
-// (render-agnostic, exhaustively testable); the renderer is a separate, downstream
-// projection from AST → HTML string. Block nodes carry document structure;
+// (render-agnostic, exhaustively testable); three separate projections carry it out
+// to sanitized HTML, out to canonical markdown, and in from an HTML AST. Block nodes
+// carry document structure;
 // {@link InlineNode}s carry the inline content of a heading / paragraph / list item
 // / table cell. Every node is plain readonly data - no behaviour.
 
@@ -36,8 +37,9 @@ export interface ListItemMatch {
 
 /**
  * A run of plain text - the leaf inline node. `value` is the decoded text with
- * markdown escapes (`\*`, `\_`, …) already resolved to their literal characters; the
- * renderer HTML-escapes it (`<` / `>` / `&` / `"`) on the way out.
+ * markdown escapes (`\*`, `\_`, …) already resolved to their literal characters;
+ * html's text encoder escapes `&`, `<`, `>` on the way out; `"` and `'` stay literal
+ * in character data.
  */
 export interface TextNode {
 	readonly element: 'text'
@@ -76,9 +78,9 @@ export interface LineBreakNode {
 }
 
 /**
- * An inline link - `[text](href)`. `children` are the inline nodes of the link text;
- * `href` is the destination, sanitized at render (a `javascript:` / other unsafe
- * scheme is dropped to an empty `href`, and the value is HTML-attribute-escaped).
+ * An inline link - `[text](href)`. `children` are the inline nodes of the link text.
+ * At render, html's floor removes a refused `href` attribute and the link keeps its
+ * text; {@link htmlToMarkdown} instead stores a refused destination as `''`.
  */
 export interface LinkNode {
 	readonly element: 'link'
@@ -220,8 +222,8 @@ export interface MarkdownDocument {
 
 /**
  * Any node in a markdown AST - the {@link MarkdownDocument} root, a {@link BlockNode},
- * a {@link ListItemNode}, or an {@link InlineNode}. The exhaustive set the renderer's
- * `switch` covers.
+ * a {@link ListItemNode}, or an {@link InlineNode}. The exhaustive set every
+ * projection's `switch` covers.
  */
 export type MarkdownNode = MarkdownDocument | BlockNode | ListItemNode | InlineNode
 

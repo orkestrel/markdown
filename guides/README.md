@@ -10,16 +10,22 @@ A dual-axis index into this repository's guides — by concept, and by directory
 
 ## By directory
 
-| Directory  | Guide                                |
-| ---------- | ------------------------------------ |
-| `src/core` | [`src/markdown.md`](src/markdown.md) |
+| Directory    | Guide                                                                                                                                                            |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/core`   | [`src/markdown.md`](src/markdown.md)                                                                                                                             |
+| `guides/src` | Dependency mirrors: [`src/contract.md`](src/contract.md), [`src/guide.md`](src/guide.md), [`src/html.md`](src/html.md), and [`src/scaffold.md`](src/scaffold.md) |
 
 ## Dependency reference
 
+[`src/html.md`](src/html.md) is a byte-identical mirror of the guide for
+`@orkestrel/html` — one of this package's two runtime dependencies. It documents
+**that package's** HTML AST, total parser, canonical serializer, sanitize floor,
+and `foldNode`, not anything sourced in this repo; it is kept here so a reader of
+the two conversion directions can inspect the foundation they compose without
+leaving this guide set.
+
 [`src/contract.md`](src/contract.md) is a byte-identical mirror of the guide for
-`@orkestrel/contract` — one of this package's two runtime dependencies, alongside
-`@orkestrel/html`, which supplies the HTML AST, sanitize floor, and serializer both
-conversion directions compose with. It documents
+`@orkestrel/contract` — the other runtime dependency. It documents
 **that package's** surface (guards, combinators, parsers, and the shape DSL), not
 anything sourced in this repo; it is kept here so a reader of the markdown AST
 guards, leaf-node shapes, and compiled contracts (`isMarkdownNode`,
@@ -32,6 +38,13 @@ suite (`tests/guides/src/parity.test.ts`). It documents **that package's**
 surface (`Guide` / `Source`, the manifest and comparison helpers), not anything
 sourced in this repo; it is kept here so a reader of the parity suite can see
 the primitives it is built from without leaving this guide set.
+
+[`src/scaffold.md`](src/scaffold.md) is a mirror of the guide for
+`@orkestrel/scaffold` — the devDependency that generated this workspace. It
+documents **that package's** generator, target selection, and emitted layout,
+not anything sourced in this repo; it is kept here so a reader can distinguish
+the scaffold contract from this package's own files without leaving this guide
+set.
 
 ## See also
 
