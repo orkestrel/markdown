@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/markdown",
-	"version": "0.0.6",
+	"version": "0.0.7",
 	"description": "Markdown parser toolkit — a fast, zero-surprise CommonMark-style parser with GFM tables, a typed AST, contract-backed node guards, and safe HTML rendering. Part of the @orkestrel line.",
 	"keywords": [
 		"ast",
