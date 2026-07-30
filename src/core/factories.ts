@@ -2,6 +2,7 @@ import type { ContractInterface } from '@orkestrel/contract'
 import type {
 	CodeBlockNode,
 	CodeSpanNode,
+	LineBreakNode,
 	MarkdownDocument,
 	MarkdownInterface,
 	TextNode,
@@ -9,7 +10,13 @@ import type {
 } from './types.js'
 import { createContract } from '@orkestrel/contract'
 import { Markdown } from './Markdown.js'
-import { codeBlockShape, codeSpanShape, textShape, thematicBreakShape } from './shapers.js'
+import {
+	codeBlockShape,
+	codeSpanShape,
+	lineBreakShape,
+	textShape,
+	thematicBreakShape,
+} from './shapers.js'
 
 /**
  * Create a stateful markdown handle from a markdown string or an already-parsed
@@ -19,7 +26,8 @@ import { codeBlockShape, codeSpanShape, textShape, thematicBreakShape } from './
  * @remarks
  * Given a `string`, runs a block phase (headings / paragraphs / lists / GFM tables /
  * fenced code / blockquotes / thematic breaks) then an inline phase (emphasis /
- * inline code / links) to build a render-agnostic {@link MarkdownDocument}. Given a
+ * inline code / links / images / hard breaks) to build a render-agnostic
+ * {@link MarkdownDocument}. Given a
  * {@link MarkdownDocument}, adopts it AS-IS without re-validation - gate an untrusted
  * value with `isMarkdownDocument` first. Pure + total parse (malformed markdown
  * degrades to text, never throws) and zero-dependency - a hand-written scanner, no
@@ -76,6 +84,23 @@ export function createTextContract(): ContractInterface<TextNode> {
  */
 export function createCodeSpanContract(): ContractInterface<CodeSpanNode> {
 	return createContract(codeSpanShape)
+}
+
+/**
+ * Compile the {@link lineBreakShape} into a {@link ContractInterface} for
+ * {@link LineBreakNode}.
+ *
+ * @returns A `LineBreakNode` contract bundling `schema` / `is` / `parse` / `generate`
+ *
+ * @example
+ * ```ts
+ * import { createLineBreakContract } from '@src/core'
+ *
+ * createLineBreakContract().is({ element: 'break' }) // true
+ * ```
+ */
+export function createLineBreakContract(): ContractInterface<LineBreakNode> {
+	return createContract(lineBreakShape)
 }
 
 /**

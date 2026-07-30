@@ -508,7 +508,8 @@ export function scanEmphasis(
 
 /**
  * Scan the window `[from, to)` of `source` into inline nodes - the single recursive
- * engine the inline phase runs on (emphasis / link text recurse through it). Linear:
+ * engine the inline phase runs on (emphasis, link text, and image alternative
+ * content recurse through it). Linear:
  * each character is consumed once; a failed construct emits its opening character as
  * text and advances by one, so there is no re-scan (no ReDoS).
  *
@@ -545,6 +546,19 @@ export function scanInline(
 			index += 2
 			continue
 		}
+		if (character === ' ') {
+			let spaceEnd = index
+			while (spaceEnd < to && source[spaceEnd] === ' ') spaceEnd += 1
+			if (spaceEnd - index >= 2 && source[spaceEnd] === '\n') {
+				if (pending.length > 0) {
+					nodes.push({ element: 'text', value: pending })
+					pending = ''
+				}
+				nodes.push({ element: 'break' })
+				index = spaceEnd + 1
+				continue
+			}
+		}
 		let scanned: InlineNode | undefined
 		let end = index
 		if (character === '`') {
@@ -552,6 +566,17 @@ export function scanInline(
 			if (span) {
 				scanned = { element: 'codeSpan', value: span.value }
 				end = span.end
+			}
+		}
+		if (character === '!' && source[index + 1] === '[') {
+			const link = scanLink(source, index + 1, to, depth)
+			if (link) {
+				scanned = {
+					element: 'image',
+					src: link.node.href,
+					children: link.node.children,
+				}
+				end = link.end
 			}
 		}
 		if (character === '[') {
@@ -839,9 +864,10 @@ export function renderHTML(node: MarkdownNode): string {
  * normalizes to asterisks), `- ` bullets, `N. ` sequential ordinals (from the list's
  * `start`), `---` thematic breaks, fenced code blocks (backtick run widened past any
  * 3+ backtick run inside the body), ATX headings, `> `-prefixed blockquote lines, GFM
- * tables (1-space-padded cells, `\|`-escaped pipes, an alignment delimiter row), and
- * `[text](href)` links. A `text` node's literal content is backslash-escaped wherever
- * it would otherwise re-parse as markup (AGENTS §14 parse↔render soundness).
+ * tables (1-space-padded cells, `\|`-escaped pipes, an alignment delimiter row),
+ * `[text](href)` links, `![alt](src)` images, and two-space hard breaks. A `text`
+ * node's literal content is backslash-escaped wherever it would otherwise re-parse
+ * as markup (AGENTS §14 parse↔render soundness).
  *
  * @remarks
  * Total: never throws. At {@link MAX_DEPTH} a value-bearing node degrades to its
@@ -866,7 +892,8 @@ export function renderMarkdown(node: MarkdownNode): string {
 		readonly expanded: boolean
 		readonly count: number
 		readonly escaped: string
-	}[] = [{ node, depth: 0, expanded: false, count: 0, escaped: '' }]
+		readonly escapeBang: boolean
+	}[] = [{ node, depth: 0, expanded: false, count: 0, escaped: '', escapeBang: false }]
 	const values: string[] = []
 	while (stack.length > 0) {
 		const frame = stack.pop()
@@ -882,6 +909,15 @@ export function renderMarkdown(node: MarkdownNode): string {
 				for (let index = 0; index < current.value.length; index += 1) {
 					const character = current.value[index] ?? ''
 					const atLineStart = index === 0 || current.value[index - 1] === '\n'
+					if (
+						current.element === 'text' &&
+						character === '!' &&
+						index === current.value.length - 1 &&
+						frame.escapeBang
+					) {
+						escaped += '\\!'
+						continue
+					}
 					if (
 						character === '\\' ||
 						character === '*' ||
@@ -923,41 +959,81 @@ export function renderMarkdown(node: MarkdownNode): string {
 				values.push(escaped)
 				continue
 			}
-			const children: MarkdownNode[] = []
+			const groups: (readonly MarkdownNode[])[] = []
+			const adjacent: boolean[] = []
 			let depth = frame.depth + 1
 			switch (current.element) {
 				case 'document':
-				case 'heading':
-				case 'paragraph':
 				case 'blockquote':
 				case 'listItem':
+					groups.push(current.children)
+					adjacent.push(false)
+					break
+				case 'heading':
+				case 'paragraph':
 				case 'emphasis':
 				case 'link':
-					for (const child of current.children) if (child !== undefined) children.push(child)
+				case 'image':
+					groups.push(current.children)
+					adjacent.push(true)
 					break
 				case 'list':
-					for (const child of current.items) if (child !== undefined) children.push(child)
+					groups.push(current.items)
+					adjacent.push(false)
 					break
 				case 'table':
 					for (const cell of current.header)
-						if (cell !== undefined)
-							for (const child of cell) if (child !== undefined) children.push(child)
+						if (cell !== undefined) {
+							groups.push(cell)
+							adjacent.push(true)
+						}
 					for (const row of current.rows) {
 						if (row === undefined) continue
 						for (let column = 0; column < current.header.length; column += 1) {
 							const cell = row[column]
-							if (cell !== undefined)
-								for (const child of cell) if (child !== undefined) children.push(child)
+							if (cell !== undefined) {
+								groups.push(cell)
+								adjacent.push(true)
+							}
 						}
 					}
 					depth += 1
 					break
 			}
+			const children: MarkdownNode[] = []
+			const escapeBangs: boolean[] = []
+			for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+				const group = groups[groupIndex]
+				if (group === undefined) continue
+				for (let position = 0; position < group.length; position += 1) {
+					const child = group[position]
+					if (child === undefined) continue
+					let escapeBang = false
+					if (adjacent[groupIndex] === true) {
+						let nextPosition = position + 1
+						let next = group[nextPosition]
+						while (next === undefined && nextPosition < group.length) {
+							nextPosition += 1
+							next = group[nextPosition]
+						}
+						escapeBang = next?.element === 'link'
+					}
+					children.push(child)
+					escapeBangs.push(escapeBang)
+				}
+			}
 			stack.push({ ...frame, expanded: true, count: children.length, escaped })
 			for (let index = children.length - 1; index >= 0; index -= 1) {
 				const child = children[index]
 				if (child !== undefined)
-					stack.push({ node: child, depth, expanded: false, count: 0, escaped: '' })
+					stack.push({
+						node: child,
+						depth,
+						expanded: false,
+						count: 0,
+						escaped: '',
+						escapeBang: escapeBangs[index] === true && depth < MAX_DEPTH,
+					})
 			}
 			continue
 		}
@@ -988,6 +1064,9 @@ export function renderMarkdown(node: MarkdownNode): string {
 				value = `${fence}${pad}${current.value}${pad}${fence}`
 				break
 			}
+			case 'break':
+				value = '  \n'
+				break
 			case 'document':
 				value = children.join('\n\n')
 				break
@@ -1090,9 +1169,12 @@ export function renderMarkdown(node: MarkdownNode): string {
 				value = `${marker}${children.join('')}${marker}`
 				break
 			}
-			case 'link': {
-				const href = current.href.replace(/[\\()]/g, (character) => `\\${character}`)
-				value = `[${children.join('')}](${href})`
+			case 'link':
+			case 'image': {
+				const destination = current.element === 'link' ? current.href : current.src
+				const escaped = destination.replace(/[\\()]/g, (character) => `\\${character}`)
+				const prefix = current.element === 'image' ? '!' : ''
+				value = `${prefix}[${children.join('')}](${escaped})`
 				break
 			}
 			default:
@@ -1107,8 +1189,8 @@ export function renderMarkdown(node: MarkdownNode): string {
 
 /**
  * Depth-first, pre-order, root-inclusive traversal of a {@link MarkdownNode} - yields
- * the node itself, then recurses into its children (block children, list items, table
- * header/row cells' inline nodes) in walk order.
+ * the node itself, then recurses into its children (block children, list items,
+ * image/link inline children, table header/row cells' inline nodes) in walk order.
  *
  * @remarks
  * Total: never throws. Descent stops at {@link MAX_DEPTH} (the node at the cap is
@@ -1140,6 +1222,7 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
 			case 'listItem':
 			case 'emphasis':
 			case 'link':
+			case 'image':
 				for (const child of frame.node.children) if (child !== undefined) children.push(child)
 				break
 			case 'list':
@@ -1216,6 +1299,7 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, d
 					case 'listItem':
 					case 'emphasis':
 					case 'link':
+					case 'image':
 						for (const child of frame.node.children) if (child !== undefined) children.push(child)
 						break
 					case 'list':
@@ -1287,8 +1371,14 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, d
 			case 'codeSpan':
 				value = handlers.codeSpan(frame.node, children)
 				break
+			case 'break':
+				value = handlers.break(frame.node, children)
+				break
 			case 'link':
 				value = handlers.link(frame.node, children)
+				break
+			case 'image':
+				value = handlers.image(frame.node, children)
 				break
 		}
 		if (stack.length === 0) return value
@@ -1319,8 +1409,12 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, d
 			return handlers.emphasis(node, [])
 		case 'codeSpan':
 			return handlers.codeSpan(node, [])
+		case 'break':
+			return handlers.break(node, [])
 		case 'link':
 			return handlers.link(node, [])
+		case 'image':
+			return handlers.image(node, [])
 	}
 }
 
@@ -1385,6 +1479,7 @@ export function rewriteDocument(
 				case 'listItem':
 				case 'emphasis':
 				case 'link':
+				case 'image':
 					for (const child of current.children) if (child !== undefined) children.push(child)
 					break
 				case 'list':
@@ -1465,7 +1560,8 @@ export function rewriteDocument(
 				break
 			}
 			case 'emphasis':
-			case 'link': {
+			case 'link':
+			case 'image': {
 				const inlines: InlineNode[] = []
 				let offset = 0
 				for (const inline of current.children) {
@@ -1530,7 +1626,9 @@ export function rewriteDocument(
 			case 'text':
 			case 'emphasis':
 			case 'codeSpan':
+			case 'break':
 			case 'link':
+			case 'image':
 				if (isInlineNode(result)) accepted = result
 				break
 			case 'heading':
@@ -1553,8 +1651,9 @@ export function rewriteDocument(
 
 /**
  * Concatenate the `value` / `code` content of every descendant text / code-span /
- * code-block node under `node`, in walk order - the plain-text projection of an AST
- * (search indexing, word counts, a text-only preview).
+ * code-block node under `node`, including image alternative content, in walk order -
+ * the plain-text projection of an AST (search indexing, word counts, a text-only
+ * preview).
  *
  * @remarks
  * Total: never throws. Descent stops at {@link MAX_DEPTH} (contributes `''` past the
@@ -1594,6 +1693,7 @@ export function flattenText(node: MarkdownNode): string {
 			case 'listItem':
 			case 'emphasis':
 			case 'link':
+			case 'image':
 				for (const child of frame.node.children) if (child !== undefined) children.push(child)
 				break
 			case 'list':

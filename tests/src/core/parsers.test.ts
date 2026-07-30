@@ -195,6 +195,84 @@ describe('parseInline — links', () => {
 	})
 })
 
+describe('parseInline — images', () => {
+	it('parses ![alt](src) to an image node', () => {
+		const image = parseInline('![alt](x.png)')[0]
+		expect(image).toEqual({
+			element: 'image',
+			src: 'x.png',
+			children: [{ element: 'text', value: 'alt' }],
+		})
+	})
+
+	it('parses emphasis inside image alternative content', () => {
+		const image = parseInline('![an *important* image](x.png)')[0]
+		if (image?.element !== 'image') throw new Error(`expected image, got ${image?.element}`)
+		expect(image.children.map((child) => child.element)).toEqual(['text', 'emphasis', 'text'])
+		expect(inlineText(image.children)).toBe('an important image')
+	})
+
+	it('allows empty alternative content and an empty destination', () => {
+		const image = parseInline('![]()')[0]
+		expect(image).toEqual({ element: 'image', src: '', children: [] })
+	})
+
+	it('handles balanced brackets and destination escapes exactly like links', () => {
+		const image = parseInline('![a [b] c](x\\)y)')[0]
+		if (image?.element !== 'image') throw new Error(`expected image, got ${image?.element}`)
+		expect(inlineText(image.children)).toBe('a [b] c')
+		expect(image.src).toBe('x)y')
+	})
+
+	it('leaves ![alt] without a destination as literal text', () => {
+		const nodes = parseInline('before ![alt] after')
+		expect(nodes).toEqual([{ element: 'text', value: 'before ![alt] after' }])
+	})
+
+	it('parses an image inside a link text', () => {
+		const link = assertLinkNode(parseInline('[![alt](image.png)](page.html)')[0])
+		expect(link.children).toEqual([
+			{
+				element: 'image',
+				src: 'image.png',
+				children: [{ element: 'text', value: 'alt' }],
+			},
+		])
+	})
+
+	it('parses an image inside a table cell', () => {
+		const table = assertTableNode(firstBlock('| image |\n| --- |\n| ![alt](image.png) |'))
+		expect(table.rows[0]?.[0]?.[0]).toEqual({
+			element: 'image',
+			src: 'image.png',
+			children: [{ element: 'text', value: 'alt' }],
+		})
+	})
+})
+
+describe('parseDocument — hard breaks', () => {
+	it('parses two or more trailing spaces before a paragraph newline as a hard break', () => {
+		for (const spaces of ['  ', '   ', '    ']) {
+			const paragraph = assertParagraphNode(firstBlock(`first${spaces}\nsecond`))
+			expect(paragraph.children).toEqual([
+				{ element: 'text', value: 'first' },
+				{ element: 'break' },
+				{ element: 'text', value: 'second' },
+			])
+		}
+	})
+
+	it('does not emit a hard break for trailing spaces at paragraph end', () => {
+		const paragraph = assertParagraphNode(firstBlock('line  '))
+		expect(paragraph.children).toEqual([{ element: 'text', value: 'line' }])
+	})
+
+	it('keeps backslash-newline literal because the scanner does not escape line endings', () => {
+		const paragraph = assertParagraphNode(firstBlock('first\\\nsecond'))
+		expect(paragraph.children).toEqual([{ element: 'text', value: 'first\\\nsecond' }])
+	})
+})
+
 describe('parseDocument — lists', () => {
 	it('parses a bulleted list (-, *, +) to an unordered list', () => {
 		for (const bullet of ['-', '*', '+']) {

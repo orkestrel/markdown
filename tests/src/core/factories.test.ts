@@ -1,6 +1,7 @@
 import {
 	createCodeBlockContract,
 	createCodeSpanContract,
+	createLineBreakContract,
 	createMarkdown,
 	createTextContract,
 	createThematicBreakContract,
@@ -160,6 +161,25 @@ describe('createCodeBlockContract', () => {
 	it('returns independent instances (schema equal, not shared state)', () => {
 		const first = createCodeBlockContract()
 		const second = createCodeBlockContract()
+
+		expect(first.schema).toEqual(second.schema)
+		expect(first).not.toBe(second)
+	})
+})
+
+describe('createLineBreakContract', () => {
+	it('returns a working LineBreakNode contract', () => {
+		const contract = createLineBreakContract()
+
+		expect(contract.is({ element: 'break' })).toBe(true)
+		expect(contract.parse({ element: 'break' })).toEqual({ element: 'break' })
+		expect(contract.schema.type).toBe('object')
+		expect(contract.is(contract.generate(seededRandom(TEST_SEED)))).toBe(true)
+	})
+
+	it('returns independent instances', () => {
+		const first = createLineBreakContract()
+		const second = createLineBreakContract()
 
 		expect(first.schema).toEqual(second.schema)
 		expect(first).not.toBe(second)

@@ -16,7 +16,9 @@ import {
 	isFenceClose,
 	isFenceWhitespace,
 	isHeadingNode,
+	isImageNode,
 	isInlineNode,
+	isLineBreakNode,
 	isLinkNode,
 	isListNode,
 	isMarkdownDocument,
@@ -63,7 +65,9 @@ const samples: readonly Sample[] = [
 	{ name: 'text', node: assertInlineNode('plain'), guard: isTextNode },
 	{ name: 'emphasis', node: assertInlineNode('*em*'), guard: isEmphasisNode },
 	{ name: 'codeSpan', node: assertInlineNode('`code`'), guard: isCodeSpanNode },
+	{ name: 'break', node: { element: 'break' }, guard: isLineBreakNode },
 	{ name: 'link', node: assertInlineNode('[t](https://example.com)'), guard: isLinkNode },
+	{ name: 'image', node: assertInlineNode('![alt](image.png)'), guard: isImageNode },
 ]
 
 describe('line predicates', () => {
@@ -299,6 +303,21 @@ describe('from-unknown AST guards: near-miss rejection', () => {
 		expect(isInlineNode({ element: 'text', value: 'hi', extra: true })).toBe(false)
 	})
 
+	it('accepts exact image and line-break shapes and rejects their near misses', () => {
+		expect(
+			isInlineNode({
+				element: 'image',
+				src: 'image.png',
+				children: [{ element: 'text', value: 'alt' }],
+			}),
+		).toBe(true)
+		expect(isInlineNode({ element: 'image', children: [] })).toBe(false)
+		expect(isInlineNode({ element: 'image', src: 1, children: [] })).toBe(false)
+		expect(isInlineNode({ element: 'image', src: 'x', children: 'alt' })).toBe(false)
+		expect(isInlineNode({ element: 'break' })).toBe(true)
+		expect(isInlineNode({ element: 'break', extra: true })).toBe(false)
+	})
+
 	it('isBlockNode rejects a heading missing its required level field', () => {
 		expect(isBlockNode({ element: 'heading', children: [] })).toBe(false)
 	})
@@ -354,6 +373,25 @@ describe('from-unknown AST guards: totality against adversarial input', () => {
 		expect(isMarkdownNode(cyclic)).toBe(false)
 		expect(() => isInlineNode(cyclic)).not.toThrow()
 		expect(isInlineNode(cyclic)).toBe(false)
+	})
+
+	it('returns false, never throws, for a cyclic image alternative tree', () => {
+		const children: unknown[] = []
+		const cyclic = { element: 'image', src: 'x.png', children }
+		children.push(cyclic)
+		expect(() => isInlineNode(cyclic)).not.toThrow()
+		expect(isInlineNode(cyclic)).toBe(false)
+	})
+
+	it('returns false, never throws, for image-like records with hostile prototypes', () => {
+		const prototype = {
+			get element(): string {
+				throw new Error('hostile prototype')
+			},
+		}
+		const hostile: unknown = Object.create(prototype)
+		expect(() => isInlineNode(hostile)).not.toThrow()
+		expect(isInlineNode(hostile)).toBe(false)
 	})
 
 	it('returns false, never throws, for a node with throwing getters', () => {

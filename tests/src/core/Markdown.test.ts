@@ -202,11 +202,15 @@ describe('Markdown — fold', () => {
 		text: () => 1,
 		emphasis: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
 		codeSpan: () => 1,
+		break: () => 1,
 		link: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
+		image: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
 	}
 
-	it('a 13-key handler table reconstructs a total node count matching reduce', () => {
-		const markdown = new Markdown('# Title\n\npara with **bold** text and [a link](x)')
+	it('a 15-key handler table reconstructs a total node count matching reduce', () => {
+		const markdown = new Markdown(
+			'# Title\n\npara with **bold** text, [a link](x), and ![an image](x.png).  \nNext.',
+		)
 		const folded = markdown.fold(countHandlers)
 		const reduced = markdown.reduce((accumulator) => accumulator + 1, 0)
 		expect(folded).toBe(reduced)
@@ -227,7 +231,9 @@ describe('Markdown — fold', () => {
 			text: (node) => node.value,
 			emphasis: (_node, children) => children.join(''),
 			codeSpan: () => '',
+			break: () => '',
 			link: (_node, children) => children.join(''),
+			image: (_node, children) => children.join(''),
 		}
 		expect(markdown.fold(cellHandlers)).toBe('a,b,1,2')
 	})
@@ -247,7 +253,9 @@ describe('Markdown — fold', () => {
 			text: (node) => node.value,
 			emphasis: (_node, children) => children.join(''),
 			codeSpan: () => '',
+			break: () => '<br>',
 			link: (_node, children) => children.join(''),
+			image: (_node, children) => children.join(''),
 		}
 		expect(markdown.fold(htmlLikeHandlers)).toBe('<h1>Hi</h1>')
 	})
@@ -271,7 +279,9 @@ describe('Markdown — fold', () => {
 			text: () => 0,
 			emphasis: (_node, children) => children.length,
 			codeSpan: () => 0,
+			break: () => 0,
 			link: (_node, children) => children.length,
+			image: (_node, children) => children.length,
 		}
 		expect(() => markdown.fold(cappedHandlers)).not.toThrow()
 		expect(seenEmptyChildren.includes(true)).toBe(true)
@@ -292,6 +302,20 @@ describe('Markdown — stream', () => {
 			blocks.push(result.value)
 		}
 		expect(blocks).toEqual(markdown.document.children)
+	})
+
+	it('preserves image children and hard breaks inside a streamed paragraph block', async () => {
+		const markdown = new Markdown('![alt](x.png)  \nNext.')
+		const blocks = await collectStream(markdown.stream())
+		expect(blocks).toEqual(markdown.document.children)
+		expect([...markdown.walk()].map((node) => node.element)).toEqual([
+			'document',
+			'paragraph',
+			'image',
+			'text',
+			'break',
+			'text',
+		])
 	})
 
 	it('reports done after the last block, with no extra values', async () => {

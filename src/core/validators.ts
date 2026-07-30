@@ -6,7 +6,9 @@ import type {
 	CodeSpanNode,
 	EmphasisNode,
 	HeadingNode,
+	ImageNode,
 	InlineNode,
+	LineBreakNode,
 	LinkNode,
 	ListNode,
 	MarkdownDocument,
@@ -310,9 +312,33 @@ export function isCodeSpanNode(node: MarkdownNode): node is CodeSpanNode {
 	return node.element === 'codeSpan'
 }
 
+/**
+ * Determine whether a node is a GFM hard line break.
+ *
+ * @example
+ * ```ts
+ * isLineBreakNode({ element: 'break' }) // true
+ * ```
+ */
+export function isLineBreakNode(node: MarkdownNode): node is LineBreakNode {
+	return node.element === 'break'
+}
+
 /** Determine whether a node is a link. */
 export function isLinkNode(node: MarkdownNode): node is LinkNode {
 	return node.element === 'link'
+}
+
+/**
+ * Determine whether a node is an image.
+ *
+ * @example
+ * ```ts
+ * isImageNode({ element: 'image', src: 'x.png', children: [] }) // true
+ * ```
+ */
+export function isImageNode(node: MarkdownNode): node is ImageNode {
+	return node.element === 'image'
 }
 
 // === From-unknown AST guards
@@ -322,7 +348,7 @@ export function isLinkNode(node: MarkdownNode): node is LinkNode {
 // input - a deserialized AST, a value crossing a process/RPC boundary) against
 // the full node shape, field by field, composed from @orkestrel/contract
 // combinators. Each guard IS its own hoisted composed value (compiled once at
-// module init, not per call); inline<->block recursion (emphasis/link children,
+// module init, not per call); inline<->block recursion (emphasis/link/image children,
 // list items, blockquote children) resolves through `lazyOf`, closing over the
 // exported guard names themselves - legal because `lazyOf`'s thunk resolves per
 // call, strictly after module init has assigned every export. @orkestrel/contract
@@ -333,7 +359,7 @@ export function isLinkNode(node: MarkdownNode): node is LinkNode {
 
 /**
  * Determine whether an arbitrary value is a valid {@link InlineNode} - a text
- * run, emphasis, code span, or link, recursively validated.
+ * run, emphasis, code span, hard break, link, or image, recursively validated.
  *
  * @remarks
  * Total: never throws, even on cyclic or pathologically deep input - every
@@ -359,9 +385,15 @@ export const isInlineNode: Guard<InlineNode> = unionOf(
 		children: arrayOf(lazyOf(() => isInlineNode)),
 	}),
 	recordOf({ element: literalOf('codeSpan'), value: isString }),
+	recordOf({ element: literalOf('break') }),
 	recordOf({
 		element: literalOf('link'),
 		href: isString,
+		children: arrayOf(lazyOf(() => isInlineNode)),
+	}),
+	recordOf({
+		element: literalOf('image'),
+		src: isString,
 		children: arrayOf(lazyOf(() => isInlineNode)),
 	}),
 )

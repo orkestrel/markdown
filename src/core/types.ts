@@ -70,6 +70,11 @@ export interface CodeSpanNode {
 	readonly value: string
 }
 
+/** A GFM hard line break - two or more trailing spaces before a newline. */
+export interface LineBreakNode {
+	readonly element: 'break'
+}
+
 /**
  * An inline link - `[text](href)`. `children` are the inline nodes of the link text;
  * `href` is the destination, sanitized at render (a `javascript:` / other unsafe
@@ -83,8 +88,26 @@ export interface LinkNode {
 	readonly children: readonly InlineNode[]
 }
 
+/**
+ * An inline image - `![alt](src)`. `children` are the inline nodes of the
+ * alternative content and `src` is the image destination.
+ */
+export interface ImageNode {
+	readonly element: 'image'
+	/** The image destination. */
+	readonly src: string
+	/** The inline alternative content. */
+	readonly children: readonly InlineNode[]
+}
+
 /** A node that can appear inside inline content (a heading / paragraph / cell / list item / link text). */
-export type InlineNode = TextNode | EmphasisNode | CodeSpanNode | LinkNode
+export type InlineNode =
+	| TextNode
+	| EmphasisNode
+	| CodeSpanNode
+	| LineBreakNode
+	| LinkNode
+	| ImageNode
 
 /**
  * An ATX heading - `#` … `######`. `level` is 1–6 (the number of leading `#`),
@@ -245,8 +268,12 @@ export interface MarkdownHandlers<T> {
 	readonly emphasis: MarkdownHandler<EmphasisNode, T>
 	/** Folds a {@link CodeSpanNode} (leaf - always called with an empty children list). */
 	readonly codeSpan: MarkdownHandler<CodeSpanNode, T>
+	/** Folds a {@link LineBreakNode} (leaf - always called with an empty children list). */
+	readonly break: MarkdownHandler<LineBreakNode, T>
 	/** Folds a {@link LinkNode} from its already-folded inline children. */
 	readonly link: MarkdownHandler<LinkNode, T>
+	/** Folds an {@link ImageNode} from its already-folded alternative content. */
+	readonly image: MarkdownHandler<ImageNode, T>
 }
 
 /**

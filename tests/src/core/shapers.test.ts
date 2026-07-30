@@ -1,6 +1,7 @@
 import type {
 	CodeBlockNode,
 	CodeSpanNode,
+	LineBreakNode,
 	ListItemParts,
 	TableAlign,
 	TextNode,
@@ -11,6 +12,7 @@ import {
 	codeBlockShape,
 	codeSpanShape,
 	isBlockNode,
+	lineBreakShape,
 	listItemPartsShape,
 	tableAlignShape,
 	textShape,
@@ -165,6 +167,48 @@ describe('codeBlockShape', () => {
 	it('type parity: Infer<typeof codeBlockShape> matches CodeBlockNode both ways', () => {
 		expectTypeOf<Infer<typeof codeBlockShape>>().toEqualTypeOf<CodeBlockNode>()
 		expectTypeOf<CodeBlockNode>().toEqualTypeOf<Infer<typeof codeBlockShape>>()
+	})
+})
+
+describe('lineBreakShape', () => {
+	const contract = createContract(lineBreakShape)
+
+	it('is: accepts only an exact LineBreakNode', () => {
+		expect(contract.is({ element: 'break' })).toBe(true)
+		expect(contract.is({ element: 'text' })).toBe(false)
+		expect(contract.is({ element: 'break', extra: true })).toBe(false)
+		expect(contract.is('break')).toBe(false)
+	})
+
+	it('schema: is a closed object requiring only the break element literal', () => {
+		expect(contract.schema.type).toBe('object')
+		expect(contract.schema.required).toEqual(['element'])
+		expect(contract.schema.additionalProperties).toBe(false)
+		expect(contract.schema.properties?.element?.enum).toEqual(['break'])
+	})
+
+	it('parse: rebuilds valid input, drops extra input keys, and rejects invalid input', () => {
+		const input = { element: 'break' }
+		const parsed = contract.parse(input)
+		expect(parsed).toEqual(input)
+		expect(parsed).not.toBe(input)
+		const parsedExtra = contract.parse({ element: 'break', extra: true })
+		expect(parsedExtra).toEqual(input)
+		expect(contract.is(parsedExtra)).toBe(true)
+		expect(contract.parse({ element: 'text' })).toBeUndefined()
+		expect(contract.parse(undefined)).toBeUndefined()
+	})
+
+	it('generate: produces a deterministic value accepted by the guard and parser', () => {
+		const generated = contract.generate(seededRandom(TEST_SEED))
+		expect(generated).toEqual({ element: 'break' })
+		expect(contract.is(generated)).toBe(true)
+		expect(contract.parse(generated)).toEqual(generated)
+	})
+
+	it('type parity: Infer<typeof lineBreakShape> matches LineBreakNode both ways', () => {
+		expectTypeOf<Infer<typeof lineBreakShape>>().toEqualTypeOf<LineBreakNode>()
+		expectTypeOf<LineBreakNode>().toEqualTypeOf<Infer<typeof lineBreakShape>>()
 	})
 })
 

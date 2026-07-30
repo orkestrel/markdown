@@ -110,10 +110,17 @@ export function parseBlocks(lines: readonly string[], depth: number): readonly B
 			!isBlankLine(lines[index] ?? '') &&
 			!(isNonEmptyArray(paragraph) && startsBlock(lines, index))
 		) {
-			paragraph.push((lines[index] ?? '').trim())
+			paragraph.push(lines[index] ?? '')
 			index += 1
 		}
-		blocks.push({ element: 'paragraph', children: parseInline(paragraph.join('\n')) })
+		const source = paragraph
+			.map((paragraphLine, position) =>
+				position < paragraph.length - 1 && paragraphLine.endsWith('  ')
+					? `${paragraphLine.trim()}  `
+					: paragraphLine.trim(),
+			)
+			.join('\n')
+		blocks.push({ element: 'paragraph', children: parseInline(source) })
 	}
 	return blocks
 }
@@ -275,8 +282,8 @@ export function parseDocument(markdown: string): MarkdownDocument {
 }
 
 /**
- * Parses inline markdown text (emphasis, code spans, links) into inline AST
- * nodes, coalescing adjacent text runs.
+ * Parses inline markdown text (emphasis, code spans, links, images, and hard
+ * breaks) into inline AST nodes, coalescing adjacent text runs.
  *
  * @param text - The inline markdown text to parse.
  * @returns The parsed inline nodes.

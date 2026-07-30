@@ -12,7 +12,7 @@ import {
 // guard / parser / schema / generator in lockstep. Only the NON-recursive
 // parts of the markdown AST (types.ts) can be expressed here: a shape tree has
 // no lazy/self-referential node, so any type whose fields recurse into
-// `BlockNode` / `InlineNode` / `MarkdownNode` (EmphasisNode, LinkNode,
+// `BlockNode` / `InlineNode` / `MarkdownNode` (EmphasisNode, LinkNode, ImageNode,
 // HeadingNode, ParagraphNode, ListItemNode, ListNode, TableNode,
 // BlockquoteNode, MarkdownDocument) is skipped here and stays guard-only
 // (validators.ts) via `lazyOf`.
@@ -49,6 +49,22 @@ export const textShape = objectShape({
 export const codeSpanShape = objectShape({
 	element: literalShape(['codeSpan']),
 	value: stringShape(),
+})
+
+/**
+ * The shape of a {@link LineBreakNode} - a GFM hard line-break leaf.
+ *
+ * @example
+ * ```ts
+ * import { createContract } from '@orkestrel/contract'
+ * import { lineBreakShape } from '@src/core'
+ *
+ * const lineBreak = createContract(lineBreakShape)
+ * lineBreak.is({ element: 'break' }) // true
+ * ```
+ */
+export const lineBreakShape = objectShape({
+	element: literalShape(['break']),
 })
 
 /**

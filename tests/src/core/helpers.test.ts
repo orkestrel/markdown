@@ -817,6 +817,76 @@ describe('renderMarkdown — canonical forms', () => {
 		expect(renderMarkdown(parseDocument('[a](https://x.dev)'))).toBe('[a](https://x.dev)')
 	})
 
+	it('renders an image as ![alt](src)', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'image',
+							src: 'x.png',
+							children: [{ element: 'text', value: 'alt' }],
+						},
+					],
+				},
+			],
+		}
+		expect(renderMarkdown(document)).toBe('![alt](x.png)')
+	})
+
+	it('renders a hard break as exactly two spaces followed by a newline', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'text', value: 'first' },
+						{ element: 'break' },
+						{ element: 'text', value: 'second' },
+					],
+				},
+			],
+		}
+		expect(renderMarkdown(document)).toBe('first  \nsecond')
+	})
+
+	it('escapes image destinations exactly like link destinations', () => {
+		const link: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'link',
+							href: 'a\\b(c)',
+							children: [{ element: 'text', value: 'alt' }],
+						},
+					],
+				},
+			],
+		}
+		const image: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'image',
+							src: 'a\\b(c)',
+							children: [{ element: 'text', value: 'alt' }],
+						},
+					],
+				},
+			],
+		}
+		expect(renderMarkdown(image)).toBe(`!${renderMarkdown(link)}`)
+	})
+
 	it('backslash-escapes text specials that would otherwise re-parse as markup', () => {
 		const document: MarkdownDocument = {
 			element: 'document',
@@ -833,6 +903,7 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		'# Title',
 		'',
 		'An intro with **bold**, _italic_, `code`, and a [link](./guide.md).',
+		'prose with \\![not an image](x) stays text',
 		'',
 		'## Section',
 		'',
@@ -869,6 +940,134 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 			],
 		}
 		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+	})
+
+	it('round-trips images, hard breaks, and prose containing literal ![not an image]', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'text', value: 'before ' },
+						{
+							element: 'image',
+							src: 'a\\b(c).png',
+							children: [
+								{ element: 'text', value: 'an ' },
+								{
+									element: 'emphasis',
+									strong: false,
+									children: [{ element: 'text', value: 'important' }],
+								},
+								{ element: 'text', value: ' image' },
+							],
+						},
+						{ element: 'break' },
+						{ element: 'text', value: 'literal ![not an image]' },
+					],
+				},
+			],
+		}
+		const rendered = renderMarkdown(document)
+		expect(rendered).toContain('literal !\\[not an image\\]')
+		expect(parseDocument(rendered)).toEqual(document)
+		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+	})
+
+	it('escapes the image-adjacent bang in the exact parser-produced counterexample', () => {
+		const source = 'prose with \\![not an image](x) stays text'
+		const document = parseDocument(source)
+		const rendered = renderMarkdown(document)
+		expect(rendered).toBe(source)
+		expect(parseDocument(rendered)).toEqual(document)
+	})
+
+	it('pins the bang adjacency matrix without unnecessary or double escaping', () => {
+		const beforeImage: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'text', value: '!' },
+						{
+							element: 'image',
+							src: 'x',
+							children: [{ element: 'text', value: 'alt' }],
+						},
+					],
+				},
+			],
+		}
+		const atEnd: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: '!' }] }],
+		}
+		const midText: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'text', value: 'mid!text' },
+						{
+							element: 'link',
+							href: 'x',
+							children: [{ element: 'text', value: 'link' }],
+						},
+					],
+				},
+			],
+		}
+		const escaped: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'text', value: '\\!' },
+						{
+							element: 'link',
+							href: 'x',
+							children: [{ element: 'text', value: 'link' }],
+						},
+					],
+				},
+			],
+		}
+
+		expect(renderMarkdown(beforeImage)).toBe('!![alt](x)')
+		expect(parseDocument(renderMarkdown(beforeImage))).toEqual(beforeImage)
+		expect(renderMarkdown(atEnd)).toBe('!')
+		expect(parseDocument(renderMarkdown(atEnd))).toEqual(atEnd)
+		expect(renderMarkdown(midText)).toBe('mid!text[link](x)')
+		expect(parseDocument(renderMarkdown(midText))).toEqual(midText)
+		expect(renderMarkdown(escaped)).toBe(`${'\\'.repeat(3)}![link](x)`)
+		expect(parseDocument(renderMarkdown(escaped))).toEqual(escaped)
+		expect(renderMarkdown(parseDocument(renderMarkdown(escaped)))).toBe(renderMarkdown(escaped))
+	})
+
+	it('round-trips a hand-built text-ending-bang directly before a link', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'text', value: '!' },
+						{
+							element: 'link',
+							href: 'x',
+							children: [{ element: 'text', value: 'link' }],
+						},
+					],
+				},
+			],
+		}
+		const rendered = renderMarkdown(document)
+		expect(rendered).toBe('\\![link](x)')
+		expect(parseDocument(rendered)).toEqual(document)
 	})
 
 	it('round-trips a text line that starts with #, >, or 1. as literal text (not markup)', () => {
@@ -1058,6 +1257,35 @@ describe('walkNodes', () => {
 		expect(sequence).toEqual(['table', 'text', 'text', 'codeSpan', 'text'])
 	})
 
+	it('descends through image alternative content and visits hard breaks as leaves', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'image',
+							src: 'x.png',
+							children: [
+								{ element: 'emphasis', strong: false, children: [{ element: 'text', value: 'x' }] },
+							],
+						},
+						{ element: 'break' },
+					],
+				},
+			],
+		}
+		expect([...walkNodes(document)].map((node) => node.element)).toEqual([
+			'document',
+			'paragraph',
+			'image',
+			'emphasis',
+			'text',
+			'break',
+		])
+	})
+
 	it('does not throw on a depth-capped deep block chain', () => {
 		expect(() => [...walkNodes(firstBlock(buildDeepEmphasisInput(100_000)))]).not.toThrow()
 	})
@@ -1077,8 +1305,30 @@ describe('foldNode', () => {
 		text: () => 1,
 		emphasis: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
 		codeSpan: () => 1,
+		break: () => 1,
 		link: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
+		image: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
 	}
+
+	it('folds image alternative children and counts hard breaks as leaves', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'image',
+							src: 'x.png',
+							children: [{ element: 'text', value: 'alt' }],
+						},
+						{ element: 'break' },
+					],
+				},
+			],
+		}
+		expect(foldNode(document, countHandlers, 0)).toBe(5)
+	})
 
 	it('folds children-first (post-order) — a text-collecting fold sees leaves before their parent', () => {
 		const order: string[] = []
@@ -1131,7 +1381,15 @@ describe('foldNode', () => {
 				order.push(node.element)
 				return node.element
 			},
+			break: (node) => {
+				order.push(node.element)
+				return node.element
+			},
 			link: (node) => {
+				order.push(node.element)
+				return node.element
+			},
+			image: (node) => {
 				order.push(node.element)
 				return node.element
 			},
@@ -1168,7 +1426,9 @@ describe('foldNode', () => {
 			text: (node) => node.value,
 			emphasis: (_, children) => children.join(''),
 			codeSpan: (node) => node.value,
+			break: () => '',
 			link: (_, children) => children.join(''),
+			image: (_, children) => children.join(''),
 		}
 		expect(foldNode(table, textHandlers, 0)).toBe('h1,h2,r1c1,r1c2')
 		expect(cells).toEqual(['h1', 'h2', 'r1c1', 'r1c2'])
@@ -1189,7 +1449,7 @@ describe('foldNode', () => {
 
 	it('a count-fold total equals the walkNodes traversal length', () => {
 		const document = parseDocument(
-			'# Title\n\nAn intro with **bold** and `code`.\n\n- one\n- two\n\n| a | b |\n| - | - |\n| 1 | 2 |',
+			'# Title\n\nAn intro with **bold**, `code`, and ![alt](x.png).  \nNext.\n\n- one\n- two\n\n| a | b |\n| - | - |\n| 1 | 2 |',
 		)
 		expect(foldNode(document, countHandlers, 0)).toBe([...walkNodes(document)].length)
 	})
@@ -1286,6 +1546,44 @@ describe('rewriteDocument', () => {
 		expect(paragraph?.element === 'paragraph' ? flattenText(paragraph) : undefined).toBe('X')
 	})
 
+	it('rewrites image alternative children and preserves hard-break leaves', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'image',
+							src: 'x.png',
+							children: [{ element: 'text', value: 'alt' }],
+						},
+						{ element: 'break' },
+					],
+				},
+			],
+		}
+		const rewritten = rewriteDocument(document, (node) =>
+			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
+		)
+		expect(rewritten).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'image',
+							src: 'x.png',
+							children: [{ element: 'text', value: 'ALT' }],
+						},
+						{ element: 'break' },
+					],
+				},
+			],
+		})
+	})
+
 	it('caps descent at MAX_DEPTH — a subtree at the cap passes through unchanged, by reference', () => {
 		const leaf: ParagraphNode = {
 			element: 'paragraph',
@@ -1337,6 +1635,10 @@ describe('flattenText', () => {
 
 	it('flattens a paragraph with mixed inline content', () => {
 		expect(flattenText(firstBlock('a **b** `c`'))).toBe('a b c')
+	})
+
+	it('flattens image alternative content and contributes nothing for hard breaks', () => {
+		expect(flattenText(firstBlock('![alt](x.png)  \nNext.'))).toBe('altNext.')
 	})
 
 	it('flattens a table (header cells then row cells)', () => {
