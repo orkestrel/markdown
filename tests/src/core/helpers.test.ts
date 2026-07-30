@@ -10,6 +10,7 @@ import type {
 } from '@src/core'
 import {
 	MAX_DEPTH,
+	SAFE_URL_SCHEMES,
 	coalesceText,
 	escapeHtml,
 	extractFence,
@@ -35,7 +36,12 @@ import {
 	unescapeText,
 	walkNodes,
 } from '@src/core'
-import { buildDeepEmphasisInput, firstBlock } from '../../setup'
+import {
+	URL_SAFETY_GROUPS,
+	buildDeepEmphasisInput,
+	buildURLSafetyCorpus,
+	firstBlock,
+} from '../../setup'
 import { describe, expect, it } from 'vitest'
 
 // The markdown parser's pure helper surface (block extractors, inline scanners,
@@ -529,6 +535,66 @@ describe('sanitizeUrl', () => {
 		it('keeps a single leading backslash destination', () => {
 			expect(sanitizeUrl('\\evil.com')).toBe('\\evil.com')
 		})
+	})
+})
+
+// The scheme/control floor `sanitizeUrl` enforces is re-implemented, deliberately, in
+// `@orkestrel/html`'s `sanitizeURL` — one sanitizer per output context, no shared
+// function (guides/src/markdown.md § Sanitization policy states why). What the two
+// packages share instead is the corpus: `buildURLSafetyCorpus` is mirrored
+// vector-for-vector, in the same order and under the same name, in `@orkestrel/html`'s
+// `tests/setup.ts`, so a vector missed here is missed there too. The two packages'
+// dispositions differ on exactly two groups, and each difference is a named test below
+// rather than a quietly relaxed expectation.
+describe('sanitizeUrl — mirrored URL-safety corpus (also in @orkestrel/html)', () => {
+	it('disposes of every mirrored vector exactly as the corpus records', () => {
+		for (const threat of buildURLSafetyCorpus()) {
+			expect({ name: threat.name, value: sanitizeUrl(threat.source) }).toEqual({
+				name: threat.name,
+				value: threat.value ?? '',
+			})
+		}
+	})
+
+	it('covers every mirrored threat group', () => {
+		const groups = [...new Set(buildURLSafetyCorpus().map((threat) => threat.group))]
+		expect(groups).toEqual([...URL_SAFETY_GROUPS])
+	})
+
+	// Divergence 1 — escaping position. markdown escapes INSIDE `sanitizeUrl` because the
+	// result is a finished `href` attribute value; `@orkestrel/html` returns the raw value
+	// and encodes it later, in its own serializer. Escaping once (never twice) is the
+	// claim: a double escape would publish a `&amp;amp;` a reader can see.
+	it('escapes a surviving destination exactly once (@orkestrel/html escapes at serialization instead)', () => {
+		const source = 'https://ok.dev/?a=1&b=2'
+		expect(sanitizeUrl(source)).toBe(escapeHtml(source))
+		expect(sanitizeUrl(source)).not.toBe(escapeHtml(escapeHtml(source)))
+	})
+
+	// Divergence 2 — the entity-decode pass. `@orkestrel/html` decodes character
+	// references to a bounded fixpoint before reading the scheme, because its sanitized
+	// value is re-serialized downstream and could decode to `javascript:` later. markdown
+	// needs no decode pass precisely because it escapes here: the retained value reaches
+	// the browser as literal text, with no `:` that begins a scheme, so it resolves as an
+	// inert relative destination instead of executing.
+	it('neutralizes an entity-encoded scheme by escaping it (@orkestrel/html refuses it outright)', () => {
+		expect(sanitizeUrl('&#106;avascript:x')).toBe('&amp;#106;avascript:x')
+		expect(sanitizeUrl('javascript&colon;x')).toBe('javascript&amp;colon;x')
+		expect(sanitizeUrl('&sol;&sol;evil.dev')).toBe('&amp;sol;&amp;sol;evil.dev')
+	})
+
+	// Divergence 3 — allowlist shape. `SAFE_URL_SCHEMES` here is fixed and closed, so the
+	// four dangerous schemes are refused BY the allowlist and a separate hard-ban list
+	// would be dead code. `@orkestrel/html` takes its allowlist from the caller (its
+	// `SanitizeOptions.schemes` REPLACES the default), so it also carries an unwidenable
+	// refusal for `javascript` / `data` / `vbscript` / `file`. markdown cannot express that
+	// input at all: `sanitizeUrl` accepts a destination and nothing else.
+	it('refuses every dangerous scheme through one closed allowlist', () => {
+		expect([...SAFE_URL_SCHEMES].sort()).toEqual(['http', 'https', 'mailto', 'tel'])
+		for (const scheme of ['javascript', 'data', 'vbscript', 'file']) {
+			expect(SAFE_URL_SCHEMES.has(scheme)).toBe(false)
+			expect(sanitizeUrl(`${scheme}:payload`)).toBe('')
+		}
 	})
 })
 
