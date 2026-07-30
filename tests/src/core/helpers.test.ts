@@ -10,20 +10,18 @@ import type {
 } from '@src/core'
 import {
 	MAX_DEPTH,
-	SAFE_URL_SCHEMES,
 	coalesceText,
-	escapeHtml,
 	extractFence,
 	extractHeading,
 	extractListItem,
 	flattenText,
 	foldNode,
 	leadingIndent,
+	markdownToHTML,
 	parseDocument,
 	renderHTML,
 	renderMarkdown,
 	rewriteDocument,
-	sanitizeUrl,
 	scanCode,
 	scanEmphasis,
 	scanInline,
@@ -36,14 +34,9 @@ import {
 	unescapeText,
 	walkNodes,
 } from '@src/core'
-import {
-	URL_SAFETY_GROUPS,
-	buildDeepEmphasisInput,
-	buildURLSafetyCorpus,
-	assertTableNode,
-	firstBlock,
-} from '../../setup'
-import { describe, expect, it } from 'vitest'
+import { HTML, SAFE_ATTRIBUTES, renderHTML as renderHTMLDocument } from '@orkestrel/html'
+import { assertTableNode, buildDeepEmphasisInput, firstBlock } from '../../setup'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 // The markdown parser's pure helper surface (block extractors, inline scanners,
 // escaping / sanitization primitives) plus the AST-level surface (renderHTML,
@@ -433,169 +426,32 @@ describe('scanInline', () => {
 	})
 })
 
-describe('escapeHtml', () => {
-	it('escapes the five HTML-significant characters', () => {
-		expect(escapeHtml('<a href="x" & \'q\'>')).toBe(
-			'&lt;a href=&quot;x&quot; &amp; &#39;q&#39;&gt;',
-		)
-	})
-
-	it('leaves ordinary text untouched', () => {
-		expect(escapeHtml('plain text 123')).toBe('plain text 123')
-	})
-
-	it('double-escapes already-escaped text (not idempotent)', () => {
-		const once = escapeHtml('<x>')
-		expect(once).toBe('&lt;x&gt;')
-		expect(escapeHtml(once)).toBe('&amp;lt;x&amp;gt;')
-	})
-
-	it('returns an empty string for an empty input', () => {
-		expect(escapeHtml('')).toBe('')
-	})
-})
-
-describe('sanitizeUrl', () => {
-	describe('kept destinations', () => {
-		it('keeps safe schemes', () => {
-			expect(sanitizeUrl('http://x.dev')).toBe('http://x.dev')
-			expect(sanitizeUrl('https://x.dev/a')).toBe('https://x.dev/a')
-			expect(sanitizeUrl('mailto:a@b.dev')).toBe('mailto:a@b.dev')
-			expect(sanitizeUrl('tel:+15551234567')).toBe('tel:+15551234567')
-		})
-
-		it('keeps relative paths', () => {
-			expect(sanitizeUrl('./a')).toBe('./a')
-			expect(sanitizeUrl('../a')).toBe('../a')
-			expect(sanitizeUrl('a/b')).toBe('a/b')
-		})
-
-		it('keeps an anchor destination', () => {
-			expect(sanitizeUrl('#anchor')).toBe('#anchor')
-		})
-
-		it('keeps a query-only destination', () => {
-			expect(sanitizeUrl('?x')).toBe('?x')
-		})
-
-		it('keeps an empty string', () => {
-			expect(sanitizeUrl('')).toBe('')
-		})
-
-		it('HTML-escapes a quote in an otherwise-safe url', () => {
-			expect(sanitizeUrl('https://x.dev/"q')).toBe('https://x.dev/&quot;q')
-		})
-
-		it('is case-insensitive on the scheme (safe scheme in unusual case is kept)', () => {
-			expect(sanitizeUrl('HTTPS://x.dev')).toBe('HTTPS://x.dev')
+describe('markdownToHTML', () => {
+	it('projects raw text and destinations without escaping or sanitizing', () => {
+		expect(
+			markdownToHTML({
+				element: 'link',
+				href: 'javascript:alert(1)&x="<',
+				children: [{ element: 'text', value: `literal & < > " '` }],
+			}),
+		).toEqual({
+			category: 'document',
+			children: [
+				{
+					category: 'element',
+					name: 'a',
+					attributes: [{ name: 'href', value: 'javascript:alert(1)&x="<' }],
+					children: [{ category: 'text', value: `literal & < > " '` }],
+				},
+			],
 		})
 	})
 
-	describe('rejected destinations (dropped to empty string)', () => {
-		it('drops javascript:, data:, vbscript:, file: schemes', () => {
-			expect(sanitizeUrl('javascript:alert(1)')).toBe('')
-			expect(sanitizeUrl('data:text/html,x')).toBe('')
-			expect(sanitizeUrl('vbscript:x')).toBe('')
-			expect(sanitizeUrl('file:///etc/passwd')).toBe('')
+	it('wraps a bare text node in an HTML document', () => {
+		expect(markdownToHTML({ element: 'text', value: 'bare' })).toEqual({
+			category: 'document',
+			children: [{ category: 'text', value: 'bare' }],
 		})
-
-		it('drops a mixed-case unsafe scheme', () => {
-			expect(sanitizeUrl('JAVASCRIPT:alert(1)')).toBe('')
-			expect(sanitizeUrl('JavaScript:alert(1)')).toBe('')
-		})
-
-		it('drops a scheme spoofed with an embedded tab or newline', () => {
-			expect(sanitizeUrl('java\tscript:alert(1)')).toBe('')
-			expect(sanitizeUrl('java\nscript:alert(1)')).toBe('')
-			expect(sanitizeUrl('java\rscript:alert(1)')).toBe('')
-		})
-
-		it('drops a scheme spoofed with an embedded C0/C1 control codepoint', () => {
-			expect(sanitizeUrl('javascript:alert(1)')).toBe('')
-			expect(sanitizeUrl('javascript:alert(1)')).toBe('')
-		})
-
-		it('drops a protocol-relative destination', () => {
-			expect(sanitizeUrl('//evil.com')).toBe('')
-			expect(sanitizeUrl('//evil.com/path')).toBe('')
-			expect(sanitizeUrl('//')).toBe('')
-		})
-
-		it('drops a protocol-relative destination spoofed via stripped whitespace', () => {
-			expect(sanitizeUrl('/\t/evil.com')).toBe('')
-		})
-
-		it('drops backslash-variant protocol-relative destinations (browser-normalized)', () => {
-			expect(sanitizeUrl('\\\\evil.com')).toBe('')
-			expect(sanitizeUrl('/\\evil.com')).toBe('')
-			expect(sanitizeUrl('\\/evil.com')).toBe('')
-		})
-	})
-
-	describe('single leading slash/backslash (same-origin relative, kept)', () => {
-		it('keeps a single leading backslash destination', () => {
-			expect(sanitizeUrl('\\evil.com')).toBe('\\evil.com')
-		})
-	})
-})
-
-// The scheme/control floor `sanitizeUrl` enforces is re-implemented, deliberately, in
-// `@orkestrel/html`'s `sanitizeURL` — one sanitizer per output context, no shared
-// function (guides/src/markdown.md § Sanitization policy states why). What the two
-// packages share instead is the corpus: `buildURLSafetyCorpus` is mirrored
-// vector-for-vector, in the same order and under the same name, in `@orkestrel/html`'s
-// `tests/setup.ts`, so a vector missed here is missed there too. The two packages'
-// dispositions differ on exactly two groups, and each difference is a named test below
-// rather than a quietly relaxed expectation.
-describe('sanitizeUrl — mirrored URL-safety corpus (also in @orkestrel/html)', () => {
-	it('disposes of every mirrored vector exactly as the corpus records', () => {
-		for (const threat of buildURLSafetyCorpus()) {
-			expect({ name: threat.name, value: sanitizeUrl(threat.source) }).toEqual({
-				name: threat.name,
-				value: threat.value ?? '',
-			})
-		}
-	})
-
-	it('covers every mirrored threat group', () => {
-		const groups = [...new Set(buildURLSafetyCorpus().map((threat) => threat.group))]
-		expect(groups).toEqual([...URL_SAFETY_GROUPS])
-	})
-
-	// Divergence 1 — escaping position. markdown escapes INSIDE `sanitizeUrl` because the
-	// result is a finished `href` attribute value; `@orkestrel/html` returns the raw value
-	// and encodes it later, in its own serializer. Escaping once (never twice) is the
-	// claim: a double escape would publish a `&amp;amp;` a reader can see.
-	it('escapes a surviving destination exactly once (@orkestrel/html escapes at serialization instead)', () => {
-		const source = 'https://ok.dev/?a=1&b=2'
-		expect(sanitizeUrl(source)).toBe(escapeHtml(source))
-		expect(sanitizeUrl(source)).not.toBe(escapeHtml(escapeHtml(source)))
-	})
-
-	// Divergence 2 — the entity-decode pass. `@orkestrel/html` decodes character
-	// references to a bounded fixpoint before reading the scheme, because its sanitized
-	// value is re-serialized downstream and could decode to `javascript:` later. markdown
-	// needs no decode pass precisely because it escapes here: the retained value reaches
-	// the browser as literal text, with no `:` that begins a scheme, so it resolves as an
-	// inert relative destination instead of executing.
-	it('neutralizes an entity-encoded scheme by escaping it (@orkestrel/html refuses it outright)', () => {
-		expect(sanitizeUrl('&#106;avascript:x')).toBe('&amp;#106;avascript:x')
-		expect(sanitizeUrl('javascript&colon;x')).toBe('javascript&amp;colon;x')
-		expect(sanitizeUrl('&sol;&sol;evil.dev')).toBe('&amp;sol;&amp;sol;evil.dev')
-	})
-
-	// Divergence 3 — allowlist shape. `SAFE_URL_SCHEMES` here is fixed and closed, so the
-	// four dangerous schemes are refused BY the allowlist and a separate hard-ban list
-	// would be dead code. `@orkestrel/html` takes its allowlist from the caller (its
-	// `SanitizeOptions.schemes` REPLACES the default), so it also carries an unwidenable
-	// refusal for `javascript` / `data` / `vbscript` / `file`. markdown cannot express that
-	// input at all: `sanitizeUrl` accepts a destination and nothing else.
-	it('refuses every dangerous scheme through one closed allowlist', () => {
-		expect([...SAFE_URL_SCHEMES].sort()).toEqual(['http', 'https', 'mailto', 'tel'])
-		for (const scheme of ['javascript', 'data', 'vbscript', 'file']) {
-			expect(SAFE_URL_SCHEMES.has(scheme)).toBe(false)
-			expect(sanitizeUrl(`${scheme}:payload`)).toBe('')
-		}
 	})
 })
 
@@ -609,9 +465,8 @@ describe('renderHTML — structure', () => {
 	})
 
 	it('renders a list to <ul>/<ol> with <li> items', () => {
-		expect(renderHTML(parseDocument('- a\n- b'))).toContain('<ul>')
-		const ordered = renderHTML(parseDocument('2. a\n3. b'))
-		expect(ordered).toContain('<ol start="2">')
+		expect(renderHTML(parseDocument('- a\n- b'))).toBe('<ul><li>a</li><li>b</li></ul>')
+		expect(renderHTML(parseDocument('2. a\n3. b'))).toBe('<ol start="2"><li>a</li><li>b</li></ol>')
 	})
 
 	it('renders a GFM table with thead/tbody and per-column alignment', () => {
@@ -619,8 +474,8 @@ describe('renderHTML — structure', () => {
 		expect(html).toContain('<table>')
 		expect(html).toContain('<thead>')
 		expect(html).toContain('<tbody>')
-		expect(html).toContain('<th style="text-align:left">a</th>')
-		expect(html).toContain('<td style="text-align:right">2</td>')
+		expect(html).toContain('<th align="left">a</th>')
+		expect(html).toContain('<td align="right">2</td>')
 	})
 
 	it('renders a fenced code block as <pre><code class="language-…">', () => {
@@ -630,7 +485,7 @@ describe('renderHTML — structure', () => {
 
 	it('renders a thematic break as <hr> and a blockquote as <blockquote>', () => {
 		expect(renderHTML(parseDocument('---'))).toBe('<hr>')
-		expect(renderHTML(parseDocument('> hi'))).toContain('<blockquote>')
+		expect(renderHTML(parseDocument('> hi'))).toBe('<blockquote><p>hi</p></blockquote>')
 	})
 
 	it('renders an inline node tree to an escaped HTML fragment', () => {
@@ -641,7 +496,7 @@ describe('renderHTML — structure', () => {
 		expect(fragment).toBe('a <strong>b</strong> <code>&lt;c&gt;</code>')
 	})
 
-	it('renders a document node by joining its blocks with newlines', () => {
+	it('renders a document node in canonical compact form', () => {
 		const html = renderHTML({
 			element: 'document',
 			children: [
@@ -649,91 +504,120 @@ describe('renderHTML — structure', () => {
 				{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] },
 			],
 		})
-		expect(html).toBe('<hr>\n<p>x</p>')
+		expect(html).toBe('<hr><p>x</p>')
 	})
 
 	it('renders exact HTML for a small composite inline snapshot', () => {
 		expect(renderHTML(parseDocument('# Hi\n\n_em_ and `code`.'))).toBe(
-			'<h1>Hi</h1>\n<p><em>em</em> and <code>code</code>.</p>',
+			'<h1>Hi</h1><p><em>em</em> and <code>code</code>.</p>',
 		)
 	})
 })
 
 describe('renderHTML — escaping & sanitization (no XSS)', () => {
-	it('HTML-escapes < > & " in text', () => {
-		const html = renderHTML(parseDocument('a <script>alert("x" & 1)</script> tag'))
-		expect(html).toContain('&lt;script&gt;')
-		expect(html).toContain('&amp;')
-		expect(html).toContain('&quot;')
-		expect(html).not.toContain('<script>')
+	it('HTML-escapes < > & in text while leaving quotes and apostrophes literal', () => {
+		expect(renderHTML(parseDocument(`a <script>alert("x" & 'y')</script> tag`))).toBe(
+			`<p>a &lt;script&gt;alert("x" &amp; 'y')&lt;/script&gt; tag</p>`,
+		)
 	})
 
 	it('HTML-escapes the body of a code block and inline code', () => {
 		expect(renderHTML(parseDocument('```\n<b>&</b>\n```'))).toContain('&lt;b&gt;&amp;&lt;/b&gt;')
 		expect(renderHTML(parseDocument('`<i>`'))).toContain('<code>&lt;i&gt;</code>')
 	})
+})
 
-	it('drops a javascript: href to an empty attribute', () => {
-		const html = renderHTML(parseDocument('[click](javascript:alert(1))'))
-		expect(html).toContain('<a href="">click</a>')
-		expect(html).not.toContain('javascript:')
+describe('renderHTML — @orkestrel/html URL-floor composition', () => {
+	it('refuses a tab-spliced javascript scheme', () => {
+		expect(renderHTML(parseDocument('[x](java\tscript:alert(1))'))).toBe('<p><a>x</a></p>')
 	})
 
-	it('drops other unsafe schemes (data:, vbscript:) and a control-char evasion', () => {
-		expect(renderHTML(parseDocument('[x](data:text/html,evil)'))).toContain('href=""')
-		expect(renderHTML(parseDocument('[x](vbscript:msgbox)'))).toContain('href=""')
-		// A tab between `java` and `script:` must not slip past the scheme check.
-		expect(renderHTML(parseDocument('[x](java\tscript:alert(1))'))).toContain('href=""')
+	it('preserves a mixed-case allowed HTTPS scheme', () => {
+		expect(renderHTML(parseDocument('[x](HtTpS://ok.dev)'))).toBe(
+			'<p><a href="HtTpS://ok.dev">x</a></p>',
+		)
 	})
 
-	it('drops a protocol-relative href (//host/path) to an empty attribute', () => {
-		const html = renderHTML(parseDocument('[x](//evil.example/path)'))
-		expect(html).toContain('href=""')
-		expect(html).not.toContain('//evil.example')
+	it('refuses a protocol-relative double slash', () => {
+		expect(renderHTML(parseDocument('[x](//evil.dev)'))).toBe('<p><a>x</a></p>')
 	})
 
-	it('keeps safe schemes (http/https/mailto) and relative/anchor hrefs', () => {
-		expect(renderHTML(parseDocument('[a](https://x.dev)'))).toContain('href="https://x.dev"')
-		expect(renderHTML(parseDocument('[a](mailto:x@y.dev)'))).toContain('href="mailto:x@y.dev"')
-		expect(renderHTML(parseDocument('[a](#anchor)'))).toContain('href="#anchor"')
-		expect(renderHTML(parseDocument('[a](../guide.md)'))).toContain('href="../guide.md"')
+	it('retains a single leading backslash', () => {
+		expect(renderHTML(parseDocument('[x](\\evil.dev)'))).toBe('<p><a href="\\evil.dev">x</a></p>')
 	})
 
-	it('attribute-escapes a quote inside an otherwise-safe href', () => {
-		const html = renderHTML(parseDocument('[a](https://x.dev/"onmouseover=alert(1))'))
-		expect(html).not.toContain('"onmouseover')
-		expect(html).toContain('&quot;')
+	it('retains an anchor', () => {
+		expect(renderHTML(parseDocument('[x](#anchor)'))).toBe('<p><a href="#anchor">x</a></p>')
 	})
 
-	it('drops backslash-variant protocol-relative hrefs to an empty attribute', () => {
-		// Markdown backslash-escaping unescapes one level (`\\` → `\`) inside the link
-		// destination before sanitizeUrl ever sees it, so each two-char prefix below
-		// needs its backslashes doubled in the markdown SOURCE to survive as a single
-		// backslash in the parsed href.
-		expect(renderHTML(parseDocument('[x](\\\\\\\\evil.com)'))).toContain('href=""') // href: \\evil.com
-		expect(renderHTML(parseDocument('[x](/\\\\evil.com)'))).toContain('href=""') // href: /\evil.com
-		expect(renderHTML(parseDocument('[x](\\\\/evil.com)'))).toContain('href=""') // href: \/evil.com
+	it('refuses an unlisted scheme through the allowlist composition', () => {
+		expect(renderHTML(parseDocument('[x](ftp://host)'))).toBe('<p><a>x</a></p>')
 	})
 
-	it('keeps a single leading backslash href', () => {
-		const html = renderHTML(parseDocument('[x](\\evil.com)'))
-		expect(html).toContain('href="\\evil.com"')
+	it('refuses a decimal-entity-obfuscated javascript scheme after decoding', () => {
+		expect(renderHTML(parseDocument('[x](&#106;avascript:x)'))).toBe('<p><a>x</a></p>')
+	})
+
+	it('normalizes an entity-obfuscated allowed scheme', () => {
+		expect(renderHTML(parseDocument('[x](https&colon;&sol;&sol;ok.dev)'))).toBe(
+			'<p><a href="https://ok.dev">x</a></p>',
+		)
+	})
+
+	it('encodes an ampersand in a retained query exactly once', () => {
+		expect(renderHTML(parseDocument('[x](?a=1&b=2)'))).toBe('<p><a href="?a=1&amp;b=2">x</a></p>')
+	})
+
+	it('exposes no sanitizer options and hard-refuses hostile link and image schemes', () => {
+		expectTypeOf(renderHTML).parameters.toEqualTypeOf<[node: MarkdownNode]>()
+		expect(renderHTML.length).toBe(1)
+		expect(renderHTML(parseDocument('[x](javascript:unit) ![alt](data:unit)'))).toBe(
+			'<p><a>x</a> <img alt="alt"></p>',
+		)
+	})
+})
+
+describe('renderHTML — composed elements', () => {
+	it('keeps and sanitizes a safe image source', () => {
+		expect(renderHTML(parseDocument('![a **bold**](https://x.dev/a?x=1&y=2)'))).toBe(
+			'<p><img src="https://x.dev/a?x=1&amp;y=2" alt="a bold"></p>',
+		)
+	})
+
+	it('refuses a hostile image source while preserving plain-text alt content', () => {
+		expect(renderHTML(parseDocument('![a **bold**](javascript:alert(1))'))).toBe(
+			'<p><img alt="a bold"></p>',
+		)
+	})
+
+	it('renders a hard break as a void br element', () => {
+		expect(renderHTML(parseDocument('a  \nb'))).toBe('<p>a<br>b</p>')
+	})
+
+	it('renders table alignment on header and body cells and omits it for a null column', () => {
+		expect(renderHTML(parseDocument('| a | b | c |\n| :--- | ---: | --- |\n| 1 | 2 | 3 |'))).toBe(
+			'<table><thead><tr><th align="left">a</th><th align="right">b</th><th>c</th></tr></thead><tbody><tr><td align="left">1</td><td align="right">2</td><td>3</td></tr></tbody></table>',
+		)
 	})
 })
 
 describe('renderHTML — MAX_DEPTH recursion cap + degrade arms', () => {
-	it('caps render depth on a valid, deeply nested blockquote chain (~70 levels) without throwing', () => {
+	it('projects exactly 64 elements and degrades once before html sanitization', () => {
 		const leaf: ParagraphNode = {
 			element: 'paragraph',
 			children: [{ element: 'text', value: 'leaf' }],
 		}
 		let node: BlockquoteNode | ParagraphNode = leaf
 		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
-		expect(() => renderHTML(node)).not.toThrow()
 		const html = renderHTML(node)
-		// Depth caps well before the innermost leaf, so the literal 'leaf' text never
-		// reaches the rendered output.
-		expect(html).not.toContain('leaf')
+		expect(html).toBe('<blockquote>'.repeat(MAX_DEPTH) + '</blockquote>'.repeat(MAX_DEPTH))
+		const sanitized = new HTML(markdownToHTML(node)).sanitize({
+			attributes: [...SAFE_ATTRIBUTES, 'src'],
+		})
+		expect(sanitized.sanitize({ attributes: [...SAFE_ATTRIBUTES, 'src'] }).document).toEqual(
+			sanitized.document,
+		)
+		expect(renderHTMLDocument(sanitized.document)).toBe(html)
 	})
 
 	it('renders a fabricated node with an unknown element as an empty string (total default arm)', () => {
@@ -1477,7 +1361,7 @@ describe('foldNode', () => {
 		blocks[2] = { element: 'paragraph', children: inlines }
 		const document: MarkdownDocument = { element: 'document', children: blocks }
 
-		expect(renderHTML(document)).toBe('<h1>a</h1>\n<p>b</p>')
+		expect(renderHTML(document)).toBe('<h1>a</h1><p>b</p>')
 		expect(renderMarkdown(document)).toBe('# a\n\nb')
 		expect([...walkNodes(document)].map((node) => node.element)).toEqual([
 			'document',
@@ -1490,7 +1374,7 @@ describe('foldNode', () => {
 		const rewritten = rewriteDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
-		expect(renderHTML(rewritten)).toBe('<h1>A</h1>\n<p>B</p>')
+		expect(renderHTML(rewritten)).toBe('<h1>A</h1><p>B</p>')
 		expect(flattenText(document)).toBe('ab')
 	})
 })

@@ -1,3 +1,4 @@
+import type { HTMLDocument, HTMLNode } from '@orkestrel/html'
 import type {
 	BlockNode,
 	EmphasisNode,
@@ -11,7 +12,7 @@ import type {
 	MarkdownRewriteHandler,
 	TableAlign,
 } from './types.js'
-import { MAX_DEPTH, SAFE_URL_SCHEMES } from './constants.js'
+import { MAX_DEPTH } from './constants.js'
 import {
 	isBlockNode,
 	isEscapable,
@@ -22,13 +23,14 @@ import {
 	isWhitespace,
 } from './validators.js'
 import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '@orkestrel/contract'
+import { HTML, SAFE_ATTRIBUTES, renderHTML as renderHTMLDocument } from '@orkestrel/html'
 
-//  Markdown parsing + rendering leaves (pure, total, zero-dependency)
+//  Markdown parsing + rendering leaves (pure and total)
 //
 // The pure leaf primitives {@link parseDocument} composes: the line / block
 // scanners (headings, fences, list items, table rows, quotes, thematic breaks), the
 // inline `scan*` engine (emphasis / links / code with backslash escapes), and the HTML
-// escaping + URL-sanitization the renderer leans on. Every function is PURE, TOTAL, and
+// AST projection the renderer composes with @orkestrel/html. Every function is PURE, TOTAL, and
 // referentially transparent - malformed input degrades to text, never throws (AGENTS
 // §14) - so each is unit-tested in isolation. The ORCHESTRATION that threads these
 // together (the block / inline / render recursion) lives in parsers.ts's functions,
@@ -609,95 +611,35 @@ export function scanInline(
 	return nodes
 }
 
-//  Rendering (AST HTML string)
+//  Rendering (Markdown AST → HTML AST → sanitized HTML string)
 
 /**
- * HTML-escape text content - `&` / `<` / `>` / `"` / `'` to their entities - so text
- * from a markdown document can never inject markup. The renderer applies this to every
- * text run, code body, and (escaped further) attribute value.
- *
- * @param text - The raw text
- * @returns The HTML-escaped text
- *
- * @example
- * ```ts
- * escapeHtml('<a>&"\'') // '&lt;a&gt;&amp;&quot;&#39;'
- * ```
- */
-export function escapeHtml(text: string): string {
-	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;')
-}
-
-/**
- * Sanitize + HTML-attribute-escape a link `href` - a destination whose scheme is not
- * in {@link SAFE_URL_SCHEMES} (notably `javascript:` / `data:` / `vbscript:`), or that
- * is protocol-relative (`//host/path`, or a backslash variant a browser normalizes to
- * the same effect - `\\host`, `/\host`, `\/host` - inherits whatever scheme the
- * embedding page is served over, including an unsafe one), is dropped to an empty
- * string; a relative / anchor / scheme-less (and non-protocol-relative) destination
- * (including a SINGLE leading `/` or `\`) is kept;
- * the surviving value is then HTML-escaped. Defence-in-depth against an XSS `href`,
- * even though the input is trusted.
- *
- * @param href - The raw link destination
- * @returns A safe, escaped `href` (empty when the scheme is unsafe or protocol-relative)
- *
- * @example
- * ```ts
- * sanitizeUrl('javascript:alert(1)') // ''
- * sanitizeUrl('/path')               // '/path'
- * ```
- */
-export function sanitizeUrl(href: string): string {
-	// Strip every whitespace + C0/C1 control codepoint (≤ U+0020 or U+007F–U+009F)
-	// anywhere - a `java\tscript:` / embedded-newline scheme-spoofing evasion - by
-	// codepoint, not a control-character regex class (AGENTS §1: no disables).
-	let cleaned = ''
-	for (const character of href) {
-		const code = character.codePointAt(0) ?? 0
-		if (code > 0x20 && !(code >= 0x7f && code <= 0x9f)) cleaned += character
-	}
-	if (/^[/\\]{2}/.exec(cleaned)) return ''
-	const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(cleaned)
-	if (scheme && scheme[1] !== undefined && !SAFE_URL_SCHEMES.has(scheme[1].toLowerCase())) return ''
-	return escapeHtml(cleaned)
-}
-
-/**
- * Render a {@link MarkdownNode} (typically a {@link MarkdownDocument}) to a safe HTML
- * string - the recursive AST → HTML engine (headings, paragraphs, lists, GFM tables,
- * fenced code, blockquotes, links, emphasis, inline code), escaping every text run and
- * sanitizing every link `href`.
+ * Project a {@link MarkdownNode} into an unsanitized {@link HTMLDocument}.
  *
  * @remarks
- * Total: never throws. At {@link MAX_DEPTH} a value-bearing node (`text` / `codeSpan`)
- * degrades to its escaped `value`; any other node degrades to `''` instead of
- * recursing further, so pathologically deep input cannot exhaust the call stack.
+ * The projection is pure and iterative. Text and attribute values remain literal for
+ * `@orkestrel/html` to encode, and URL values remain unsanitized so callers can choose
+ * their own HTML policy. Projected HTML element depth, including generated `pre > code`
+ * and table scaffolding, never exceeds {@link MAX_DEPTH}. At the cap a node carrying a
+ * string `value` degrades to a text node and a structural node contributes nothing.
  *
- * @param node - The AST node to render (a full document, or any sub-node)
- * @returns The rendered, XSS-safe HTML string
+ * @param node - The markdown document or bare node to project
+ * @returns An unsanitized HTML document wrapping the projected node or nodes
  *
  * @example
  * ```ts
- * renderHTML({ element: 'document', children: [
- *   { element: 'heading', level: 1, children: [{ element: 'text', value: 'Hi' }] },
- * ] })
- * // '<h1>Hi</h1>'
+ * markdownToHTML({ element: 'text', value: 'a & b' })
+ * // { category: 'document', children: [{ category: 'text', value: 'a & b' }] }
  * ```
  */
-export function renderHTML(node: MarkdownNode): string {
+export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 	const stack: {
 		readonly node: MarkdownNode
 		readonly depth: number
 		readonly expanded: boolean
 		readonly count: number
 	}[] = [{ node, depth: 0, expanded: false, count: 0 }]
-	const values: string[] = []
+	const values: (HTMLNode | undefined)[] = []
 	while (stack.length > 0) {
 		const frame = stack.pop()
 		if (frame === undefined) continue
@@ -705,18 +647,23 @@ export function renderHTML(node: MarkdownNode): string {
 		if (!frame.expanded) {
 			if (frame.depth >= MAX_DEPTH) {
 				values.push(
-					'value' in current && typeof current.value === 'string' ? escapeHtml(current.value) : '',
+					'value' in current && typeof current.value === 'string'
+						? { category: 'text', value: current.value }
+						: undefined,
 				)
 				continue
 			}
 			const children: MarkdownNode[] = []
-			let depth = frame.depth + 1
+			let depth = frame.depth
 			switch (current.element) {
 				case 'document':
+					for (const child of current.children) if (child !== undefined) children.push(child)
+					break
 				case 'heading':
 				case 'paragraph':
 				case 'blockquote':
 					for (const child of current.children) if (child !== undefined) children.push(child)
+					depth += 1
 					break
 				case 'listItem': {
 					const only = current.children[0]
@@ -725,6 +672,7 @@ export function renderHTML(node: MarkdownNode): string {
 					} else {
 						for (const child of current.children) if (child !== undefined) children.push(child)
 					}
+					depth += 1
 					break
 				}
 				case 'emphasis':
@@ -734,8 +682,13 @@ export function renderHTML(node: MarkdownNode): string {
 					break
 				case 'list':
 					for (const child of current.items) if (child !== undefined) children.push(child)
+					depth += 1
 					break
 				case 'table':
+					if (frame.depth + 4 > MAX_DEPTH) {
+						values.push(undefined)
+						continue
+					}
 					for (const cell of current.header)
 						if (cell !== undefined)
 							for (const child of cell) if (child !== undefined) children.push(child)
@@ -744,8 +697,12 @@ export function renderHTML(node: MarkdownNode): string {
 							for (const cell of row)
 								if (cell !== undefined)
 									for (const child of cell) if (child !== undefined) children.push(child)
-					depth += 1
+					depth += 4
 					break
+			}
+			if (current.element === 'codeBlock' && frame.depth + 2 > MAX_DEPTH) {
+				values.push(undefined)
+				continue
 			}
 			stack.push({ ...frame, expanded: true, count: children.length })
 			for (let index = children.length - 1; index >= 0; index -= 1) {
@@ -756,105 +713,229 @@ export function renderHTML(node: MarkdownNode): string {
 		}
 		const children =
 			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
-		let value = ''
+		const projected: HTMLNode[] = []
+		for (const child of children) if (child !== undefined) projected.push(child)
+		let value: HTMLNode | undefined
 		switch (current.element) {
 			case 'document':
-				value = children.join('\n')
+				value = { category: 'document', children: projected }
 				break
 			case 'heading':
-				value = `<h${current.level}>${children.join('')}</h${current.level}>`
+				value = {
+					category: 'element',
+					name: `h${current.level}`,
+					attributes: [],
+					children: projected,
+				}
 				break
 			case 'paragraph':
-				value = `<p>${children.join('')}</p>`
+				value = { category: 'element', name: 'p', attributes: [], children: projected }
 				break
 			case 'thematicBreak':
-				value = '<hr>'
+				value = { category: 'element', name: 'hr', attributes: [], children: [] }
 				break
 			case 'blockquote':
-				value = `<blockquote>\n${children.join('\n')}\n</blockquote>`
-				break
-			case 'codeBlock': {
-				const open =
-					current.lang === undefined
-						? '<code>'
-						: `<code class="language-${escapeHtml(current.lang)}">`
-				value = `<pre>${open}${escapeHtml(current.code)}</code></pre>`
-				break
-			}
-			case 'list': {
-				const items = children.join('\n')
-				if (!current.ordered) {
-					value = `<ul>\n${items}\n</ul>`
-					break
+				value = {
+					category: 'element',
+					name: 'blockquote',
+					attributes: [],
+					children: projected,
 				}
-				const start = current.start !== 1 ? ` start="${current.start}"` : ''
-				value = `<ol${start}>\n${items}\n</ol>`
 				break
-			}
+			case 'codeBlock':
+				value = {
+					category: 'element',
+					name: 'pre',
+					attributes: [],
+					children: [
+						{
+							category: 'element',
+							name: 'code',
+							attributes:
+								current.lang === undefined
+									? []
+									: [{ name: 'class', value: `language-${current.lang}` }],
+							children: [{ category: 'text', value: current.code }],
+						},
+					],
+				}
+				break
+			case 'list':
+				value = {
+					category: 'element',
+					name: current.ordered ? 'ol' : 'ul',
+					attributes:
+						current.ordered && current.start !== 1
+							? [{ name: 'start', value: String(current.start) }]
+							: [],
+					children: projected,
+				}
+				break
 			case 'listItem':
-				value = `<li>${children.join(
-					current.children.length === 1 && current.children[0]?.element === 'paragraph' ? '' : '\n',
-				)}</li>`
+				value = { category: 'element', name: 'li', attributes: [], children: projected }
 				break
 			case 'table': {
 				let offset = 0
-				const header: string[] = []
+				const header: HTMLNode[] = []
 				for (const [column, cell] of current.header.entries()) {
 					if (cell === undefined) continue
 					const align = current.align[column]
-					const style =
+					const attributes =
 						align === 'left' || align === 'right' || align === 'center'
-							? ` style="text-align:${align}"`
-							: ''
+							? [{ name: 'align', value: align }]
+							: []
 					let count = 0
 					for (const child of cell) if (child !== undefined) count += 1
-					header.push(`<th${style}>${children.slice(offset, offset + count).join('')}</th>`)
+					const cellChildren: HTMLNode[] = []
+					for (const child of children.slice(offset, offset + count))
+						if (child !== undefined) cellChildren.push(child)
+					header.push({
+						category: 'element',
+						name: 'th',
+						attributes,
+						children: cellChildren,
+					})
 					offset += count
 				}
-				const rows: string[] = []
+				const rows: HTMLNode[] = []
 				for (const row of current.rows) {
-					const cells: string[] = []
+					const cells: HTMLNode[] = []
 					for (const [column, cell] of row.entries()) {
 						if (cell === undefined) continue
 						const align = current.align[column]
-						const style =
+						const attributes =
 							align === 'left' || align === 'right' || align === 'center'
-								? ` style="text-align:${align}"`
-								: ''
+								? [{ name: 'align', value: align }]
+								: []
 						let count = 0
 						for (const child of cell) if (child !== undefined) count += 1
-						cells.push(`<td${style}>${children.slice(offset, offset + count).join('')}</td>`)
+						const cellChildren: HTMLNode[] = []
+						for (const child of children.slice(offset, offset + count))
+							if (child !== undefined) cellChildren.push(child)
+						cells.push({
+							category: 'element',
+							name: 'td',
+							attributes,
+							children: cellChildren,
+						})
 						offset += count
 					}
-					rows.push(`<tr>${cells.join('')}</tr>`)
+					rows.push({
+						category: 'element',
+						name: 'tr',
+						attributes: [],
+						children: cells,
+					})
 				}
-				const body = rows.join('\n')
-				const bodyHtml = isNonEmptyArray(current.rows) ? `\n<tbody>\n${body}\n</tbody>` : ''
-				value = `<table>\n<thead>\n<tr>${header.join('')}</tr>\n</thead>${bodyHtml}\n</table>`
+				const tableChildren: HTMLNode[] = [
+					{
+						category: 'element',
+						name: 'thead',
+						attributes: [],
+						children: [
+							{
+								category: 'element',
+								name: 'tr',
+								attributes: [],
+								children: header,
+							},
+						],
+					},
+				]
+				if (isNonEmptyArray(current.rows)) {
+					tableChildren.push({
+						category: 'element',
+						name: 'tbody',
+						attributes: [],
+						children: rows,
+					})
+				}
+				value = {
+					category: 'element',
+					name: 'table',
+					attributes: [],
+					children: tableChildren,
+				}
 				break
 			}
 			case 'text':
-				value = escapeHtml(current.value)
+				value = { category: 'text', value: current.value }
 				break
 			case 'emphasis':
-				value = current.strong
-					? `<strong>${children.join('')}</strong>`
-					: `<em>${children.join('')}</em>`
+				value = {
+					category: 'element',
+					name: current.strong ? 'strong' : 'em',
+					attributes: [],
+					children: projected,
+				}
 				break
 			case 'codeSpan':
-				value = `<code>${escapeHtml(current.value)}</code>`
+				value = {
+					category: 'element',
+					name: 'code',
+					attributes: [],
+					children: [{ category: 'text', value: current.value }],
+				}
 				break
 			case 'link':
-				value = `<a href="${sanitizeUrl(current.href)}">${children.join('')}</a>`
+				value = {
+					category: 'element',
+					name: 'a',
+					attributes: [{ name: 'href', value: current.href }],
+					children: projected,
+				}
+				break
+			case 'image':
+				value = {
+					category: 'element',
+					name: 'img',
+					attributes: [
+						{ name: 'src', value: current.src },
+						{ name: 'alt', value: flattenText(current) },
+					],
+					children: [],
+				}
+				break
+			case 'break':
+				value = { category: 'element', name: 'br', attributes: [], children: [] }
 				break
 			default:
-				value = ''
+				value = undefined
 				break
 		}
-		if (stack.length === 0) return value
 		values.push(value)
 	}
-	return ''
+	const projected = values[0]
+	if (projected?.category === 'document') return projected
+	return {
+		category: 'document',
+		children: projected === undefined ? [] : [projected],
+	}
+}
+
+/**
+ * Render a {@link MarkdownNode} to sanitized canonical HTML.
+ *
+ * @remarks
+ * Markdown widens `@orkestrel/html`'s attribute floor by exactly `src`, because image
+ * syntax is meaningless without its source. `src` is still a URL attribute, so the
+ * floor refuses `javascript:`, `data:`, `vbscript:`, and `file:` values. A stricter
+ * consumer can compose {@link markdownToHTML} with `@orkestrel/html`'s `HTML` class
+ * directly.
+ *
+ * @param node - The markdown document or bare node to render
+ * @returns Sanitized canonical HTML
+ *
+ * @example
+ * ```ts
+ * renderHTML({ element: 'paragraph', children: [{ element: 'text', value: 'a & b' }] })
+ * // '<p>a &amp; b</p>'
+ * ```
+ */
+export function renderHTML(node: MarkdownNode): string {
+	return renderHTMLDocument(
+		new HTML(markdownToHTML(node)).sanitize({ attributes: [...SAFE_ATTRIBUTES, 'src'] }).document,
+	)
 }
 
 /**

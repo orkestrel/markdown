@@ -36,10 +36,10 @@ describe('createMarkdown', () => {
 	})
 
 	it('renders an AST to safe HTML (text escaped, href sanitized)', () => {
-		const markdown = createMarkdown('[x](javascript:alert(1)) <b>')
+		const markdown = createMarkdown('[x](javascript:unit) <b>')
 		const html = renderHTML(markdown.document)
 
-		expect(html).toContain('<a href="">x</a>')
+		expect(html).toContain('<a>x</a>')
 		expect(html).toContain('&lt;b&gt;')
 		expect(html).not.toContain('javascript:')
 	})
