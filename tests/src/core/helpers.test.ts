@@ -1,3 +1,4 @@
+import type { ElementNode, HTMLNode } from '@orkestrel/html'
 import type {
 	BlockNode,
 	BlockquoteNode,
@@ -16,9 +17,16 @@ import {
 	extractListItem,
 	flattenText,
 	foldNode,
+	htmlToMarkdown,
 	leadingIndent,
 	markdownToHTML,
+	mergeProjections,
+	normalizeInlines,
 	parseDocument,
+	projectLeaf,
+	projectNode,
+	projectionToBlocks,
+	projectionToInlines,
 	renderHTML,
 	renderMarkdown,
 	rewriteDocument,
@@ -31,11 +39,24 @@ import {
 	startsBlock,
 	stripQuote,
 	tableAlignments,
+	trimInlines,
 	unescapeText,
 	walkNodes,
 } from '@src/core'
-import { HTML, SAFE_ATTRIBUTES, renderHTML as renderHTMLDocument } from '@orkestrel/html'
-import { assertTableNode, buildDeepEmphasisInput, firstBlock } from '../../setup'
+import {
+	HTML,
+	SAFE_ATTRIBUTES,
+	parseDocument as parseHTMLDocument,
+	renderHTML as renderHTMLDocument,
+} from '@orkestrel/html'
+import {
+	PROJECTION_CORPUS,
+	assertTableNode,
+	buildDeepEmphasisInput,
+	buildProjection,
+	firstBlock,
+	projectHTML,
+} from '../../setup'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 // The markdown parser's pure helper surface (block extractors, inline scanners,
@@ -1532,5 +1553,709 @@ describe('flattenText', () => {
 
 	it('does not throw on a deeply nested parsed emphasis/link chain', () => {
 		expect(() => flattenText(firstBlock(buildDeepEmphasisInput(10_000)))).not.toThrow()
+	})
+})
+
+// ── HTML → markdown projection ────────────────────────────────────────────────
+// `htmlToMarkdown` and the four pure leaves it folds with. The suites below cover
+// one row of the element mapping each (with the observed projected AST), the
+// adversarial inputs the fold must survive, and the round-trip anchor law
+// `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals `htmlToMarkdown(x)`
+// over `PROJECTION_CORPUS`.
+
+describe('trimInlines', () => {
+	it('trims the leading whitespace of the first text node and the trailing of the last', () => {
+		expect(
+			trimInlines([
+				{ element: 'text', value: '  a' },
+				{ element: 'codeSpan', value: 'x' },
+				{ element: 'text', value: 'b  ' },
+			]),
+		).toEqual([
+			{ element: 'text', value: 'a' },
+			{ element: 'codeSpan', value: 'x' },
+			{ element: 'text', value: 'b' },
+		])
+	})
+
+	it('drops an edge text node that trims away entirely', () => {
+		expect(
+			trimInlines([
+				{ element: 'text', value: ' ' },
+				{ element: 'codeSpan', value: 'x' },
+				{ element: 'text', value: '\n' },
+			]),
+		).toEqual([{ element: 'codeSpan', value: 'x' }])
+	})
+
+	it('leaves a non-text edge node untouched and returns an empty run unchanged', () => {
+		expect(trimInlines([{ element: 'break' }])).toEqual([{ element: 'break' }])
+		expect(trimInlines([])).toEqual([])
+	})
+})
+
+describe('normalizeInlines', () => {
+	it('drops a leading and a trailing hard break', () => {
+		expect(
+			normalizeInlines(
+				[{ element: 'break' }, { element: 'text', value: 'a' }, { element: 'break' }],
+				true,
+			),
+		).toEqual([{ element: 'text', value: 'a' }])
+	})
+
+	it('collapses a run of hard breaks to one and strips the whitespace touching it', () => {
+		expect(
+			normalizeInlines(
+				[
+					{ element: 'text', value: 'a ' },
+					{ element: 'break' },
+					{ element: 'break' },
+					{ element: 'text', value: ' b' },
+				],
+				true,
+			),
+		).toEqual([
+			{ element: 'text', value: 'a' },
+			{ element: 'break' },
+			{ element: 'text', value: 'b' },
+		])
+	})
+
+	it('replaces every hard break with a space when breaks are not allowed', () => {
+		expect(
+			normalizeInlines(
+				[{ element: 'text', value: 'a' }, { element: 'break' }, { element: 'text', value: 'b' }],
+				false,
+			),
+		).toEqual([{ element: 'text', value: 'a b' }])
+	})
+
+	it('coalesces adjacent text and drops empty text nodes', () => {
+		expect(
+			normalizeInlines(
+				[
+					{ element: 'text', value: 'a' },
+					{ element: 'text', value: '' },
+					{ element: 'text', value: 'b' },
+				],
+				true,
+			),
+		).toEqual([{ element: 'text', value: 'ab' }])
+	})
+})
+
+describe('mergeProjections', () => {
+	it('keeps a pure-inline run inline and coalesces it', () => {
+		const merged = mergeProjections([
+			buildProjection({ inlines: [{ element: 'text', value: 'a' }], text: 'a' }),
+			buildProjection({ inlines: [{ element: 'text', value: 'b' }], text: 'b' }),
+		])
+		expect(merged.blocks).toEqual([])
+		expect(merged.inlines).toEqual([{ element: 'text', value: 'ab' }])
+		expect(merged.text).toBe('ab')
+	})
+
+	it('wraps an inline run into a paragraph IN ORDER once any child contributes a block', () => {
+		const merged = mergeProjections([
+			buildProjection({ blocks: [{ element: 'thematicBreak' }] }),
+			buildProjection({ inlines: [{ element: 'text', value: 'tail' }] }),
+		])
+		expect(merged.blocks).toEqual([
+			{ element: 'thematicBreak' },
+			{ element: 'paragraph', children: [{ element: 'text', value: 'tail' }] },
+		])
+		expect(merged.inlines).toEqual([])
+	})
+
+	it('drops a whitespace-only run between two blocks', () => {
+		const merged = mergeProjections([
+			buildProjection({ blocks: [{ element: 'thematicBreak' }] }),
+			buildProjection({ inlines: [{ element: 'text', value: '\n  ' }] }),
+			buildProjection({ blocks: [{ element: 'thematicBreak' }] }),
+		])
+		expect(merged.blocks).toEqual([{ element: 'thematicBreak' }, { element: 'thematicBreak' }])
+	})
+
+	it('passes cells and rows through untouched', () => {
+		const cell = { heading: true, align: undefined, inlines: [] }
+		const merged = mergeProjections([
+			buildProjection({ cells: [cell] }),
+			buildProjection({ rows: [[]] }),
+		])
+		expect(merged.cells).toEqual([cell])
+		expect(merged.rows).toEqual([[]])
+	})
+})
+
+describe('projectionToBlocks', () => {
+	it('wraps a bare inline run into one paragraph', () => {
+		expect(
+			projectionToBlocks(buildProjection({ inlines: [{ element: 'text', value: ' a ' }] })),
+		).toEqual([{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] }])
+	})
+
+	it('produces nothing for a blank inline run', () => {
+		expect(
+			projectionToBlocks(buildProjection({ inlines: [{ element: 'text', value: '  ' }] })),
+		).toEqual([])
+	})
+
+	it('unwraps a dangling row and a dangling cell into paragraphs', () => {
+		const inlines: readonly InlineNode[] = [{ element: 'text', value: 'x' }]
+		expect(
+			projectionToBlocks(
+				buildProjection({
+					rows: [[{ heading: false, align: undefined, inlines }]],
+					cells: [{ heading: true, align: undefined, inlines }],
+				}),
+			),
+		).toEqual([
+			{ element: 'paragraph', children: inlines },
+			{ element: 'paragraph', children: inlines },
+		])
+	})
+})
+
+describe('projectionToInlines', () => {
+	it('returns the inline run of a pure-inline projection', () => {
+		expect(
+			projectionToInlines(buildProjection({ inlines: [{ element: 'codeSpan', value: 'x' }] })),
+		).toEqual([{ element: 'codeSpan', value: 'x' }])
+	})
+
+	it('flattens block content to one text node, joined by spaces', () => {
+		expect(
+			projectionToInlines(
+				buildProjection({
+					blocks: [
+						{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] },
+						{ element: 'paragraph', children: [{ element: 'text', value: 'b' }] },
+					],
+				}),
+			),
+		).toEqual([{ element: 'text', value: 'a b' }])
+	})
+
+	it('flattens block content that carries no text to nothing', () => {
+		expect(
+			projectionToInlines(buildProjection({ blocks: [{ element: 'thematicBreak' }] })),
+		).toEqual([])
+	})
+})
+
+describe('projectLeaf', () => {
+	it('collapses a text leaf whitespace run to one space and keeps the raw value', () => {
+		const projected = projectLeaf({ category: 'text', value: 'a\n  b' })
+		expect(projected.inlines).toEqual([{ element: 'text', value: 'a b' }])
+		expect(projected.text).toBe('a\n  b')
+	})
+
+	it('keeps a whitespace-only text leaf as the one space it stands for', () => {
+		// The space between `<b>one</b>` and `<i>two</i>` is a word boundary, not decoration;
+		// it is dropped later, only where a block context proves it cannot be written.
+		expect(projectLeaf({ category: 'text', value: '   ' }).inlines).toEqual([
+			{ element: 'text', value: ' ' },
+		])
+		expect(projectLeaf({ category: 'text', value: '' }).inlines).toEqual([])
+	})
+
+	it('projects a comment and a doctype to nothing at all', () => {
+		expect(projectLeaf({ category: 'comment', value: ' note ' })).toEqual({
+			blocks: [],
+			inlines: [],
+			text: '',
+			cells: [],
+			rows: [],
+		})
+		expect(projectLeaf({ category: 'doctype', name: 'html' }).text).toBe('')
+	})
+})
+
+describe('projectNode', () => {
+	it('merges the children of a document root', () => {
+		expect(
+			projectNode({ category: 'document', children: [] }, [
+				buildProjection({ blocks: [{ element: 'thematicBreak' }] }),
+			]).blocks,
+		).toEqual([{ element: 'thematicBreak' }])
+	})
+
+	it('maps an element name to its markdown node', () => {
+		expect(
+			projectNode({ category: 'element', name: 'hr', attributes: [], children: [] }, []).blocks,
+		).toEqual([{ element: 'thematicBreak' }])
+	})
+
+	it('unwraps an unknown element to its children projection', () => {
+		const child = buildProjection({ inlines: [{ element: 'text', value: 'x' }], text: 'x' })
+		expect(
+			projectNode({ category: 'element', name: 'aside', attributes: [], children: [] }, [child]),
+		).toEqual(child)
+	})
+})
+
+describe('htmlToMarkdown — element mapping', () => {
+	it('projects a text node literally, never escaped', () => {
+		expect(projectHTML('<p>a*b*c [x]</p>')).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'a*b*c [x]' }] }],
+		})
+	})
+
+	it('projects h1–h6 to a heading at that level', () => {
+		expect(projectHTML('<h3>Hi</h3>')).toEqual({
+			element: 'document',
+			children: [{ element: 'heading', level: 3, children: [{ element: 'text', value: 'Hi' }] }],
+		})
+		expect(projectHTML('<h6>x</h6>').children[0]?.element).toBe('heading')
+	})
+
+	it('projects p to a paragraph and drops a blank one', () => {
+		expect(projectHTML('<p>text</p>')).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'text' }] }],
+		})
+		expect(projectHTML('<p>  </p>')).toEqual({ element: 'document', children: [] })
+	})
+
+	it('projects strong and b to strong emphasis, and empty emphasis to nothing', () => {
+		expect(projectHTML('<p><b>bold</b></p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [
+				{ element: 'emphasis', strong: true, children: [{ element: 'text', value: 'bold' }] },
+			],
+		})
+		expect(projectHTML('<p><strong></strong>x</p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'x' }],
+		})
+	})
+
+	it('projects em and i to ordinary emphasis, keeping the word boundary its padding carried', () => {
+		expect(projectHTML('<p><i>soft</i></p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [
+				{ element: 'emphasis', strong: false, children: [{ element: 'text', value: 'soft' }] },
+			],
+		})
+		expect(projectHTML('<p>a<em> b </em>c</p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [
+				{ element: 'text', value: 'a ' },
+				{ element: 'emphasis', strong: false, children: [{ element: 'text', value: 'b' }] },
+				{ element: 'text', value: ' c' },
+			],
+		})
+	})
+
+	it('projects inline code to a code span, collapsing a newline run to one space', () => {
+		expect(projectHTML('<p><code>a\n   b</code></p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [{ element: 'codeSpan', value: 'a b' }],
+		})
+	})
+
+	it('projects a pre whose first element child is a code element to a verbatim code block', () => {
+		expect(projectHTML('<pre><code>  a\n  b\n</code></pre>')).toEqual({
+			element: 'document',
+			children: [{ element: 'codeBlock', code: '  a\n  b\n' }],
+		})
+	})
+
+	it('reads the language from the first qualifying language- class token', () => {
+		expect(projectHTML('<pre><code class="x language-ts y">a</code></pre>').children[0]).toEqual({
+			element: 'codeBlock',
+			lang: 'ts',
+			code: 'a',
+		})
+		expect(
+			projectHTML('<pre><code class="language- language-js">a</code></pre>').children[0],
+		).toEqual({ element: 'codeBlock', lang: 'js', code: 'a' })
+		expect(projectHTML('<pre><code class="language-">a</code></pre>').children[0]).toEqual({
+			element: 'codeBlock',
+			code: 'a',
+		})
+	})
+
+	it('projects any other pre through renderText', () => {
+		expect(projectHTML('<pre>plain  text\n  indented</pre>').children[0]).toEqual({
+			element: 'codeBlock',
+			code: 'plain  text\n  indented',
+		})
+	})
+
+	it('projects a to a link with a sanitized destination', () => {
+		expect(projectHTML('<p><a href="/guide">read</a></p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [
+				{ element: 'link', href: '/guide', children: [{ element: 'text', value: 'read' }] },
+			],
+		})
+	})
+
+	it('keeps the link and empties the destination when the URL is refused', () => {
+		expect(projectHTML('<p><a href="javascript:alert(1)">read</a></p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [{ element: 'link', href: '', children: [{ element: 'text', value: 'read' }] }],
+		})
+	})
+
+	it('projects img to an image whose alt becomes a single text child', () => {
+		expect(projectHTML('<p><img src="x.png" alt="a shot"></p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [
+				{ element: 'image', src: 'x.png', children: [{ element: 'text', value: 'a shot' }] },
+			],
+		})
+	})
+
+	it('keeps the image and empties src and alt when both are refused or absent', () => {
+		expect(projectHTML('<p><img src="data:text/html,x" alt=""></p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [{ element: 'image', src: '', children: [] }],
+		})
+	})
+
+	it('projects br to a hard break', () => {
+		expect(projectHTML('<p>a<br>b</p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [
+				{ element: 'text', value: 'a' },
+				{ element: 'break' },
+				{ element: 'text', value: 'b' },
+			],
+		})
+	})
+
+	it('projects hr to a thematic break', () => {
+		expect(projectHTML('<hr>')).toEqual({
+			element: 'document',
+			children: [{ element: 'thematicBreak' }],
+		})
+	})
+
+	it('projects blockquote, wrapping a bare inline run in a paragraph', () => {
+		expect(projectHTML('<blockquote>quoted</blockquote>')).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'blockquote',
+					children: [{ element: 'paragraph', children: [{ element: 'text', value: 'quoted' }] }],
+				},
+			],
+		})
+	})
+
+	it('projects a list item, wrapping inline-only content in a paragraph', () => {
+		expect(projectHTML('<ul><li>a</li></ul>')).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'list',
+					ordered: false,
+					start: 1,
+					items: [
+						{
+							element: 'listItem',
+							children: [{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] }],
+						},
+					],
+				},
+			],
+		})
+	})
+
+	it('projects ol as ordered and parses start base-10, degrading a junk value to 1', () => {
+		const ordered = projectHTML('<ol start="3"><li>a</li></ol>').children[0]
+		expect(ordered?.element === 'list' ? [ordered.ordered, ordered.start] : []).toEqual([true, 3])
+		const junk = projectHTML('<ol start="abc"><li>a</li></ol>').children[0]
+		expect(junk?.element === 'list' ? junk.start : undefined).toBe(1)
+		const negative = projectHTML('<ol start="-2"><li>a</li></ol>').children[0]
+		expect(negative?.element === 'list' ? negative.start : undefined).toBe(1)
+	})
+
+	it('keeps an empty li as an empty item and drops a list with no items', () => {
+		const list = projectHTML('<ul><li></li></ul>').children[0]
+		expect(list).toEqual({
+			element: 'list',
+			ordered: false,
+			start: 1,
+			items: [{ element: 'listItem', children: [] }],
+		})
+		expect(projectHTML('<ul>   </ul>')).toEqual({ element: 'document', children: [] })
+	})
+
+	it('unwraps a standalone cell — td or th — to a paragraph', () => {
+		expect(projectHTML('<td>x</td>')).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		})
+		expect(projectHTML('<th>x</th>')).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		})
+	})
+
+	it('unwraps a standalone row to one paragraph per cell', () => {
+		expect(projectHTML('<tr><td>a</td><th>b</th></tr>')).toEqual({
+			element: 'document',
+			children: [
+				{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] },
+				{ element: 'paragraph', children: [{ element: 'text', value: 'b' }] },
+			],
+		})
+	})
+
+	it('projects a table, taking the first th-bearing row as the header', () => {
+		expect(
+			projectHTML(
+				'<table><tbody><tr><td>skip</td></tr><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></tbody></table>',
+			).children[0],
+		).toEqual({
+			element: 'table',
+			header: [[{ element: 'text', value: 'a' }], [{ element: 'text', value: 'b' }]],
+			rows: [
+				[[{ element: 'text', value: 'skip' }], []],
+				[[{ element: 'text', value: '1' }], [{ element: 'text', value: '2' }]],
+			],
+			align: [null, null],
+		})
+	})
+
+	it('pads a short body row and truncates a long one to the header width', () => {
+		const table = projectHTML(
+			'<table><tr><th>a</th><th>b</th></tr><tr><td>1</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>',
+		).children[0]
+		expect(table?.element === 'table' ? table.rows : []).toEqual([
+			[[{ element: 'text', value: '1' }], []],
+			[[{ element: 'text', value: '1' }], [{ element: 'text', value: '2' }]],
+		])
+	})
+
+	it('flattens block content inside a cell to inline text joined by spaces', () => {
+		const table = projectHTML('<table><tr><td><p>a</p><p>b</p></td></tr></table>').children[0]
+		expect(table?.element === 'table' ? table.header : []).toEqual([
+			[{ element: 'text', value: 'a b' }],
+		])
+	})
+
+	it('degrades a table with no rows, and one with no usable header, to its content', () => {
+		expect(projectHTML('<table>plain</table>')).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'plain' }] }],
+		})
+		expect(projectHTML('<table><tr></tr></table>')).toEqual({ element: 'document', children: [] })
+	})
+
+	it('honours an align attribute only when it is exactly one of html TABLE_ALIGNMENTS', () => {
+		const aligned = projectHTML(
+			'<table><tr><th align=" LEFT ">a</th><th align="middle">b</th><th align="center">c</th></tr></table>',
+		).children[0]
+		expect(aligned?.element === 'table' ? aligned.align : []).toEqual(['left', null, 'center'])
+	})
+
+	it('drops an UNSAFE_ELEMENTS subtree whole, text included', () => {
+		expect(projectHTML('<div><script>alert(1)</script><p>kept</p></div>')).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'kept' }] }],
+		})
+		expect(JSON.stringify(projectHTML('<style>.a{}</style><p>x</p>'))).not.toContain('.a{}')
+	})
+
+	it('unwraps an unknown element, keeping two block children two blocks', () => {
+		expect(projectHTML('<section><p>a</p><p>b</p></section>')).toEqual({
+			element: 'document',
+			children: [
+				{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] },
+				{ element: 'paragraph', children: [{ element: 'text', value: 'b' }] },
+			],
+		})
+		expect(projectHTML('<span>a</span><del>b</del>')).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'ab' }] }],
+		})
+	})
+
+	it('keeps an unwrapped mixed run in source order', () => {
+		expect(projectHTML('<div><p>a</p>tail</div>')).toEqual({
+			element: 'document',
+			children: [
+				{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] },
+				{ element: 'paragraph', children: [{ element: 'text', value: 'tail' }] },
+			],
+		})
+		expect(projectHTML('<div>lead<p>a</p></div>')).toEqual({
+			element: 'document',
+			children: [
+				{ element: 'paragraph', children: [{ element: 'text', value: 'lead' }] },
+				{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] },
+			],
+		})
+	})
+
+	it('projects a comment and a doctype to nothing', () => {
+		expect(projectHTML('<!DOCTYPE html><!-- note --><p>x</p>')).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		})
+	})
+
+	it('wraps a top-level bare inline run in a paragraph', () => {
+		expect(projectHTML('bare <em>text</em>')).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'text', value: 'bare ' },
+						{ element: 'emphasis', strong: false, children: [{ element: 'text', value: 'text' }] },
+					],
+				},
+			],
+		})
+	})
+
+	it('projects nested emphasis as written', () => {
+		// Nesting is projected faithfully; choosing markers that survive a re-parse is the
+		// serializer's concern, not the projection's.
+		expect(projectHTML('<p><em>a <strong>c</strong> b</em></p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [
+				{
+					element: 'emphasis',
+					strong: false,
+					children: [
+						{ element: 'text', value: 'a ' },
+						{ element: 'emphasis', strong: true, children: [{ element: 'text', value: 'c' }] },
+						{ element: 'text', value: ' b' },
+					],
+				},
+			],
+		})
+	})
+
+	it('projects text that reads as a block marker as literal text', () => {
+		expect(projectHTML('<p>---</p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [{ element: 'text', value: '---' }],
+		})
+		expect(projectHTML('<p># not a heading</p>').children[0]).toEqual({
+			element: 'paragraph',
+			children: [{ element: 'text', value: '# not a heading' }],
+		})
+	})
+
+	it('projects a bare HTML node, not only a document', () => {
+		const element: ElementNode = {
+			category: 'element',
+			name: 'h2',
+			attributes: [],
+			children: [{ category: 'text', value: 'bare' }],
+		}
+		expect(htmlToMarkdown(element)).toEqual({
+			element: 'document',
+			children: [{ element: 'heading', level: 2, children: [{ element: 'text', value: 'bare' }] }],
+		})
+		expect(htmlToMarkdown({ category: 'text', value: 'leaf' })).toEqual({
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'leaf' }] }],
+		})
+	})
+})
+
+describe('htmlToMarkdown — adversarial input', () => {
+	it('is total on a cyclic HTML AST', () => {
+		const children: HTMLNode[] = []
+		const cyclic: ElementNode = { category: 'element', name: 'div', attributes: [], children }
+		children.push(cyclic)
+		expect(() => htmlToMarkdown(cyclic)).not.toThrow()
+		expect(htmlToMarkdown(cyclic)).toEqual({ element: 'document', children: [] })
+	})
+
+	it('is total, and bounded, on nesting past the depth cap', () => {
+		let node: HTMLNode = { category: 'text', value: 'leaf' }
+		for (let level = 0; level < 200; level += 1) {
+			node = { category: 'element', name: 'blockquote', attributes: [], children: [node] }
+		}
+		expect(() => htmlToMarkdown(node)).not.toThrow()
+		const projected = htmlToMarkdown(node)
+		let depth = 0
+		let block: BlockNode | undefined = projected.children[0]
+		while (block?.element === 'blockquote') {
+			depth += 1
+			block = block.children[0]
+		}
+		// The composed cap is html's, not markdown's: html's fold stops descending first,
+		// so 200 levels of source project to a bounded chain (its cap plus the root and the
+		// node folded AT the cap) — and the serializer, whose own cap is markdown's, stays
+		// total over the result rather than agreeing with it.
+		expect(depth).toBeGreaterThan(0)
+		expect(depth).toBeLessThanOrEqual(MAX_DEPTH + 2)
+		expect(() => parseDocument(renderMarkdown(projected))).not.toThrow()
+	})
+
+	it('is total on a very wide document', () => {
+		const children: HTMLNode[] = []
+		for (let index = 0; index < 20_000; index += 1) {
+			children.push({ category: 'element', name: 'hr', attributes: [], children: [] })
+		}
+		expect(htmlToMarkdown({ category: 'document', children }).children).toHaveLength(20_000)
+	})
+
+	it('projects an empty document to an empty document', () => {
+		expect(htmlToMarkdown({ category: 'document', children: [] })).toEqual({
+			element: 'document',
+			children: [],
+		})
+	})
+})
+
+describe('htmlToMarkdown — round-trip anchor law', () => {
+	for (const entry of PROJECTION_CORPUS) {
+		it(`re-parses its own rendered markdown identically: ${entry.name}`, () => {
+			const projected = projectHTML(entry.html)
+			expect(parseDocument(renderMarkdown(projected))).toEqual(projected)
+		})
+	}
+
+	it('holds for the whole corpus rendered as one document', () => {
+		const projected = projectHTML(PROJECTION_CORPUS.map((entry) => entry.html).join(''))
+		expect(parseDocument(renderMarkdown(projected))).toEqual(projected)
+	})
+})
+
+describe('htmlToMarkdown — the grand round trip', () => {
+	it('carries alignment, an image, and a link through markdown → HTML → markdown', () => {
+		const source =
+			'# Title\n\n| Left | Right |\n| :--- | ---: |\n| ![shot](a.png) | [read](/guide) |'
+		const projected = htmlToMarkdown(parseHTMLDocument(renderHTML(parseDocument(source))))
+		expect(projected).toEqual(parseDocument(source))
+		expect(renderMarkdown(projected)).toBe(source)
+	})
+
+	it('composes every refusal end to end for a hostile document', () => {
+		const hostile =
+			'<p><a href="javascript:alert(1)">click</a></p><p><img src="data:text/html,alert(1)" alt="shot"></p><script>alert(2)</script>'
+		const projected = htmlToMarkdown(parseHTMLDocument(hostile))
+		expect(projected).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{ element: 'link', href: '', children: [{ element: 'text', value: 'click' }] },
+					],
+				},
+				{
+					element: 'paragraph',
+					children: [{ element: 'image', src: '', children: [{ element: 'text', value: 'shot' }] }],
+				},
+			],
+		})
+		expect(renderMarkdown(projected)).toBe('[click]()\n\n![shot]()')
+		// html's floor REMOVES a URL attribute it refuses rather than emptying it, so the
+		// emptied destination does not even reach the output as an attribute.
+		expect(renderHTML(projected)).toBe('<p><a>click</a></p><p><img alt="shot"></p>')
 	})
 })

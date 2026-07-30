@@ -226,6 +226,60 @@ export interface MarkdownDocument {
 export type MarkdownNode = MarkdownDocument | BlockNode | ListItemNode | InlineNode
 
 /**
+ * One projected table cell - the inline content of a `th` / `td`, plus the two facts
+ * its table needs from it: whether it is heading its column, and the alignment its
+ * `align` attribute declared.
+ *
+ * @remarks
+ * A row needs no shape of its own: it is its cells in column order, and whether it is
+ * the header row is DERIVED from them (a row headed by any `th` is a header row)
+ * rather than stored a second time where the two could drift.
+ */
+export interface MarkdownCell {
+	/** `true` when the cell heads its column - the source cell was a `th`. */
+	readonly heading: boolean
+	/** The alignment the cell's `align` attribute declared; `undefined` when it declared none. */
+	readonly align: TableAlign | undefined
+	/** The cell's inline content - a table cell is inline-only, so block content flattens to text. */
+	readonly inlines: readonly InlineNode[]
+}
+
+/**
+ * What one HTML node projects to on the way to markdown - the fold value
+ * `htmlToMarkdown` carries up the AST.
+ *
+ * @remarks
+ * A node projects to several things at once because markdown decides late what a
+ * given HTML subtree becomes: a `td`'s content is inline in a table and a paragraph
+ * outside one, and a `code` body is a code span in prose and a verbatim code block
+ * under a `pre`. Rather than guess, each node reports every view its ancestors could
+ * need, and the ancestor that knows the context takes the one it wants.
+ *
+ * - `blocks` / `inlines` - the block and inline views. They are exclusive by
+ *   construction: as soon as a node contributes a block, the inline runs around it
+ *   are wrapped into paragraphs, so `blocks` being non-empty means `inlines` is
+ *   empty and no interleaving is ever lost.
+ * - `text` - the raw, uncollapsed, unescaped subtree text a code span and a
+ *   `pre > code` body need verbatim. An `UNSAFE_ELEMENTS` subtree contributes none
+ *   of it, so a script body can never resurface as prose.
+ * - `cells` / `rows` - table structure in flight. A cell travels up to its `tr` and a
+ *   row up to its `table`, passing through the `thead` / `tbody` wrappers between
+ *   them untouched; whatever never reaches a table degrades to paragraphs.
+ */
+export interface MarkdownProjection {
+	/** The node's block content, with any surrounding inline runs already wrapped into paragraphs. */
+	readonly blocks: readonly BlockNode[]
+	/** The node's inline content; empty whenever `blocks` is not. */
+	readonly inlines: readonly InlineNode[]
+	/** The raw subtree text, whitespace uncollapsed and escapes unresolved. */
+	readonly text: string
+	/** The cells this node contributes to an enclosing row. */
+	readonly cells: readonly MarkdownCell[]
+	/** The rows this node contributes to an enclosing table - each its cells, in column order. */
+	readonly rows: readonly (readonly MarkdownCell[])[]
+}
+
+/**
  * A fold handler for one AST element - receives the node and its children
  * ALREADY folded to `T`, and produces the node's own `T`. The building block of a
  * {@link MarkdownHandlers} catamorphism table.

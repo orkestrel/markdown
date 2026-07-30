@@ -1,4 +1,11 @@
-import type { HTMLDocument, HTMLNode } from '@orkestrel/html'
+import type {
+	CommentNode,
+	DoctypeNode,
+	ElementNode,
+	HTMLDocument,
+	HTMLNode,
+	TextNode as HTMLTextNode,
+} from '@orkestrel/html'
 import type {
 	BlockNode,
 	EmphasisNode,
@@ -6,9 +13,11 @@ import type {
 	LinkNode,
 	ListItemNode,
 	ListItemParts,
+	MarkdownCell,
 	MarkdownDocument,
 	MarkdownHandlers,
 	MarkdownNode,
+	MarkdownProjection,
 	MarkdownRewriteHandler,
 	TableAlign,
 } from './types.js'
@@ -23,7 +32,18 @@ import {
 	isWhitespace,
 } from './validators.js'
 import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '@orkestrel/contract'
-import { HTML, SAFE_ATTRIBUTES, renderHTML as renderHTMLDocument } from '@orkestrel/html'
+import {
+	HTML,
+	SAFE_ATTRIBUTES,
+	SAFE_URL_SCHEMES,
+	TABLE_ALIGNMENTS,
+	UNSAFE_ELEMENTS,
+	attributeOf,
+	foldNode as foldHTMLNode,
+	renderHTML as renderHTMLDocument,
+	renderText,
+	sanitizeURL,
+} from '@orkestrel/html'
 
 //  Markdown parsing + rendering leaves (pure and total)
 //
@@ -1266,6 +1286,629 @@ export function renderMarkdown(node: MarkdownNode): string {
 		values.push(value)
 	}
 	return ''
+}
+
+//  Projection (HTML AST → Markdown AST)
+//
+// The inverse of {@link markdownToHTML}, and the reason markdown owns both
+// directions: what an HTML subtree becomes is markdown-format knowledge, not HTML
+// knowledge. The engine is `@orkestrel/html`'s own `foldNode` catamorphism - it
+// already owns depth capping, cycle safety, and bottom-up folding - so this file
+// contributes the projection ONLY: five pure leaves over {@link MarkdownProjection}
+// values ({@link trimInlines}, {@link normalizeInlines}, {@link mergeProjections},
+// {@link projectionToBlocks}, {@link projectionToInlines}), the two handlers that
+// map HTML to markdown ({@link projectLeaf}, {@link projectNode}), and the one
+// entry point that folds them ({@link htmlToMarkdown}). HTML is richer than
+// markdown, so the projection is lossy by construction; what it must never be is
+// WRONG, which is what the round-trip anchor law pins down.
+
+/**
+ * Trim the whitespace at the two ends of an inline run - the leading whitespace of a
+ * leading text node and the trailing whitespace of a trailing one - dropping either
+ * node when nothing survives.
+ *
+ * @remarks
+ * Markdown trims every line of a paragraph, a heading's text, and a table cell, so an
+ * untrimmed run would come back from a re-parse a different AST. Expects a coalesced
+ * run (see {@link coalesceText}): only the outermost node on each side is examined.
+ *
+ * @param nodes - The inline run to trim
+ * @returns The run with its edge whitespace removed
+ *
+ * @example
+ * ```ts
+ * trimInlines([{ element: 'text', value: ' a ' }]) // [{ element: 'text', value: 'a' }]
+ * ```
+ */
+export function trimInlines(nodes: readonly InlineNode[]): readonly InlineNode[] {
+	const out: InlineNode[] = []
+	for (const node of nodes) if (node !== undefined) out.push(node)
+	const first = out[0]
+	if (first !== undefined && first.element === 'text') {
+		const value = first.value.replace(/^\s+/, '')
+		if (isEmptyString(value)) out.shift()
+		else out[0] = { element: 'text', value }
+	}
+	const last = out[out.length - 1]
+	if (last !== undefined && last.element === 'text') {
+		const value = last.value.replace(/\s+$/, '')
+		if (isEmptyString(value)) out.pop()
+		else out[out.length - 1] = { element: 'text', value }
+	}
+	return out
+}
+
+/**
+ * Reduce an inline run to the shape markdown can actually write back: adjacent text
+ * coalesced, empty text dropped, and every hard break either kept as a real line
+ * ending or spent as a space.
+ *
+ * @remarks
+ * A hard break is `  \n` in markdown source, so it survives a re-parse only BETWEEN
+ * two lines of content and only with no whitespace touching it: a leading or trailing
+ * break has no line to end, a run of breaks reads as one blank line (which would end
+ * the paragraph), and a space beside one is eaten by the parser's line trimming. Where
+ * a break cannot be written at all - a heading and a table cell are one line each - it
+ * becomes the space it stood for.
+ *
+ * @param nodes - The inline run to normalize
+ * @param breaks - Whether the target context can carry a hard break at all; `false` for
+ *   a heading or a table cell, where every break becomes a space
+ * @returns The normalized run
+ *
+ * @example
+ * ```ts
+ * normalizeInlines([{ element: 'break' }, { element: 'text', value: 'a' }], true)
+ * // [{ element: 'text', value: 'a' }] - a leading break has no line to end
+ * ```
+ */
+export function normalizeInlines(
+	nodes: readonly InlineNode[],
+	breaks: boolean,
+): readonly InlineNode[] {
+	const spent: InlineNode[] = []
+	for (const node of nodes) {
+		if (node === undefined) continue
+		if (node.element === 'break' && !breaks) spent.push({ element: 'text', value: ' ' })
+		else spent.push(node)
+	}
+	const out: InlineNode[] = []
+	for (const node of coalesceText(spent)) {
+		if (node === undefined) continue
+		const previous = out[out.length - 1]
+		if (node.element === 'text') {
+			const value = previous?.element === 'break' ? node.value.replace(/^\s+/, '') : node.value
+			if (!isEmptyString(value)) out.push({ element: 'text', value })
+			continue
+		}
+		if (node.element === 'break') {
+			if (previous === undefined || previous.element === 'break') continue
+			if (previous.element === 'text') {
+				const value = previous.value.replace(/\s+$/, '')
+				if (isEmptyString(value)) out.pop()
+				else out[out.length - 1] = { element: 'text', value }
+			}
+			if (out.length === 0) continue
+			out.push(node)
+			continue
+		}
+		out.push(node)
+	}
+	while (out.length > 0 && out[out.length - 1]?.element === 'break') out.pop()
+	return coalesceText(out)
+}
+
+/**
+ * Combine the projections of one node's children into the projection of that node -
+ * the single place inline runs become paragraphs, so no ancestor has to decide it
+ * twice.
+ *
+ * @remarks
+ * A child is either inline or block, never both, so merging preserves source order
+ * exactly: an inline run is held pending until a block arrives, then written out as a
+ * paragraph BEFORE it. That is what keeps `<div>lead<p>a</p></div>` two paragraphs in
+ * the order they were written rather than two lists that lost their interleaving. A
+ * pending run carrying no text is dropped rather than becoming a blank paragraph. Table
+ * cells and rows pass straight through: they are in flight to a `tr` or a `table` that
+ * may still be several wrappers above.
+ *
+ * @param children - The children's projections, in source order
+ * @returns Their combined projection
+ *
+ * @example
+ * ```ts
+ * mergeProjections([
+ *   { blocks: [], inlines: [{ element: 'text', value: 'a' }], text: 'a', cells: [], rows: [] },
+ *   { blocks: [{ element: 'thematicBreak' }], inlines: [], text: '', cells: [], rows: [] },
+ * ]).blocks
+ * // [{ element: 'paragraph', children: [...] }, { element: 'thematicBreak' }]
+ * ```
+ */
+export function mergeProjections(children: readonly MarkdownProjection[]): MarkdownProjection {
+	const blocks: BlockNode[] = []
+	const cells: MarkdownCell[] = []
+	const rows: (readonly MarkdownCell[])[] = []
+	let pending: InlineNode[] = []
+	let text = ''
+	for (const child of children) {
+		if (child === undefined) continue
+		text += child.text
+		for (const cell of child.cells) if (cell !== undefined) cells.push(cell)
+		for (const row of child.rows) if (row !== undefined) rows.push(row)
+		if (isNonEmptyArray(child.blocks)) {
+			const flushed = trimInlines(normalizeInlines(pending, true))
+			if (isNonEmptyArray(flushed)) blocks.push({ element: 'paragraph', children: flushed })
+			pending = []
+			for (const block of child.blocks) if (block !== undefined) blocks.push(block)
+			continue
+		}
+		for (const inline of child.inlines) if (inline !== undefined) pending.push(inline)
+	}
+	if (!isNonEmptyArray(blocks)) return { blocks, inlines: coalesceText(pending), text, cells, rows }
+	const flushed = trimInlines(normalizeInlines(pending, true))
+	if (isNonEmptyArray(flushed)) blocks.push({ element: 'paragraph', children: flushed })
+	return { blocks, inlines: [], text, cells, rows }
+}
+
+/**
+ * Read a projection as BLOCK content - the view a document, a blockquote, and a list
+ * item each need.
+ *
+ * @remarks
+ * A bare inline run becomes one paragraph, and a run carrying no text becomes nothing
+ * at all, because a blank paragraph is unwritable in markdown. A cell or a row that
+ * never reached a table is unwrapped here rather than dropped: a stray `<td>` is still
+ * someone's content.
+ *
+ * @param projection - The projection to read
+ * @returns Its block content
+ *
+ * @example
+ * ```ts
+ * projectionToBlocks({ blocks: [], inlines: [{ element: 'text', value: 'a' }], text: 'a', cells: [], rows: [] })
+ * // [{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] }]
+ * ```
+ */
+export function projectionToBlocks(projection: MarkdownProjection): readonly BlockNode[] {
+	const blocks: BlockNode[] = []
+	for (const block of projection.blocks) if (block !== undefined) blocks.push(block)
+	for (const row of projection.rows) {
+		if (row === undefined) continue
+		for (const cell of row) {
+			if (cell === undefined || !isNonEmptyArray(cell.inlines)) continue
+			blocks.push({ element: 'paragraph', children: cell.inlines })
+		}
+	}
+	for (const cell of projection.cells) {
+		if (cell === undefined || !isNonEmptyArray(cell.inlines)) continue
+		blocks.push({ element: 'paragraph', children: cell.inlines })
+	}
+	const paragraph = trimInlines(normalizeInlines(projection.inlines, true))
+	if (isNonEmptyArray(paragraph)) blocks.push({ element: 'paragraph', children: paragraph })
+	return blocks
+}
+
+/**
+ * Read a projection as INLINE content - the view a link, an emphasis, and a table cell
+ * each need.
+ *
+ * @remarks
+ * Inline content passes through as itself. Block content cannot: markdown has no way to
+ * put a paragraph inside a table cell, so it flattens to one text node of its own words,
+ * joined and whitespace-collapsed. Content that carries no text flattens to nothing
+ * rather than to an empty text node, which is a shape the parser never produces.
+ *
+ * @param projection - The projection to read
+ * @returns Its inline content
+ *
+ * @example
+ * ```ts
+ * projectionToInlines({ blocks: [], inlines: [{ element: 'break' }], text: '', cells: [], rows: [] })
+ * // [{ element: 'break' }]
+ * ```
+ */
+export function projectionToInlines(projection: MarkdownProjection): readonly InlineNode[] {
+	if (
+		!isNonEmptyArray(projection.blocks) &&
+		!isNonEmptyArray(projection.cells) &&
+		!isNonEmptyArray(projection.rows)
+	) {
+		return coalesceText(projection.inlines)
+	}
+	const value = projectionToBlocks(projection)
+		.map(flattenText)
+		.join(' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+	return isEmptyString(value) ? [] : [{ element: 'text', value }]
+}
+
+/**
+ * Project one HTML leaf - a text node, a comment, or a doctype - to its
+ * {@link MarkdownProjection}.
+ *
+ * @remarks
+ * Text collapses each whitespace run to one space, which is both what HTML means by it
+ * and all markdown can write back; the raw value travels on in `text` for the two
+ * places that need it verbatim, a code span and a `pre > code` body. A comment and a
+ * doctype carry nothing into markdown and project to nothing.
+ *
+ * @param leaf - The leaf node to project
+ * @returns Its projection
+ *
+ * @example
+ * ```ts
+ * projectLeaf({ category: 'text', value: 'a\n  b' }).inlines
+ * // [{ element: 'text', value: 'a b' }]
+ * ```
+ */
+export function projectLeaf(leaf: CommentNode | DoctypeNode | HTMLTextNode): MarkdownProjection {
+	if (leaf.category !== 'text') return { blocks: [], inlines: [], text: '', cells: [], rows: [] }
+	const value = leaf.value.replace(/\s+/g, ' ')
+	return {
+		blocks: [],
+		inlines: isEmptyString(value) ? [] : [{ element: 'text', value }],
+		text: leaf.value,
+		cells: [],
+		rows: [],
+	}
+}
+
+/**
+ * Project one HTML container - the document root or an element - from its children's
+ * already-computed projections. THE element mapping, and the only place that decides
+ * what an HTML tag becomes in markdown.
+ *
+ * @remarks
+ * `h1`-`h6` become headings; `p` a paragraph; `strong` / `b` and `em` / `i` emphasis;
+ * `code` a code span; `pre` a code block, verbatim through a first `code` element child
+ * (its `language-` class naming the language) and through `renderText` otherwise; `a`
+ * and `img` a link and an image, each destination re-sanitized; `br` and `hr` a hard
+ * break and a thematic break; `blockquote` and `li` their block content, with bare
+ * inline runs wrapped in paragraphs; `ul` / `ol` a list, ordered from the tag and
+ * numbered from `start`; `th` / `td`, `tr`, and `table` a GFM table whose column
+ * alignment comes from each header-position cell's `align` attribute. Every
+ * `UNSAFE_ELEMENTS` subtree contributes nothing at all, text included. Every OTHER
+ * element unwraps to its children, so wrapper soup melts while its content keeps its
+ * shape - `<div><p>a</p><p>b</p></div>` stays two paragraphs.
+ *
+ * Two mappings read their own node rather than only their children's projections,
+ * because HTML puts the fact in a position rather than in a value: a `pre` takes its
+ * body from its `code` child's raw text, and a list takes one item per `li` child - so
+ * an empty `<li>` is still an item, while the whitespace between two of them is not.
+ *
+ * @param node - The document root or element to project
+ * @param children - Its children's projections, in source order
+ * @returns Its projection
+ *
+ * @example
+ * ```ts
+ * projectNode({ category: 'element', name: 'hr', attributes: [], children: [] }, []).blocks
+ * // [{ element: 'thematicBreak' }]
+ * ```
+ */
+export function projectNode(
+	node: ElementNode | HTMLDocument,
+	children: readonly MarkdownProjection[],
+): MarkdownProjection {
+	if (node.category === 'document') return mergeProjections(children)
+	if (UNSAFE_ELEMENTS.includes(node.name))
+		return { blocks: [], inlines: [], text: '', cells: [], rows: [] }
+	const merged = mergeProjections(children)
+	const level = /^h([1-6])$/.exec(node.name)
+	if (level !== null) {
+		return {
+			blocks: [
+				{
+					element: 'heading',
+					level: parseInteger(level[1]) ?? 1,
+					children: trimInlines(normalizeInlines(projectionToInlines(merged), false)),
+				},
+			],
+			inlines: [],
+			text: merged.text,
+			cells: [],
+			rows: [],
+		}
+	}
+	switch (node.name) {
+		case 'p':
+		case 'li':
+			return {
+				blocks: projectionToBlocks(merged),
+				inlines: [],
+				text: merged.text,
+				cells: [],
+				rows: [],
+			}
+		case 'blockquote':
+			return {
+				blocks: [{ element: 'blockquote', children: projectionToBlocks(merged) }],
+				inlines: [],
+				text: merged.text,
+				cells: [],
+				rows: [],
+			}
+		case 'hr':
+			return {
+				blocks: [{ element: 'thematicBreak' }],
+				inlines: [],
+				text: '',
+				cells: [],
+				rows: [],
+			}
+		case 'br':
+			return { blocks: [], inlines: [{ element: 'break' }], text: '\n', cells: [], rows: [] }
+		case 'strong':
+		case 'b':
+		case 'em':
+		case 'i': {
+			const content = projectionToInlines(merged)
+			const inner = trimInlines(normalizeInlines(content, true))
+			if (!isNonEmptyArray(inner))
+				return { blocks: [], inlines: [], text: merged.text, cells: [], rows: [] }
+			// Markdown refuses emphasis padded with whitespace (`* x *` is literal), so the
+			// padding moves OUTSIDE the marker rather than being lost with the word boundary.
+			const first = content[0]
+			const last = content[content.length - 1]
+			const inlines: InlineNode[] = []
+			if (first?.element === 'text' && /^\s/.test(first.value))
+				inlines.push({ element: 'text', value: ' ' })
+			inlines.push({
+				element: 'emphasis',
+				strong: node.name === 'strong' || node.name === 'b',
+				children: inner,
+			})
+			if (last?.element === 'text' && /\s$/.test(last.value))
+				inlines.push({ element: 'text', value: ' ' })
+			return { blocks: [], inlines, text: merged.text, cells: [], rows: [] }
+		}
+		case 'code': {
+			const body = merged.text.replace(/\r\n?/g, '\n').replace(/\s*\n\s*/g, ' ')
+			// A span padded on BOTH sides is exactly what the parser strips back off, so the
+			// canonical value is the stripped one.
+			const value =
+				body.length > 2 && body.startsWith(' ') && body.endsWith(' ') && !isEmptyString(body.trim())
+					? body.trim()
+					: body
+			return {
+				blocks: [],
+				inlines: isEmptyString(value) ? [] : [{ element: 'codeSpan', value }],
+				text: merged.text,
+				cells: [],
+				rows: [],
+			}
+		}
+		case 'pre': {
+			let position = -1
+			for (const [index, child] of node.children.entries()) {
+				if (child?.category !== 'element') continue
+				position = index
+				break
+			}
+			const source = position === -1 ? undefined : node.children[position]
+			const projected = position === -1 ? undefined : children[position]
+			if (source?.category === 'element' && source.name === 'code' && projected !== undefined) {
+				let lang: string | undefined
+				for (const token of (attributeOf(source, 'class') ?? '').split(/\s+/)) {
+					if (!token.startsWith('language-') || token.length <= 9 || token.includes('`')) continue
+					lang = token.slice(9)
+					break
+				}
+				return {
+					blocks: [
+						{
+							element: 'codeBlock',
+							...(lang === undefined ? {} : { lang }),
+							code: projected.text.replace(/\r\n?/g, '\n'),
+						},
+					],
+					inlines: [],
+					text: merged.text,
+					cells: [],
+					rows: [],
+				}
+			}
+			return {
+				blocks: [{ element: 'codeBlock', code: renderText(node).replace(/\r\n?/g, '\n') }],
+				inlines: [],
+				text: merged.text,
+				cells: [],
+				rows: [],
+			}
+		}
+		case 'a':
+			return {
+				blocks: [],
+				inlines: [
+					{
+						element: 'link',
+						href: sanitizeURL(attributeOf(node, 'href') ?? '', SAFE_URL_SCHEMES),
+						children: normalizeInlines(projectionToInlines(merged), true),
+					},
+				],
+				text: merged.text,
+				cells: [],
+				rows: [],
+			}
+		case 'img': {
+			const alt = (attributeOf(node, 'alt') ?? '').replace(/\s+/g, ' ').trim()
+			return {
+				blocks: [],
+				inlines: [
+					{
+						element: 'image',
+						src: sanitizeURL(attributeOf(node, 'src') ?? '', SAFE_URL_SCHEMES),
+						children: isEmptyString(alt) ? [] : [{ element: 'text', value: alt }],
+					},
+				],
+				text: '',
+				cells: [],
+				rows: [],
+			}
+		}
+		case 'th':
+		case 'td': {
+			// html's set is the gate; the union is the bridge - an alignment markdown has no
+			// delimiter for stays absent rather than becoming a decorative label.
+			const declared = (attributeOf(node, 'align') ?? '').trim().toLowerCase()
+			const align =
+				TABLE_ALIGNMENTS.includes(declared) &&
+				(declared === 'left' || declared === 'right' || declared === 'center')
+					? declared
+					: undefined
+			return {
+				blocks: [],
+				inlines: [],
+				text: merged.text,
+				cells: [
+					{
+						heading: node.name === 'th',
+						align,
+						inlines: trimInlines(normalizeInlines(projectionToInlines(merged), false)),
+					},
+				],
+				rows: [],
+			}
+		}
+		case 'tr': {
+			const cells: MarkdownCell[] = []
+			for (const cell of merged.cells) if (cell !== undefined) cells.push(cell)
+			return { blocks: [], inlines: [], text: merged.text, cells: [], rows: [cells] }
+		}
+		case 'ul':
+		case 'ol': {
+			const items: ListItemNode[] = []
+			for (const [index, child] of children.entries()) {
+				if (child === undefined) continue
+				const source = node.children[index]
+				const blocks = projectionToBlocks(child)
+				if (source?.category === 'element' && source.name === 'li') {
+					items.push({ element: 'listItem', children: blocks })
+					continue
+				}
+				if (isNonEmptyArray(blocks)) items.push({ element: 'listItem', children: blocks })
+			}
+			if (!isNonEmptyArray(items))
+				return { blocks: [], inlines: [], text: merged.text, cells: [], rows: [] }
+			const ordered = node.name === 'ol'
+			const declared = parseInteger(attributeOf(node, 'start'))
+			// A start markdown cannot write as an ordinal (`\d{1,9}`) is no start at all.
+			const start =
+				ordered && declared !== undefined && declared >= 0 && declared <= 999_999_999 ? declared : 1
+			return {
+				blocks: [{ element: 'list', ordered, start, items }],
+				inlines: [],
+				text: merged.text,
+				cells: [],
+				rows: [],
+			}
+		}
+		case 'table': {
+			const rows: (readonly MarkdownCell[])[] = []
+			for (const row of merged.rows) if (row !== undefined) rows.push(row)
+			if (isNonEmptyArray(merged.cells)) rows.push(merged.cells)
+			// The header row is the first row a `th` heads, and row 0 when none does.
+			let position = 0
+			for (const [index, row] of rows.entries()) {
+				if (row === undefined || !row.some((cell) => cell.heading)) continue
+				position = index
+				break
+			}
+			const headerRow: readonly MarkdownCell[] | undefined = rows[position]
+			if (headerRow === undefined || !isNonEmptyArray(headerRow)) {
+				return {
+					blocks: projectionToBlocks(merged),
+					inlines: [],
+					text: merged.text,
+					cells: [],
+					rows: [],
+				}
+			}
+			const header: (readonly InlineNode[])[] = []
+			const align: (TableAlign | null)[] = []
+			for (const cell of headerRow) {
+				if (cell === undefined) continue
+				header.push(cell.inlines)
+				align.push(cell.align ?? null)
+			}
+			const body: (readonly (readonly InlineNode[])[])[] = []
+			for (const [index, row] of rows.entries()) {
+				if (row === undefined || index === position) continue
+				const cells: (readonly InlineNode[])[] = []
+				for (let column = 0; column < header.length; column += 1)
+					cells.push(row[column]?.inlines ?? [])
+				body.push(cells)
+			}
+			return {
+				blocks: [{ element: 'table', header, rows: body, align }],
+				inlines: [],
+				text: merged.text,
+				cells: [],
+				rows: [],
+			}
+		}
+	}
+	return merged
+}
+
+/**
+ * Project an `@orkestrel/html` {@link HTMLNode} into a {@link MarkdownDocument} - the
+ * HTML→markdown direction, and the inverse of {@link markdownToHTML}.
+ *
+ * @remarks
+ * **Engine.** One total handler table - {@link projectNode} for the containers,
+ * {@link projectLeaf} for the leaves - folded by `@orkestrel/html`'s own `foldNode`, so
+ * depth capping, cycle safety, and bottom-up ordering are inherited rather than
+ * rebuilt. Total: hostile, cyclic, and pathologically deep input degrades instead of
+ * throwing.
+ *
+ * **Composed depth.** Both packages cap recursion at 64, and html's cap is reached
+ * first: a document nested past it projects to a chain bounded by THAT cap, with the
+ * content below it truncated before markdown ever sees it. Since the projected chain
+ * can be a level or two deeper than {@link MAX_DEPTH}, the serializer's own cap can
+ * then truncate again - so the anchor law below is a law within the depth budget, and
+ * beyond it only totality is promised.
+ *
+ * **Safety.** Every `href` and `src` is re-sanitized through
+ * `sanitizeURL(value, SAFE_URL_SCHEMES)` whether or not the AST was ever sanitized,
+ * because a hand-built one never was. A refused destination empties to `''` and the
+ * link or image is KEPT - `[text]()` - since a bad URL is no reason to lose the words
+ * around it. An `UNSAFE_ELEMENTS` subtree contributes nothing at all, text included, so
+ * a `script` body can never resurface as prose.
+ *
+ * **The anchor law.** HTML→markdown is lossy, so the fixpoint that matters is the
+ * PROJECTED AST, not the input bytes:
+ * `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals `htmlToMarkdown(x)`.
+ * The projection therefore emits canonical markdown shapes rather than literal
+ * translations - whitespace collapsed, edges trimmed, a blank paragraph dropped, a hard
+ * break only where a line can end - because a shape markdown cannot write back is a
+ * shape this projection has no business producing.
+ *
+ * @param node - The HTML document or bare node to project
+ * @returns The projected markdown document
+ *
+ * @example
+ * ```ts
+ * import { parseDocument } from '@orkestrel/html'
+ *
+ * htmlToMarkdown(parseDocument('<h1>Title</h1>'))
+ * // { element: 'document', children: [{ element: 'heading', level: 1, children: [...] }] }
+ * ```
+ */
+export function htmlToMarkdown(node: HTMLNode): MarkdownDocument {
+	return {
+		element: 'document',
+		children: projectionToBlocks(
+			foldHTMLNode<MarkdownProjection>(node, {
+				document: projectNode,
+				element: projectNode,
+				text: projectLeaf,
+				comment: projectLeaf,
+				doctype: projectLeaf,
+			}),
+		),
+	}
 }
 
 /**

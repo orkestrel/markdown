@@ -12,12 +12,15 @@ import type {
 	InlineNode,
 	LinkNode,
 	ListNode,
+	MarkdownDocument,
+	MarkdownProjection,
 	ParagraphNode,
 	TableNode,
 } from '@src/core'
 import {
 	Markdown,
 	flattenText,
+	htmlToMarkdown,
 	isHeadingNode,
 	isListNode,
 	isTableNode,
@@ -28,6 +31,7 @@ import {
 	isCodeSpanNode,
 	isLinkNode,
 } from '@src/core'
+import { parseDocument as parseHTML } from '@orkestrel/html'
 import { afterEach, vi } from 'vitest'
 
 afterEach(() => {
@@ -125,6 +129,55 @@ export function assertInlineNode(markdown: string): InlineNode {
 export function inlineText(nodes: readonly InlineNode[]): string {
 	return nodes.map((node) => flattenText(node)).join('')
 }
+
+// ── HTML → markdown projection fixtures ───────────────────────────────────────
+// `htmlToMarkdown` reads an `@orkestrel/html` AST, so its tests start from HTML
+// source. `projectHTML` is the one parse-then-project step every projection test
+// shares, and `PROJECTION_CORPUS` is the document set the round-trip anchor law
+// (`parseDocument(renderMarkdown(projection))` deep-equals `projection`) is proved
+// over — one entry per markdown construct the projection can emit.
+
+/** A {@link MarkdownProjection} with every field defaulted — the projection leaves' test input. */
+export function buildProjection(parts: Partial<MarkdownProjection>): MarkdownProjection {
+	return { blocks: [], inlines: [], text: '', cells: [], rows: [], ...parts }
+}
+
+/** Parse `html` with `@orkestrel/html` and project it to a markdown document. */
+export function projectHTML(html: string): MarkdownDocument {
+	return htmlToMarkdown(parseHTML(html))
+}
+
+/** The HTML documents the projection's round-trip anchor law is proved over. */
+export const PROJECTION_CORPUS: readonly { readonly name: string; readonly html: string }[] = [
+	{ name: 'headings', html: '<h1>Title</h1><h2>Sub &amp; more</h2><h6>Deep</h6>' },
+	{ name: 'emphasis nesting', html: '<p>a <strong><em>c</em> and b</strong> d</p>' },
+	{ name: 'inline code with backticks', html: '<p>use <code>a`b</code> now</p>' },
+	{
+		name: 'fenced code with a language',
+		html: '<pre><code class="language-ts">const a = 1</code></pre>',
+	},
+	{ name: 'fenced code without a language', html: '<pre>plain\n  block</pre>' },
+	{ name: 'link kept', html: '<p>see <a href="/guide">the guide</a>.</p>' },
+	{ name: 'link refused', html: '<p>see <a href="javascript:alert(1)">the guide</a>.</p>' },
+	{ name: 'image kept', html: '<p><img src="shot.png" alt="a shot"> after</p>' },
+	{ name: 'image refused', html: '<p><img src="data:text/html,x" alt=""> after</p>' },
+	{ name: 'hard break', html: '<p>one<br>two</p>' },
+	{ name: 'nested list', html: '<ul><li>a<ul><li>b</li></ul></li></ul>' },
+	{ name: 'ordered list with start', html: '<ol start="3"><li>a</li><li>b</li></ol>' },
+	{ name: 'blockquote with blank lines', html: '<blockquote><p>a</p><p>b</p></blockquote>' },
+	{
+		name: 'aligned table',
+		html: '<table><tr><th align="right">a</th><th align="center">b</th></tr><tr><td>1</td><td>2</td></tr></table>',
+	},
+	{ name: 'unaligned table', html: '<table><tr><th>a</th></tr><tr><td>1</td></tr></table>' },
+	{ name: 'unknown wrappers', html: '<section><div>text</div><p>para</p></section>' },
+	{ name: 'unsafe subtree', html: '<div><script>alert(1)</script><p>kept</p></div>' },
+	{ name: 'thematic break', html: '<p>a</p><hr><p>b</p>' },
+	{
+		name: 'mixed document',
+		html: '<h1>Doc</h1><p>Intro with <code>x</code> and <a href="/a">a link</a>.</p><blockquote><p>Quoted</p></blockquote><ul><li>one</li><li>two</li></ul><pre><code class="language-js">go()</code></pre>',
+	},
+]
 
 // ── Adversarial values for guard-totality tests ───────────────────────────────
 // The `isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`
