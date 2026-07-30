@@ -1,11 +1,18 @@
 # @orkestrel/markdown
 
-A zero-surprise, types-first markdown parser — a hand-written scanner turns
-GitHub-Flavored Markdown into a typed AST (a discriminated union keyed by
-`element`), and a separate renderer projects that AST to sanitized, XSS-safe
-HTML. Total and depth-capped throughout: malformed or pathologically deep
-input degrades to literal text instead of throwing. Part of the `@orkestrel`
-line.
+A types-first markdown layer over `@orkestrel/html`: parse GitHub-Flavored Markdown into a typed
+AST, project that AST out to sanitized HTML or to canonical markdown source, and project an HTML AST
+back in.
+
+- **One AST, several projections.** Nodes are plain readonly data keyed by `element`; parsing,
+  querying, rewriting, folding, streaming, and every conversion are operations over it.
+- **Both directions live here.** `markdownToHTML` and `htmlToMarkdown` are inverse projections
+  across the boundary, because what an HTML subtree means in markdown is markdown's knowledge, not
+  html's.
+- **Sanitized by default, with no opt-out.** `renderHTML` takes one argument and composes
+  `@orkestrel/html`'s sanitize floor, so there is no call shape that emits unsafe HTML.
+- **Bounded by design.** Every parse, traversal, and projection is iterative and depth-capped, so
+  malformed or hostile input degrades to literal text instead of throwing.
 
 ## Install
 
@@ -15,88 +22,62 @@ npm install @orkestrel/markdown
 
 ## Requirements
 
-- Node.js >= 24
-- ESM-only (no CommonJS build)
+- Node.js >= 22.12
+- Ships ES and CommonJS builds with its own `.d.ts` types
+- Two runtime dependencies, `@orkestrel/html` and `@orkestrel/contract`
 
 ## Usage
 
 ```ts
-import { createMarkdown, renderHTML } from '@orkestrel/markdown'
+import { createMarkdown, htmlToMarkdown, renderHTML, renderMarkdown } from '@orkestrel/markdown'
+import { parseDocument as parseHTML } from '@orkestrel/html'
 
 const markdown = createMarkdown('# Hi\n\nRead the [guide](./guide.md) for more, *thanks*.')
+
 markdown.document
 // { element: 'document', children: [...] } — the typed, render-agnostic AST
 
 renderHTML(markdown.document)
-// '<h1>Hi</h1>\n<p>Read the <a href="./guide.md">guide</a> for more, <em>thanks</em>.</p>'
+// '<h1>Hi</h1><p>Read the <a href="./guide.md">guide</a> for more, <em>thanks</em>.</p>'
+
+// …and back the other way.
+renderMarkdown(htmlToMarkdown(parseHTML('<h1>Release notes</h1><p>Ship <b>fast</b>.</p>')))
+// '# Release notes\n\nShip **fast**.'
 ```
 
-`createMarkdown(markdown)` (or `new Markdown(markdown)`) runs a two-phase
-parse (block phase, then inline phase) and stores the result as a stateful
-workspace's `document` — a render-agnostic `MarkdownDocument`. The workspace
-also exposes `find` / `filter` / `map` / `reduce` / `fold` / `stream` /
-iteration over the AST. `renderHTML(node)` HTML-escapes all text and
-attributes and sanitizes link `href`s (an unsafe scheme like `javascript:` or
-`data:` is dropped), so even hostile content cannot inject markup or script.
-`renderMarkdown(node)` writes canonical markdown source back out — a
-`parseDocument(renderMarkdown(doc))` round-trip always deep-equals `doc`. A
-fold projects the AST to any shape (a plain string, a DOM tree, a count)
-through one total, per-element handler table, with no writer coupling built
-in.
+`createMarkdown` (or `new Markdown`) runs a two-phase parse — block phase, then inline phase — and
+holds the result as a stateful workspace exposing `find` / `filter` / `map` / `reduce` / `fold` /
+`stream` / iteration over the AST. `renderHTML` projects that AST onto html's AST, sanitizes it
+against a floor no option can lower, and serializes it. `renderMarkdown` writes canonical markdown
+source instead. `htmlToMarkdown` folds an HTML AST back down to a `MarkdownDocument`, re-sanitizing
+every destination as it goes. Guards (`isMarkdownNode`, `isMarkdownDocument`, `isBlockNode`,
+`isInlineNode`) validate an AST that arrives from outside — an RPC payload, a cached document —
+without ever throwing, and the non-recursive leaf nodes each compile to a `@orkestrel/contract`
+bundle of guard, parser, JSON Schema, and seeded generator.
 
-## Validating untrusted ASTs
+## Laws
 
-A parsed or deserialized AST crossing a trust boundary (an RPC payload, a
-cached document) can be checked without throwing:
+- **Markdown fixpoint** — `parseDocument(renderMarkdown(document))` deep-equals a parser-produced
+  `document`, and `renderMarkdown` is idempotent.
+- **Projection anchor** — `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals
+  `htmlToMarkdown(x)`: whatever the projection emits, markdown can write it and read it back
+  unchanged.
+- **Sanitized output** — `renderHTML` refuses `javascript:`, `data:`, `vbscript:`, `file:`, and
+  protocol-relative destinations, removes unsafe subtrees whole, and strips every handler and
+  styling attribute, whatever the input AST claims.
 
-```ts
-import { isMarkdownNode } from '@orkestrel/markdown'
-
-isMarkdownNode({ element: 'text', value: 'hi' }) // true
-isMarkdownNode({ element: 'bogus' }) // false
-```
-
-`isMarkdownNode`, `isMarkdownDocument`, `isBlockNode`, and `isInlineNode` are
-total guards — safe to call on cyclic or adversarial input, even deeply
-nested structures.
-
-## Contract-backed leaf shapes
-
-The non-recursive leaf nodes (`TextNode`, `CodeSpanNode`, `CodeBlockNode`,
-`ThematicBreakNode`) each have a compiled contract — a guard, parser, JSON
-Schema, and seeded generator from one shape declaration, built on
-`@orkestrel/contract`:
-
-```ts
-import { createTextContract } from '@orkestrel/markdown'
-
-const text = createTextContract()
-text.schema // the compiled JSON Schema
-text.generate() // a seeded, schema-valid TextNode
-```
-
-## Safety notes
-
-- `renderHTML`'s `href`s are restricted to a safe scheme allowlist (`http`,
-  `https`, `mailto`, `tel`, or scheme-less/relative/anchor links) — anything
-  else is dropped.
-- All of `renderHTML`'s rendered text and attributes are HTML-escaped.
-  `renderMarkdown` is not an HTML boundary — it writes markdown source, not
-  markup — so no HTML-escaping applies there.
-- Parsing and rendering are depth-capped (`MAX_DEPTH`); past that depth the
-  parser/writer degrades to literal text instead of recursing further or
-  throwing.
+HTML is richer than markdown, so what survives the inbound trip is the projected AST, not the input
+bytes: comments and doctypes vanish, an element with no markdown meaning unwraps to its children,
+and block content inside a table cell flattens to one line.
 
 ## Guide
 
-For the full surface — the AST shape, the two-phase parse, GFM tables, and
-the contract-backed leaf shapes — see
-[`guides/src/markdown.md`](guides/src/markdown.md).
+For the full surface — the AST shape, the two-phase parse, the sanitization policy, the projection
+seam, and the contract-backed leaf shapes — see [`guides/src/markdown.md`](guides/src/markdown.md).
 
 ## Package
 
-Published as a single typed entry point per the `exports` field in
-`package.json`.
+Published as a single typed entry point per the `exports` field in `package.json`.
 
 ## License
 

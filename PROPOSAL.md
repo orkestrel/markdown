@@ -1,12 +1,60 @@
 # Proposal — rebuild `@orkestrel/markdown` on `@orkestrel/html`
 
-Status: **specified, blocked on publish.** Nothing here may be implemented until
-`@orkestrel/html@0.0.1` is on the registry and installed here as a real dependency. No `file:`
-dependency, no `link:`, no tsconfig path alias, no vendoring — those were all considered and
-excluded.
+Status: **shipped.** `@orkestrel/html` published at `0.0.1`, is installed here as a real dependency,
+and the rebuild landed. Everything below this section is the spec as written before implementation,
+kept unchanged as the historical record; the completion record immediately following is the only
+part that reports outcomes.
 
-This document is the spec, not a sketch. It exists because the knowledge it carries was recovered
-from code that has already been deleted, and would otherwise survive only in git history.
+This document was the spec, not a sketch. It exists because the knowledge it carries was recovered
+from code that had already been deleted, and would otherwise survive only in git history.
+
+## Completion record
+
+**What shipped.** All three of "What markdown gains": `markdownToHTML` (a pure, unsanitized
+projection onto html's AST), `htmlToMarkdown` (html's AST back to a `MarkdownDocument`, folded by
+html's own `foldNode`), and `renderHTML` rewired to compose the projection with html's `sanitize`
+and serializer. All four of "What markdown deletes" are gone with no shims: `escapeHtml`,
+`sanitizeUrl`, `SAFE_URL_SCHEMES`, and the `TableAlign` `'none'` sentinel. Around the two
+projections the implementation added a fold value (`MarkdownProjection`), its frozen empty
+(`EMPTY_PROJECTION`) and invariant-enforcing factory (`createProjection`), five pure projection
+leaves, and the two exported handlers — which together make the element mapping a replaceable seam
+rather than an internal detail. `guides/src/markdown.md` documents all of it.
+
+**Binding requirements, audit-verified.** B1 holds: `htmlToMarkdown` re-applies
+`sanitizeURL(value, SAFE_URL_SCHEMES)` to every `href` and `src` whether or not the AST was ever
+sanitized, a refused destination empties to `''` with the link or image kept, and destinations are
+escaped after sanitizing. B2 holds: `markdownToHTML` emits `align` on `th` / `td` instead of
+`style="text-align:…"`, and `htmlToMarkdown` reads `align` back into the GFM delimiter row. B3's gate
+was never opened — the escaper consolidation was not attempted, so markdown's context-sensitive
+escaper remains the only one here, and its `parse(render(x)) === x` round-trip is pinned by a corpus
+rather than assumed.
+
+**Where audits amended the spec.**
+
+- **Absence is `null`, not `undefined`, inside `TableNode.align`.** The spec said only "absence is
+  `undefined`, never a sentinel", which is right about the sentinel and wrong about the container:
+  `align` is a positional array, one entry per column, and JSON cannot carry `undefined` in an array
+  without changing its length. `null` is the sanctioned external-format reading, and GFM's bare
+  `---` is an explicit no-alignment marker rather than an omitted field. `MarkdownCell.align`, a
+  plain optional property, uses `undefined` as usual.
+- **`ImageNode` and `LineBreakNode` joined the AST.** The spec's relocation table assumed `img` and
+  `br` would be handled by the projection alone. They could not be: markdown has first-class syntax
+  for both, and without nodes the inbound projection had nowhere to put them and the round-trip
+  could not close. Both were added to `InlineNode` with their guards, shapes, and traversal
+  coverage; an image's alt text is its inline `children`, matching a link's text.
+- **Emphasis serialization became delimiter-aware by nesting parity (the D1 amendment).** The
+  original presence-check design was refuted at triple nesting by an audit counterexample. Even
+  emphasis depths now emit the asterisk family and odd depths the underscore family, and scanning
+  matches a closer to its opening family, so a nested run never shares a delimiter with its
+  enclosing run.
+
+**Open decisions, resolved.** The intermediate AST IS exported — `markdownToHTML` is public, which
+is what makes a stricter consumer policy expressible without an option. `renderHTML` sanitizes
+unconditionally and takes exactly one argument, with no opt-out; its only widening of html's floor
+is the attribute `src`, which remains a `URL_ATTRIBUTES` member and therefore still scheme-checked.
+The 33-vector URL corpus stayed in html as html's own; markdown keeps a smaller set of composition
+vectors proving the floor reaches through this package's pipeline, and the three former divergence
+claims were retired rather than restated — there is no second sanitizer here to diverge.
 
 ## Direction
 
@@ -132,11 +180,11 @@ shared-graph input. Children are collected only for `document`/`element`, and on
 
 **Three parallel projections per node**, all load-bearing:
 
-| Projection | Meaning | Consumed by |
-| --- | --- | --- |
-| `value` | the markdown | siblings, root |
-| `text` | raw concatenated subtree text — uncollapsed, unescaped | `code`, `pre > code` |
-| `plain` | whitespace-collapsed text with `\n` around block elements and `br`, excluding `RAW_ELEMENTS` subtrees | the `pre` fallback |
+| Projection | Meaning                                                                                               | Consumed by          |
+| ---------- | ----------------------------------------------------------------------------------------------------- | -------------------- |
+| `value`    | the markdown                                                                                          | siblings, root       |
+| `text`     | raw concatenated subtree text — uncollapsed, unescaped                                                | `code`, `pre > code` |
+| `plain`    | whitespace-collapsed text with `\n` around block elements and `br`, excluding `RAW_ELEMENTS` subtrees | the `pre` fallback   |
 
 **Sibling join.** Children with a non-empty `value` are concatenated; `\n\n` is inserted when the
 previous child was `block` **or** the current child is `block`. `rows` propagate upward from every
@@ -144,26 +192,26 @@ child. A `document` joins non-empty child values with `\n\n`.
 
 **Element mapping.**
 
-| Element | Emitted | Flags |
-| --- | --- | --- |
-| text node | `escapeMarkdown(value)` | inline |
-| `h1`–`h6` (`/^h[1-6]$/`) | `'#'.repeat(level) + ' ' + joined.trim()` | block |
-| `p` | `joined.trim()` | block |
-| `strong`, `b` | `**joined**`; empty children yield `''` | inline |
-| `em`, `i` | `*joined*`; empty children yield `''` | inline |
-| `code` | body is raw `text` with `/\s*\n\s*/g` collapsed to one space; fence is `` ` `` × `max(1, longestBacktickRun + 1)`; one space of padding on both sides iff the body starts **or** ends with a backtick | inline |
-| `pre` | if `children[0]` is an element named `code`: body is that child's raw `text`, language is the first `class` token starting `language-` **with length > 9**, `.slice(9)`. Otherwise body is `plain`, normalized `[ \t]*\n[ \t]*`→`\n`, `\n+`→`\n`, ` +`→` `, trimmed. Fence is `` ` `` × `max(3, longest + 1)` | block |
-| `a` | `[joined](href)`, href sanitized then `\`/`(`/`)` escaped — see B1 | inline |
-| `img` | `![alt](src)`, alt escaped, src sanitized and escaped as `a` | inline |
-| `br` | `'  \n'` — two spaces then newline | inline, deliberately NOT block |
-| `hr` | `'---'` | block |
-| `blockquote` | `joined.trim()` split on `\n`, each line prefixed `'> '`, an empty line becoming bare `'>'`, rejoined with `\n` | block |
-| `li` | non-empty child values, separator `'\n'` for a nested `list`, `'\n\n'` for a `block`, `''` otherwise; trimmed | item |
-| `ul` / `ol` | marker `'- '` or `` `${ordinal}. ` ``; ordinal starts at `parseInt(attributeOf('start') ?? '1', 10)` (non-finite → 1) and increments per item; item value split on `\n` with continuation lines indented `' '.repeat(marker.length)`, so `10. ` indents 4; items joined `\n` | block, list |
-| `th` / `td` | `{ value: joined.trim(), header: name === 'th' }` | carries cell |
-| `tr` | collects child cells; `header` true if **any** cell was a `th`; emits one row | block |
-| `table` | `headerIndex` is the first row whose `header` is true, default 0. Header absent or zero cells degrades to `joined` with rows cleared. Otherwise pipes, then a delimiter row of one entry per **header** cell, then every other row padded with `''` to header width, extra cells truncated | block |
-| anything else | `joined`, `block` = any child was block — so an unknown wrapper around two paragraphs still separates them | unwraps |
+| Element                  | Emitted                                                                                                                                                                                                                                                                                                       | Flags                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| text node                | `escapeMarkdown(value)`                                                                                                                                                                                                                                                                                       | inline                         |
+| `h1`–`h6` (`/^h[1-6]$/`) | `'#'.repeat(level) + ' ' + joined.trim()`                                                                                                                                                                                                                                                                     | block                          |
+| `p`                      | `joined.trim()`                                                                                                                                                                                                                                                                                               | block                          |
+| `strong`, `b`            | `**joined**`; empty children yield `''`                                                                                                                                                                                                                                                                       | inline                         |
+| `em`, `i`                | `*joined*`; empty children yield `''`                                                                                                                                                                                                                                                                         | inline                         |
+| `code`                   | body is raw `text` with `/\s*\n\s*/g` collapsed to one space; fence is `` ` `` × `max(1, longestBacktickRun + 1)`; one space of padding on both sides iff the body starts **or** ends with a backtick                                                                                                         | inline                         |
+| `pre`                    | if `children[0]` is an element named `code`: body is that child's raw `text`, language is the first `class` token starting `language-` **with length > 9**, `.slice(9)`. Otherwise body is `plain`, normalized `[ \t]*\n[ \t]*`→`\n`, `\n+`→`\n`, ` +`→` `, trimmed. Fence is `` ` `` × `max(3, longest + 1)` | block                          |
+| `a`                      | `[joined](href)`, href sanitized then `\`/`(`/`)` escaped — see B1                                                                                                                                                                                                                                            | inline                         |
+| `img`                    | `![alt](src)`, alt escaped, src sanitized and escaped as `a`                                                                                                                                                                                                                                                  | inline                         |
+| `br`                     | `'  \n'` — two spaces then newline                                                                                                                                                                                                                                                                            | inline, deliberately NOT block |
+| `hr`                     | `'---'`                                                                                                                                                                                                                                                                                                       | block                          |
+| `blockquote`             | `joined.trim()` split on `\n`, each line prefixed `'> '`, an empty line becoming bare `'>'`, rejoined with `\n`                                                                                                                                                                                               | block                          |
+| `li`                     | non-empty child values, separator `'\n'` for a nested `list`, `'\n\n'` for a `block`, `''` otherwise; trimmed                                                                                                                                                                                                 | item                           |
+| `ul` / `ol`              | marker `'- '` or `` `${ordinal}. ` ``; ordinal starts at `parseInt(attributeOf('start') ?? '1', 10)` (non-finite → 1) and increments per item; item value split on `\n` with continuation lines indented `' '.repeat(marker.length)`, so `10. ` indents 4; items joined `\n`                                  | block, list                    |
+| `th` / `td`              | `{ value: joined.trim(), header: name === 'th' }`                                                                                                                                                                                                                                                             | carries cell                   |
+| `tr`                     | collects child cells; `header` true if **any** cell was a `th`; emits one row                                                                                                                                                                                                                                 | block                          |
+| `table`                  | `headerIndex` is the first row whose `header` is true, default 0. Header absent or zero cells degrades to `joined` with rows cleared. Otherwise pipes, then a delimiter row of one entry per **header** cell, then every other row padded with `''` to header width, extra cells truncated                    | block                          |
+| anything else            | `joined`, `block` = any child was block — so an unknown wrapper around two paragraphs still separates them                                                                                                                                                                                                    | unwraps                        |
 
 **Sixteen behaviours a naive rewrite loses.** Fence widening on both paths, `max(1, n+1)` inline and
 `max(3, n+1)` fenced. Inline-code space padding when the body touches a backtick. Inline code

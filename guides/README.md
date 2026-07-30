@@ -17,7 +17,9 @@ A dual-axis index into this repository's guides — by concept, and by directory
 ## Dependency reference
 
 [`src/contract.md`](src/contract.md) is a byte-identical mirror of the guide for
-`@orkestrel/contract` — this package's sole runtime dependency. It documents
+`@orkestrel/contract` — one of this package's two runtime dependencies, alongside
+`@orkestrel/html`, which supplies the HTML AST, sanitize floor, and serializer both
+conversion directions compose with. It documents
 **that package's** surface (guards, combinators, parsers, and the shape DSL), not
 anything sourced in this repo; it is kept here so a reader of the markdown AST
 guards, leaf-node shapes, and compiled contracts (`isMarkdownNode`,
