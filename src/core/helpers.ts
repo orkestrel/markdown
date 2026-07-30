@@ -22,6 +22,7 @@ import type {
 	TableAlign,
 } from './types.js'
 import { MAX_DEPTH } from './constants.js'
+import { createProjection } from './factories.js'
 import {
 	isBlockNode,
 	isEscapable,
@@ -464,10 +465,11 @@ export function scanLink(
 
 /**
  * Scan an emphasis run at `start` (`*` / `_`, doubled for strong) - finds the nearest
- * matching closing run of the same marker + width, requiring non-space immediately
- * inside both delimiters (the CommonMark flanking simplification that blocks `* x *`).
- * Returns the emphasis node, or `undefined` when no valid closer exists (it then
- * degrades to a literal marker).
+ * matching closing run of the same marker + width while skipping complete nested
+ * runs from the other marker family, and requires non-space immediately inside both
+ * delimiters (the CommonMark flanking simplification that blocks `* x *`). Returns
+ * the emphasis node, or `undefined` when no valid closer exists (it then degrades to
+ * a literal marker).
  *
  * @param source - The inline source text
  * @param start - The index of the opening marker
@@ -506,6 +508,13 @@ export function scanEmphasis(
 			const span = scanCode(source, index, to)
 			index = span ? span.end : index + 1
 			continue
+		}
+		if ((character === '*' || character === '_') && character !== marker) {
+			const nested = scanEmphasis(source, index, to, depth + 1)
+			if (nested !== undefined) {
+				index = nested.end
+				continue
+			}
 		}
 		if (character === marker) {
 			let closeRun = 0
@@ -961,14 +970,15 @@ export function renderHTML(node: MarkdownNode): string {
 /**
  * Render a {@link MarkdownNode} to its CANONICAL markdown source - the inverse
  * projection of `renderHTML`, and the serializer a `parse(renderMarkdown(doc))`
- * round-trip is built on. Canonical forms: `*em*` / `**strong**` (underscore emphasis
- * normalizes to asterisks), `- ` bullets, `N. ` sequential ordinals (from the list's
- * `start`), `---` thematic breaks, fenced code blocks (backtick run widened past any
- * 3+ backtick run inside the body), ATX headings, `> `-prefixed blockquote lines, GFM
- * tables (1-space-padded cells, `\|`-escaped pipes, an alignment delimiter row),
- * `[text](href)` links, `![alt](src)` images, and two-space hard breaks. A `text`
- * node's literal content is backslash-escaped wherever it would otherwise re-parse
- * as markup (AGENTS §14 parse↔render soundness).
+ * round-trip is built on. Canonical forms: `*` / `**` emphasis at even emphasis
+ * nesting depths and `_` / `__` at odd depths, `- ` bullets, `N. ` sequential
+ * ordinals (from the list's `start`), `---` thematic breaks, fenced code blocks
+ * (backtick run widened past any 3+ backtick run inside the body), ATX headings,
+ * `> `-prefixed blockquote lines, GFM tables (1-space-padded cells, `\|`-escaped
+ * pipes, an alignment delimiter row), `[text](href)` links, `![alt](src)` images,
+ * and two-space hard breaks. A `text` node's literal content is backslash-escaped
+ * wherever it would otherwise re-parse as markup (AGENTS §14 parse↔render
+ * soundness).
  *
  * @remarks
  * Total: never throws. At {@link MAX_DEPTH} a value-bearing node degrades to its
@@ -994,7 +1004,18 @@ export function renderMarkdown(node: MarkdownNode): string {
 		readonly count: number
 		readonly escaped: string
 		readonly escapeBang: boolean
-	}[] = [{ node, depth: 0, expanded: false, count: 0, escaped: '', escapeBang: false }]
+		readonly nesting: number
+	}[] = [
+		{
+			node,
+			depth: 0,
+			expanded: false,
+			count: 0,
+			escaped: '',
+			escapeBang: false,
+			nesting: 0,
+		},
+	]
 	const values: string[] = []
 	while (stack.length > 0) {
 		const frame = stack.pop()
@@ -1032,6 +1053,14 @@ export function renderMarkdown(node: MarkdownNode): string {
 					}
 					if (atLineStart) {
 						if (character === '#' || character === '>') {
+							escaped += `\\${character}`
+							continue
+						}
+						if (
+							(character === '-' || character === '~') &&
+							current.value[index + 1] === character &&
+							current.value[index + 2] === character
+						) {
 							escaped += `\\${character}`
 							continue
 						}
@@ -1124,6 +1153,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 				}
 			}
 			stack.push({ ...frame, expanded: true, count: children.length, escaped })
+			const nesting = current.element === 'emphasis' ? frame.nesting + 1 : frame.nesting
 			for (let index = children.length - 1; index >= 0; index -= 1) {
 				const child = children[index]
 				if (child !== undefined)
@@ -1134,6 +1164,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 						count: 0,
 						escaped: '',
 						escapeBang: escapeBangs[index] === true && depth < MAX_DEPTH,
+						nesting,
 					})
 			}
 			continue
@@ -1196,10 +1227,19 @@ export function renderMarkdown(node: MarkdownNode): string {
 			case 'list': {
 				const items: string[] = []
 				let ordinal = current.start
-				for (const body of children) {
+				for (const [position, body] of children.entries()) {
 					const marker = current.ordered ? `${ordinal}. ` : '- '
 					ordinal += 1
 					const pad = ' '.repeat(marker.length)
+					if (current.items[position]?.children[0]?.element === 'table') {
+						items.push(
+							`${marker}\n${body
+								.split('\n')
+								.map((line) => pad + line)
+								.join('\n')}`,
+						)
+						continue
+					}
 					items.push(
 						body
 							.split('\n')
@@ -1266,7 +1306,8 @@ export function renderMarkdown(node: MarkdownNode): string {
 				value = frame.escaped
 				break
 			case 'emphasis': {
-				const marker = current.strong ? '**' : '*'
+				const marker =
+					frame.nesting % 2 === 0 ? (current.strong ? '**' : '*') : current.strong ? '__' : '_'
 				value = `${marker}${children.join('')}${marker}`
 				break
 			}
@@ -1297,7 +1338,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 // contributes the projection ONLY: five pure leaves over {@link MarkdownProjection}
 // values ({@link trimInlines}, {@link normalizeInlines}, {@link mergeProjections},
 // {@link projectionToBlocks}, {@link projectionToInlines}), the two handlers that
-// map HTML to markdown ({@link projectLeaf}, {@link projectNode}), and the one
+// map HTML to markdown ({@link projectHTMLLeaf}, {@link projectHTMLNode}), and the one
 // entry point that folds them ({@link htmlToMarkdown}). HTML is richer than
 // markdown, so the projection is lossy by construction; what it must never be is
 // WRONG, which is what the round-trip anchor law pins down.
@@ -1408,9 +1449,9 @@ export function normalizeInlines(
  * exactly: an inline run is held pending until a block arrives, then written out as a
  * paragraph BEFORE it. That is what keeps `<div>lead<p>a</p></div>` two paragraphs in
  * the order they were written rather than two lists that lost their interleaving. A
- * pending run carrying no text is dropped rather than becoming a blank paragraph. Table
- * cells and rows pass straight through: they are in flight to a `tr` or a `table` that
- * may still be several wrappers above.
+ * pending run carrying no text is dropped rather than becoming a blank paragraph.
+ * Direct cells become one row before a later row, while cells/rows before a block
+ * materialize as paragraphs at that exact source position.
  *
  * @param children - The children's projections, in source order
  * @returns Their combined projection
@@ -1418,8 +1459,8 @@ export function normalizeInlines(
  * @example
  * ```ts
  * mergeProjections([
- *   { blocks: [], inlines: [{ element: 'text', value: 'a' }], text: 'a', cells: [], rows: [] },
- *   { blocks: [{ element: 'thematicBreak' }], inlines: [], text: '', cells: [], rows: [] },
+ *   createProjection({ inlines: [{ element: 'text', value: 'a' }], text: 'a' }),
+ *   createProjection({ blocks: [{ element: 'thematicBreak' }] }),
  * ]).blocks
  * // [{ element: 'paragraph', children: [...] }, { element: 'thematicBreak' }]
  * ```
@@ -1433,21 +1474,44 @@ export function mergeProjections(children: readonly MarkdownProjection[]): Markd
 	for (const child of children) {
 		if (child === undefined) continue
 		text += child.text
-		for (const cell of child.cells) if (cell !== undefined) cells.push(cell)
-		for (const row of child.rows) if (row !== undefined) rows.push(row)
 		if (isNonEmptyArray(child.blocks)) {
 			const flushed = trimInlines(normalizeInlines(pending, true))
 			if (isNonEmptyArray(flushed)) blocks.push({ element: 'paragraph', children: flushed })
 			pending = []
-			for (const block of child.blocks) if (block !== undefined) blocks.push(block)
+			for (const row of rows) {
+				for (const cell of row) {
+					if (cell !== undefined && isNonEmptyArray(cell.inlines))
+						blocks.push({ element: 'paragraph', children: cell.inlines })
+				}
+			}
+			rows.length = 0
+			for (const cell of cells) {
+				if (cell !== undefined && isNonEmptyArray(cell.inlines))
+					blocks.push({ element: 'paragraph', children: cell.inlines })
+			}
+			cells.length = 0
+			for (const block of projectionToBlocks(child)) blocks.push(block)
 			continue
 		}
+		if (isNonEmptyArray(child.rows)) {
+			if (isNonEmptyArray(cells)) {
+				rows.push([...cells])
+				cells.length = 0
+			}
+			for (const row of child.rows) if (row !== undefined) rows.push(row)
+		}
+		for (const cell of child.cells) if (cell !== undefined) cells.push(cell)
 		for (const inline of child.inlines) if (inline !== undefined) pending.push(inline)
 	}
-	if (!isNonEmptyArray(blocks)) return { blocks, inlines: coalesceText(pending), text, cells, rows }
+	if (isNonEmptyArray(rows) && isNonEmptyArray(cells)) {
+		rows.push([...cells])
+		cells.length = 0
+	}
+	if (!isNonEmptyArray(blocks))
+		return createProjection({ inlines: coalesceText(pending), text, cells, rows })
 	const flushed = trimInlines(normalizeInlines(pending, true))
 	if (isNonEmptyArray(flushed)) blocks.push({ element: 'paragraph', children: flushed })
-	return { blocks, inlines: [], text, cells, rows }
+	return createProjection({ blocks, text, cells, rows })
 }
 
 /**
@@ -1465,7 +1529,7 @@ export function mergeProjections(children: readonly MarkdownProjection[]): Markd
  *
  * @example
  * ```ts
- * projectionToBlocks({ blocks: [], inlines: [{ element: 'text', value: 'a' }], text: 'a', cells: [], rows: [] })
+ * projectionToBlocks(createProjection({ inlines: [{ element: 'text', value: 'a' }], text: 'a' }))
  * // [{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] }]
  * ```
  */
@@ -1503,7 +1567,7 @@ export function projectionToBlocks(projection: MarkdownProjection): readonly Blo
  *
  * @example
  * ```ts
- * projectionToInlines({ blocks: [], inlines: [{ element: 'break' }], text: '', cells: [], rows: [] })
+ * projectionToInlines(createProjection({ inlines: [{ element: 'break' }] }))
  * // [{ element: 'break' }]
  * ```
  */
@@ -1538,20 +1602,19 @@ export function projectionToInlines(projection: MarkdownProjection): readonly In
  *
  * @example
  * ```ts
- * projectLeaf({ category: 'text', value: 'a\n  b' }).inlines
+ * projectHTMLLeaf({ category: 'text', value: 'a\n  b' }).inlines
  * // [{ element: 'text', value: 'a b' }]
  * ```
  */
-export function projectLeaf(leaf: CommentNode | DoctypeNode | HTMLTextNode): MarkdownProjection {
-	if (leaf.category !== 'text') return { blocks: [], inlines: [], text: '', cells: [], rows: [] }
+export function projectHTMLLeaf(
+	leaf: CommentNode | DoctypeNode | HTMLTextNode,
+): MarkdownProjection {
+	if (leaf.category !== 'text') return createProjection()
 	const value = leaf.value.replace(/\s+/g, ' ')
-	return {
-		blocks: [],
+	return createProjection({
 		inlines: isEmptyString(value) ? [] : [{ element: 'text', value }],
 		text: leaf.value,
-		cells: [],
-		rows: [],
-	}
+	})
 }
 
 /**
@@ -1572,10 +1635,12 @@ export function projectLeaf(leaf: CommentNode | DoctypeNode | HTMLTextNode): Mar
  * element unwraps to its children, so wrapper soup melts while its content keeps its
  * shape - `<div><p>a</p><p>b</p></div>` stays two paragraphs.
  *
- * Two mappings read their own node rather than only their children's projections,
+ * Three mappings read their own node rather than only their children's projections,
  * because HTML puts the fact in a position rather than in a value: a `pre` takes its
  * body from its `code` child's raw text, and a list takes one item per `li` child - so
  * an empty `<li>` is still an item, while the whitespace between two of them is not.
+ * A `tr` accepts only its own direct cells, and a table derives the first `th`-bearing
+ * row from its own source structure.
  *
  * @param node - The document root or element to project
  * @param children - Its children's projections, in source order
@@ -1583,21 +1648,20 @@ export function projectLeaf(leaf: CommentNode | DoctypeNode | HTMLTextNode): Mar
  *
  * @example
  * ```ts
- * projectNode({ category: 'element', name: 'hr', attributes: [], children: [] }, []).blocks
+ * projectHTMLNode({ category: 'element', name: 'hr', attributes: [], children: [] }, []).blocks
  * // [{ element: 'thematicBreak' }]
  * ```
  */
-export function projectNode(
+export function projectHTMLNode(
 	node: ElementNode | HTMLDocument,
 	children: readonly MarkdownProjection[],
 ): MarkdownProjection {
 	if (node.category === 'document') return mergeProjections(children)
-	if (UNSAFE_ELEMENTS.includes(node.name))
-		return { blocks: [], inlines: [], text: '', cells: [], rows: [] }
+	if (UNSAFE_ELEMENTS.includes(node.name)) return createProjection()
 	const merged = mergeProjections(children)
 	const level = /^h([1-6])$/.exec(node.name)
 	if (level !== null) {
-		return {
+		return createProjection({
 			blocks: [
 				{
 					element: 'heading',
@@ -1605,48 +1669,35 @@ export function projectNode(
 					children: trimInlines(normalizeInlines(projectionToInlines(merged), false)),
 				},
 			],
-			inlines: [],
 			text: merged.text,
-			cells: [],
-			rows: [],
-		}
+		})
 	}
 	switch (node.name) {
 		case 'p':
 		case 'li':
-			return {
+			return createProjection({
 				blocks: projectionToBlocks(merged),
-				inlines: [],
 				text: merged.text,
-				cells: [],
-				rows: [],
-			}
+			})
 		case 'blockquote':
-			return {
+			return createProjection({
 				blocks: [{ element: 'blockquote', children: projectionToBlocks(merged) }],
-				inlines: [],
 				text: merged.text,
-				cells: [],
-				rows: [],
-			}
+			})
 		case 'hr':
-			return {
+			return createProjection({
 				blocks: [{ element: 'thematicBreak' }],
-				inlines: [],
 				text: '',
-				cells: [],
-				rows: [],
-			}
+			})
 		case 'br':
-			return { blocks: [], inlines: [{ element: 'break' }], text: '\n', cells: [], rows: [] }
+			return createProjection({ inlines: [{ element: 'break' }], text: '\n' })
 		case 'strong':
 		case 'b':
 		case 'em':
 		case 'i': {
 			const content = projectionToInlines(merged)
 			const inner = trimInlines(normalizeInlines(content, true))
-			if (!isNonEmptyArray(inner))
-				return { blocks: [], inlines: [], text: merged.text, cells: [], rows: [] }
+			if (!isNonEmptyArray(inner)) return createProjection({ text: merged.text })
 			// Markdown refuses emphasis padded with whitespace (`* x *` is literal), so the
 			// padding moves OUTSIDE the marker rather than being lost with the word boundary.
 			const first = content[0]
@@ -1661,7 +1712,7 @@ export function projectNode(
 			})
 			if (last?.element === 'text' && /\s$/.test(last.value))
 				inlines.push({ element: 'text', value: ' ' })
-			return { blocks: [], inlines, text: merged.text, cells: [], rows: [] }
+			return createProjection({ inlines, text: merged.text })
 		}
 		case 'code': {
 			const body = merged.text.replace(/\r\n?/g, '\n').replace(/\s*\n\s*/g, ' ')
@@ -1671,13 +1722,10 @@ export function projectNode(
 				body.length > 2 && body.startsWith(' ') && body.endsWith(' ') && !isEmptyString(body.trim())
 					? body.trim()
 					: body
-			return {
-				blocks: [],
+			return createProjection({
 				inlines: isEmptyString(value) ? [] : [{ element: 'codeSpan', value }],
 				text: merged.text,
-				cells: [],
-				rows: [],
-			}
+			})
 		}
 		case 'pre': {
 			let position = -1
@@ -1695,7 +1743,7 @@ export function projectNode(
 					lang = token.slice(9)
 					break
 				}
-				return {
+				return createProjection({
 					blocks: [
 						{
 							element: 'codeBlock',
@@ -1703,23 +1751,16 @@ export function projectNode(
 							code: projected.text.replace(/\r\n?/g, '\n'),
 						},
 					],
-					inlines: [],
 					text: merged.text,
-					cells: [],
-					rows: [],
-				}
+				})
 			}
-			return {
+			return createProjection({
 				blocks: [{ element: 'codeBlock', code: renderText(node).replace(/\r\n?/g, '\n') }],
-				inlines: [],
 				text: merged.text,
-				cells: [],
-				rows: [],
-			}
+			})
 		}
 		case 'a':
-			return {
-				blocks: [],
+			return createProjection({
 				inlines: [
 					{
 						element: 'link',
@@ -1728,13 +1769,10 @@ export function projectNode(
 					},
 				],
 				text: merged.text,
-				cells: [],
-				rows: [],
-			}
+			})
 		case 'img': {
 			const alt = (attributeOf(node, 'alt') ?? '').replace(/\s+/g, ' ').trim()
-			return {
-				blocks: [],
+			return createProjection({
 				inlines: [
 					{
 						element: 'image',
@@ -1743,9 +1781,7 @@ export function projectNode(
 					},
 				],
 				text: '',
-				cells: [],
-				rows: [],
-			}
+			})
 		}
 		case 'th':
 		case 'td': {
@@ -1757,24 +1793,30 @@ export function projectNode(
 				(declared === 'left' || declared === 'right' || declared === 'center')
 					? declared
 					: undefined
-			return {
-				blocks: [],
-				inlines: [],
+			return createProjection({
 				text: merged.text,
 				cells: [
 					{
-						heading: node.name === 'th',
 						align,
 						inlines: trimInlines(normalizeInlines(projectionToInlines(merged), false)),
 					},
 				],
-				rows: [],
-			}
+			})
 		}
 		case 'tr': {
 			const cells: MarkdownCell[] = []
-			for (const cell of merged.cells) if (cell !== undefined) cells.push(cell)
-			return { blocks: [], inlines: [], text: merged.text, cells: [], rows: [cells] }
+			for (const [index, child] of children.entries()) {
+				const source = node.children[index]
+				if (
+					source?.category !== 'element' ||
+					(source.name !== 'th' && source.name !== 'td') ||
+					child === undefined
+				) {
+					continue
+				}
+				for (const cell of child.cells) if (cell !== undefined) cells.push(cell)
+			}
+			return createProjection({ text: merged.text, rows: [cells] })
 		}
 		case 'ul':
 		case 'ol': {
@@ -1789,48 +1831,90 @@ export function projectNode(
 				}
 				if (isNonEmptyArray(blocks)) items.push({ element: 'listItem', children: blocks })
 			}
-			if (!isNonEmptyArray(items))
-				return { blocks: [], inlines: [], text: merged.text, cells: [], rows: [] }
+			if (!isNonEmptyArray(items)) return createProjection({ text: merged.text })
 			const ordered = node.name === 'ol'
 			const declared = parseInteger(attributeOf(node, 'start'))
 			// A start markdown cannot write as an ordinal (`\d{1,9}`) is no start at all.
 			const start =
 				ordered && declared !== undefined && declared >= 0 && declared <= 999_999_999 ? declared : 1
-			return {
+			return createProjection({
 				blocks: [{ element: 'list', ordered, start, items }],
-				inlines: [],
 				text: merged.text,
-				cells: [],
-				rows: [],
-			}
+			})
 		}
 		case 'table': {
 			const rows: (readonly MarkdownCell[])[] = []
 			for (const row of merged.rows) if (row !== undefined) rows.push(row)
 			if (isNonEmptyArray(merged.cells)) rows.push(merged.cells)
-			// The header row is the first row a `th` heads, and row 0 when none does.
-			let position = 0
-			for (const [index, row] of rows.entries()) {
-				if (row === undefined || !row.some((cell) => cell.heading)) continue
+			const headings: boolean[] = []
+			const rowed: boolean[] = []
+			const sources: {
+				children: readonly HTMLNode[]
+				index: number
+				direct: boolean
+			}[] = [{ children: node.children, index: 0, direct: false }]
+			while (sources.length > 0) {
+				const source = sources[sources.length - 1]
+				if (source === undefined) continue
+				if (source.index >= source.children.length) {
+					sources.pop()
+					continue
+				}
+				const child = source.children[source.index]
+				source.index += 1
+				if (child?.category !== 'element') continue
+				if (child.name === 'th' || child.name === 'td') {
+					if (!source.direct) {
+						headings.push(false)
+						rowed.push(false)
+					}
+					source.direct = true
+					continue
+				}
+				source.direct = false
+				if (child.name === 'tr') {
+					let heading = false
+					for (const cell of child.children) {
+						if (cell?.category === 'element' && cell.name === 'th') {
+							heading = true
+							break
+						}
+					}
+					headings.push(heading)
+					rowed.push(true)
+					continue
+				}
+				sources.push({ children: child.children, index: 0, direct: false })
+			}
+			// The header is the first structurally th-bearing row, then the first explicit
+			// row; a table made only of direct cells receives an empty synthetic header.
+			let position: number | undefined
+			for (const [index, heading] of headings.entries()) {
+				if (!heading) continue
 				position = index
 				break
 			}
-			const headerRow: readonly MarkdownCell[] | undefined = rows[position]
-			if (headerRow === undefined || !isNonEmptyArray(headerRow)) {
-				return {
-					blocks: projectionToBlocks(merged),
-					inlines: [],
-					text: merged.text,
-					cells: [],
-					rows: [],
+			if (position === undefined) {
+				for (const [index, structural] of rowed.entries()) {
+					if (!structural) continue
+					position = index
+					break
 				}
+			}
+			const headerRow = position === undefined ? undefined : rows[position]
+			const columns = headerRow?.length ?? rows[0]?.length ?? 0
+			if (columns === 0) {
+				return createProjection({
+					blocks: projectionToBlocks(merged),
+					text: merged.text,
+				})
 			}
 			const header: (readonly InlineNode[])[] = []
 			const align: (TableAlign | null)[] = []
-			for (const cell of headerRow) {
-				if (cell === undefined) continue
-				header.push(cell.inlines)
-				align.push(cell.align ?? null)
+			for (let column = 0; column < columns; column += 1) {
+				const cell = headerRow?.[column]
+				header.push(cell?.inlines ?? [])
+				align.push(cell?.align ?? null)
 			}
 			const body: (readonly (readonly InlineNode[])[])[] = []
 			for (const [index, row] of rows.entries()) {
@@ -1840,13 +1924,10 @@ export function projectNode(
 					cells.push(row[column]?.inlines ?? [])
 				body.push(cells)
 			}
-			return {
+			return createProjection({
 				blocks: [{ element: 'table', header, rows: body, align }],
-				inlines: [],
 				text: merged.text,
-				cells: [],
-				rows: [],
-			}
+			})
 		}
 	}
 	return merged
@@ -1857,8 +1938,8 @@ export function projectNode(
  * HTML→markdown direction, and the inverse of {@link markdownToHTML}.
  *
  * @remarks
- * **Engine.** One total handler table - {@link projectNode} for the containers,
- * {@link projectLeaf} for the leaves - folded by `@orkestrel/html`'s own `foldNode`, so
+ * **Engine.** One total handler table - {@link projectHTMLNode} for the containers,
+ * {@link projectHTMLLeaf} for the leaves - folded by `@orkestrel/html`'s own `foldNode`, so
  * depth capping, cycle safety, and bottom-up ordering are inherited rather than
  * rebuilt. Total: hostile, cyclic, and pathologically deep input degrades instead of
  * throwing.
@@ -1901,11 +1982,11 @@ export function htmlToMarkdown(node: HTMLNode): MarkdownDocument {
 		element: 'document',
 		children: projectionToBlocks(
 			foldHTMLNode<MarkdownProjection>(node, {
-				document: projectNode,
-				element: projectNode,
-				text: projectLeaf,
-				comment: projectLeaf,
-				doctype: projectLeaf,
+				document: projectHTMLNode,
+				element: projectHTMLNode,
+				text: projectHTMLLeaf,
+				comment: projectHTMLLeaf,
+				doctype: projectHTMLLeaf,
 			}),
 		),
 	}

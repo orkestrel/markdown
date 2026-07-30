@@ -19,6 +19,7 @@ import type {
 } from '@src/core'
 import {
 	Markdown,
+	createProjection,
 	flattenText,
 	htmlToMarkdown,
 	isHeadingNode,
@@ -139,7 +140,7 @@ export function inlineText(nodes: readonly InlineNode[]): string {
 
 /** A {@link MarkdownProjection} with every field defaulted — the projection leaves' test input. */
 export function buildProjection(parts: Partial<MarkdownProjection>): MarkdownProjection {
-	return { blocks: [], inlines: [], text: '', cells: [], rows: [], ...parts }
+	return createProjection(parts)
 }
 
 /** Parse `html` with `@orkestrel/html` and project it to a markdown document. */
@@ -147,10 +148,37 @@ export function projectHTML(html: string): MarkdownDocument {
 	return htmlToMarkdown(parseHTML(html))
 }
 
+/** Markdown sources whose parsed AST must survive canonical rendering and reparsing. */
+export const MARKDOWN_FIXPOINT_CORPUS: readonly {
+	readonly name: string
+	readonly source: string
+	readonly rendered: string
+}[] = [
+	{
+		name: 'emphasis containing strong',
+		source: '_a **c** b_',
+		rendered: '*a __c__ b*',
+	},
+	{
+		name: 'strong with nested emphasis at its tail',
+		source: '**b _c_**',
+		rendered: '**b _c_**',
+	},
+	{
+		name: 'triple-nested emphasis',
+		source: '*x _a **c** b_ y*',
+		rendered: '*x _a **c** b_ y*',
+	},
+]
+
 /** The HTML documents the projection's round-trip anchor law is proved over. */
 export const PROJECTION_CORPUS: readonly { readonly name: string; readonly html: string }[] = [
 	{ name: 'headings', html: '<h1>Title</h1><h2>Sub &amp; more</h2><h6>Deep</h6>' },
 	{ name: 'emphasis nesting', html: '<p>a <strong><em>c</em> and b</strong> d</p>' },
+	{
+		name: 'triple-nested emphasis',
+		html: '<p><em>x <em>a <strong>c</strong> b</em> y</em></p>',
+	},
 	{ name: 'inline code with backticks', html: '<p>use <code>a`b</code> now</p>' },
 	{
 		name: 'fenced code with a language',
@@ -163,6 +191,10 @@ export const PROJECTION_CORPUS: readonly { readonly name: string; readonly html:
 	{ name: 'image refused', html: '<p><img src="data:text/html,x" alt=""> after</p>' },
 	{ name: 'hard break', html: '<p>one<br>two</p>' },
 	{ name: 'nested list', html: '<ul><li>a<ul><li>b</li></ul></li></ul>' },
+	{
+		name: 'table-first list item',
+		html: '<ul><li><table><tr><th>h</th></tr><tr><td>x</td></tr></table></li></ul>',
+	},
 	{ name: 'ordered list with start', html: '<ol start="3"><li>a</li><li>b</li></ol>' },
 	{ name: 'blockquote with blank lines', html: '<blockquote><p>a</p><p>b</p></blockquote>' },
 	{

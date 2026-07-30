@@ -225,19 +225,8 @@ export interface MarkdownDocument {
  */
 export type MarkdownNode = MarkdownDocument | BlockNode | ListItemNode | InlineNode
 
-/**
- * One projected table cell - the inline content of a `th` / `td`, plus the two facts
- * its table needs from it: whether it is heading its column, and the alignment its
- * `align` attribute declared.
- *
- * @remarks
- * A row needs no shape of its own: it is its cells in column order, and whether it is
- * the header row is DERIVED from them (a row headed by any `th` is a header row)
- * rather than stored a second time where the two could drift.
- */
+/** One projected table cell - the inline content and alignment of a `th` / `td`. */
 export interface MarkdownCell {
-	/** `true` when the cell heads its column - the source cell was a `th`. */
-	readonly heading: boolean
 	/** The alignment the cell's `align` attribute declared; `undefined` when it declared none. */
 	readonly align: TableAlign | undefined
 	/** The cell's inline content - a table cell is inline-only, so block content flattens to text. */

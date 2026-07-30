@@ -23,8 +23,8 @@ import {
 	mergeProjections,
 	normalizeInlines,
 	parseDocument,
-	projectLeaf,
-	projectNode,
+	projectHTMLLeaf,
+	projectHTMLNode,
 	projectionToBlocks,
 	projectionToInlines,
 	renderHTML,
@@ -50,6 +50,7 @@ import {
 	renderHTML as renderHTMLDocument,
 } from '@orkestrel/html'
 import {
+	MARKDOWN_FIXPOINT_CORPUS,
 	PROJECTION_CORPUS,
 	assertTableNode,
 	buildDeepEmphasisInput,
@@ -835,6 +836,81 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 	it('round-trips a rich combined document (parse(render(doc)) deep-equals doc)', () => {
 		const document = parseDocument(composite)
 		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+	})
+
+	for (const entry of MARKDOWN_FIXPOINT_CORPUS) {
+		it(`alternates emphasis markers by nesting parity: ${entry.name}`, () => {
+			const document = parseDocument(entry.source)
+			const rendered = renderMarkdown(document)
+
+			expect(rendered).toBe(entry.rendered)
+			expect(parseDocument(rendered)).toEqual(document)
+		})
+	}
+
+	it('round-trips the **b *c***-shaped tail nesting without delimiter collision', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [
+				{
+					element: 'paragraph',
+					children: [
+						{
+							element: 'emphasis',
+							strong: true,
+							children: [
+								{ element: 'text', value: 'b ' },
+								{
+									element: 'emphasis',
+									strong: false,
+									children: [{ element: 'text', value: 'c' }],
+								},
+							],
+						},
+					],
+				},
+			],
+		}
+		const rendered = renderMarkdown(document)
+
+		expect(rendered).toBe('**b _c_**')
+		expect(parseDocument(rendered)).toEqual(document)
+	})
+
+	it('round-trips the exact triple-nested HTML emphasis projection', () => {
+		const projected = projectHTML('<em>x <em>a <strong>c</strong> b</em> y</em>')
+		const rendered = renderMarkdown(projected)
+
+		expect(rendered).toBe('*x _a **c** b_ y*')
+		expect(parseDocument(rendered)).toEqual(projected)
+	})
+
+	it('escapes line-start dash and tilde runs that would become block syntax', () => {
+		const dash = parseDocument('\\---')
+		const tilde: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: '~~~' }] }],
+		}
+		const stars: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: '***' }] }],
+		}
+
+		expect(renderMarkdown(dash)).toBe('\\---')
+		expect(parseDocument(renderMarkdown(dash))).toEqual(dash)
+		expect(renderMarkdown(tilde)).toBe('\\~~~')
+		expect(parseDocument(renderMarkdown(tilde))).toEqual(tilde)
+		expect(renderMarkdown(stars)).toBe('\\*\\*\\*')
+		expect(parseDocument(renderMarkdown(stars))).toEqual(stars)
+	})
+
+	it('keeps a table-first list item unambiguous', () => {
+		const source = '- \n  | h |\n  | --- |\n  | x |'
+		const document = parseDocument(source)
+		const rendered = renderMarkdown(document)
+
+		expect(rendered).toBe(source)
+		expect(parseDocument(rendered)).toEqual(document)
 	})
 
 	it('round-trips awkward text carrying literal markup characters (* _ ` [ x ])', () => {
@@ -1677,14 +1753,14 @@ describe('mergeProjections', () => {
 		expect(merged.blocks).toEqual([{ element: 'thematicBreak' }, { element: 'thematicBreak' }])
 	})
 
-	it('passes cells and rows through untouched', () => {
-		const cell = { heading: true, align: undefined, inlines: [] }
+	it('keeps direct cells as one row before later row projections', () => {
+		const cell = { align: undefined, inlines: [] }
 		const merged = mergeProjections([
 			buildProjection({ cells: [cell] }),
 			buildProjection({ rows: [[]] }),
 		])
-		expect(merged.cells).toEqual([cell])
-		expect(merged.rows).toEqual([[]])
+		expect(merged.cells).toEqual([])
+		expect(merged.rows).toEqual([[cell], []])
 	})
 })
 
@@ -1706,8 +1782,8 @@ describe('projectionToBlocks', () => {
 		expect(
 			projectionToBlocks(
 				buildProjection({
-					rows: [[{ heading: false, align: undefined, inlines }]],
-					cells: [{ heading: true, align: undefined, inlines }],
+					rows: [[{ align: undefined, inlines }]],
+					cells: [{ align: undefined, inlines }],
 				}),
 			),
 		).toEqual([
@@ -1744,9 +1820,9 @@ describe('projectionToInlines', () => {
 	})
 })
 
-describe('projectLeaf', () => {
+describe('projectHTMLLeaf', () => {
 	it('collapses a text leaf whitespace run to one space and keeps the raw value', () => {
-		const projected = projectLeaf({ category: 'text', value: 'a\n  b' })
+		const projected = projectHTMLLeaf({ category: 'text', value: 'a\n  b' })
 		expect(projected.inlines).toEqual([{ element: 'text', value: 'a b' }])
 		expect(projected.text).toBe('a\n  b')
 	})
@@ -1754,28 +1830,28 @@ describe('projectLeaf', () => {
 	it('keeps a whitespace-only text leaf as the one space it stands for', () => {
 		// The space between `<b>one</b>` and `<i>two</i>` is a word boundary, not decoration;
 		// it is dropped later, only where a block context proves it cannot be written.
-		expect(projectLeaf({ category: 'text', value: '   ' }).inlines).toEqual([
+		expect(projectHTMLLeaf({ category: 'text', value: '   ' }).inlines).toEqual([
 			{ element: 'text', value: ' ' },
 		])
-		expect(projectLeaf({ category: 'text', value: '' }).inlines).toEqual([])
+		expect(projectHTMLLeaf({ category: 'text', value: '' }).inlines).toEqual([])
 	})
 
 	it('projects a comment and a doctype to nothing at all', () => {
-		expect(projectLeaf({ category: 'comment', value: ' note ' })).toEqual({
+		expect(projectHTMLLeaf({ category: 'comment', value: ' note ' })).toEqual({
 			blocks: [],
 			inlines: [],
 			text: '',
 			cells: [],
 			rows: [],
 		})
-		expect(projectLeaf({ category: 'doctype', name: 'html' }).text).toBe('')
+		expect(projectHTMLLeaf({ category: 'doctype', name: 'html' }).text).toBe('')
 	})
 })
 
-describe('projectNode', () => {
+describe('projectHTMLNode', () => {
 	it('merges the children of a document root', () => {
 		expect(
-			projectNode({ category: 'document', children: [] }, [
+			projectHTMLNode({ category: 'document', children: [] }, [
 				buildProjection({ blocks: [{ element: 'thematicBreak' }] }),
 			]).blocks,
 		).toEqual([{ element: 'thematicBreak' }])
@@ -1783,14 +1859,16 @@ describe('projectNode', () => {
 
 	it('maps an element name to its markdown node', () => {
 		expect(
-			projectNode({ category: 'element', name: 'hr', attributes: [], children: [] }, []).blocks,
+			projectHTMLNode({ category: 'element', name: 'hr', attributes: [], children: [] }, []).blocks,
 		).toEqual([{ element: 'thematicBreak' }])
 	})
 
 	it('unwraps an unknown element to its children projection', () => {
 		const child = buildProjection({ inlines: [{ element: 'text', value: 'x' }], text: 'x' })
 		expect(
-			projectNode({ category: 'element', name: 'aside', attributes: [], children: [] }, [child]),
+			projectHTMLNode({ category: 'element', name: 'aside', attributes: [], children: [] }, [
+				child,
+			]),
 		).toEqual(child)
 	})
 })
@@ -2090,6 +2168,60 @@ describe('htmlToMarkdown — element mapping', () => {
 			children: [
 				{ element: 'paragraph', children: [{ element: 'text', value: 'lead' }] },
 				{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] },
+			],
+		})
+	})
+
+	it('keeps a dangling cell at its exact source position among blocks', () => {
+		expect(projectHTML('<div><td>a</td><p>b</p></div>')).toEqual({
+			element: 'document',
+			children: [
+				{ element: 'paragraph', children: [{ element: 'text', value: 'a' }] },
+				{ element: 'paragraph', children: [{ element: 'text', value: 'b' }] },
+			],
+		})
+	})
+
+	it('keeps a direct table cell before later tr-derived rows as a body row', () => {
+		expect(projectHTML('<table><td>early</td><tr><th>h</th></tr></table>')).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'table',
+					header: [[{ element: 'text', value: 'h' }]],
+					rows: [[[{ element: 'text', value: 'early' }]]],
+					align: [null],
+				},
+			],
+		})
+	})
+
+	it('keeps a direct table cell before every later tr-derived body row', () => {
+		expect(
+			projectHTML('<table><td>early</td><tr><td>middle</td></tr><tr><th>h</th></tr></table>'),
+		).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'table',
+					header: [[{ element: 'text', value: 'h' }]],
+					rows: [[[{ element: 'text', value: 'early' }]], [[{ element: 'text', value: 'middle' }]]],
+					align: [null],
+				},
+			],
+		})
+	})
+
+	it('treats a direct unrowed cell run as one body row', () => {
+		expect(projectHTML('<table><td>a</td><th>b</th></table>')).toEqual({
+			element: 'document',
+			children: [
+				{
+					element: 'table',
+					header: [[], []],
+					rows: [[[{ element: 'text', value: 'a' }], [{ element: 'text', value: 'b' }]]],
+					align: [null, null],
+				},
 			],
 		})
 	})

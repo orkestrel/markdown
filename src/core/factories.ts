@@ -5,10 +5,12 @@ import type {
 	LineBreakNode,
 	MarkdownDocument,
 	MarkdownInterface,
+	MarkdownProjection,
 	TextNode,
 	ThematicBreakNode,
 } from './types.js'
 import { createContract } from '@orkestrel/contract'
+import { EMPTY_PROJECTION } from './constants.js'
 import { Markdown } from './Markdown.js'
 import {
 	codeBlockShape,
@@ -17,6 +19,37 @@ import {
 	textShape,
 	thematicBreakShape,
 } from './shapers.js'
+
+/**
+ * Create an HTML-to-markdown projection with absent fields defaulted from
+ * {@link EMPTY_PROJECTION} and the block/inline exclusivity invariant enforced.
+ *
+ * @remarks
+ * A block-bearing projection cannot also expose inline content. Callers may provide
+ * both views, but `inlines` is flushed whenever `blocks` is non-empty.
+ *
+ * @param parts - The projection fields to provide
+ * @returns A complete invariant-preserving projection
+ *
+ * @example
+ * ```ts
+ * createProjection({
+ *   blocks: [{ element: 'thematicBreak' }],
+ *   inlines: [{ element: 'text', value: 'discarded' }],
+ * })
+ * // { blocks: [{ element: 'thematicBreak' }], inlines: [], text: '', cells: [], rows: [] }
+ * ```
+ */
+export function createProjection(parts: Partial<MarkdownProjection> = {}): MarkdownProjection {
+	const blocks = parts.blocks ?? EMPTY_PROJECTION.blocks
+	return {
+		blocks,
+		inlines: blocks.length === 0 ? (parts.inlines ?? EMPTY_PROJECTION.inlines) : [],
+		text: parts.text ?? EMPTY_PROJECTION.text,
+		cells: parts.cells ?? EMPTY_PROJECTION.cells,
+		rows: parts.rows ?? EMPTY_PROJECTION.rows,
+	}
+}
 
 /**
  * Create a stateful markdown handle from a markdown string or an already-parsed
