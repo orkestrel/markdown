@@ -4,15 +4,15 @@ A dual-axis index into this repository's guides — by concept, and by directory
 
 ## By concept
 
-| Concept  | Spec                                 | Source                    | Tests                                 |
-| -------- | ------------------------------------ | ------------------------- | ------------------------------------- |
+| Concept  | Spec                         | Source                    | Tests                                 |
+| -------- | ---------------------------- | ------------------------- | ------------------------------------- |
 | Markdown | [`markdown.md`](markdown.md) | [`src/core`](../src/core) | [`tests/src/core`](../tests/src/core) |
 
 ## By directory
 
-| Directory    | Guide                                                                                                                                                            |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/core`   | [`markdown.md`](markdown.md)                                                                                                                             |
+| Directory    | Guide                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `src/core`   | [`markdown.md`](markdown.md)                                                                                                     |
 | `guides/src` | Dependency mirrors: [`contract.md`](contract.md), [`guide.md`](guide.md), [`html.md`](html.md), and [`scaffold.md`](scaffold.md) |
 
 ## Dependency reference
