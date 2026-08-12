@@ -1607,7 +1607,7 @@ describe('rewriteDocument', () => {
 			element: 'paragraph',
 			children: [{ element: 'text', value: 'leaf' }],
 		}
-		const chain: (BlockquoteNode | ParagraphNode)[] = [leaf]
+		const chain: Array<BlockquoteNode | ParagraphNode> = [leaf]
 		for (let level = 0; level < 100; level += 1) {
 			const previous = chain[chain.length - 1]
 			if (previous === undefined) continue

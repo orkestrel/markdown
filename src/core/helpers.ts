@@ -255,7 +255,7 @@ export function splitTableRow(row: string): readonly string[] {
  * delimiterToAlignments('| :--- | ---: |') // ['left', 'right']
  * ```
  */
-export function delimiterToAlignments(delimiter: string): readonly (TableAlign | null)[] {
+export function delimiterToAlignments(delimiter: string): ReadonlyArray<TableAlign | null> {
 	return splitTableRow(delimiter).map((cell) => {
 		const text = cell.trim()
 		const left = text.startsWith(':')
@@ -662,13 +662,13 @@ export function scanInline(
  * ```
  */
 export function markdownToHTML(node: MarkdownNode): HTMLDocument {
-	const stack: {
+	const stack: Array<{
 		readonly node: MarkdownNode
 		readonly depth: number
 		readonly expanded: boolean
 		readonly count: number
-	}[] = [{ node, depth: 0, expanded: false, count: 0 }]
-	const values: (HTMLNode | undefined)[] = []
+	}> = [{ node, depth: 0, expanded: false, count: 0 }]
+	const values: Array<HTMLNode | undefined> = []
 	while (stack.length > 0) {
 		const frame = stack.pop()
 		if (frame === undefined) continue
@@ -997,7 +997,7 @@ export function renderHTML(node: MarkdownNode): string {
  * ```
  */
 export function renderMarkdown(node: MarkdownNode): string {
-	const stack: {
+	const stack: Array<{
 		readonly node: MarkdownNode
 		readonly depth: number
 		readonly expanded: boolean
@@ -1005,7 +1005,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 		readonly escaped: string
 		readonly escapeBang: boolean
 		readonly nesting: number
-	}[] = [
+	}> = [
 		{
 			node,
 			depth: 0,
@@ -1089,7 +1089,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 				values.push(escaped)
 				continue
 			}
-			const groups: (readonly MarkdownNode[])[] = []
+			const groups: Array<readonly MarkdownNode[]> = []
 			const adjacent: boolean[] = []
 			let depth = frame.depth + 1
 			switch (current.element) {
@@ -1468,7 +1468,7 @@ export function normalizeInlines(
 export function mergeProjections(children: readonly MarkdownProjection[]): MarkdownProjection {
 	const blocks: BlockNode[] = []
 	const cells: MarkdownCell[] = []
-	const rows: (readonly MarkdownCell[])[] = []
+	const rows: Array<readonly MarkdownCell[]> = []
 	let pending: InlineNode[] = []
 	let text = ''
 	for (const child of children) {
@@ -1843,16 +1843,16 @@ export function projectHTMLNode(
 			})
 		}
 		case 'table': {
-			const rows: (readonly MarkdownCell[])[] = []
+			const rows: Array<readonly MarkdownCell[]> = []
 			for (const row of merged.rows) if (row !== undefined) rows.push(row)
 			if (isNonEmptyArray(merged.cells)) rows.push(merged.cells)
 			const headings: boolean[] = []
 			const rowed: boolean[] = []
-			const sources: {
+			const sources: Array<{
 				children: readonly HTMLNode[]
 				index: number
 				direct: boolean
-			}[] = [{ children: node.children, index: 0, direct: false }]
+			}> = [{ children: node.children, index: 0, direct: false }]
 			while (sources.length > 0) {
 				const source = sources.pop()
 				if (source === undefined) continue
@@ -1907,17 +1907,17 @@ export function projectHTMLNode(
 					text: merged.text,
 				})
 			}
-			const header: (readonly InlineNode[])[] = []
-			const align: (TableAlign | null)[] = []
+			const header: Array<readonly InlineNode[]> = []
+			const align: Array<TableAlign | null> = []
 			for (let column = 0; column < columns; column += 1) {
 				const cell = headerRow?.[column]
 				header.push(cell?.inlines ?? [])
 				align.push(cell?.align ?? null)
 			}
-			const body: (readonly (readonly InlineNode[])[])[] = []
+			const body: Array<readonly (readonly InlineNode[])[]> = []
 			for (const [index, row] of rows.entries()) {
 				if (row === undefined || index === position) continue
-				const cells: (readonly InlineNode[])[] = []
+				const cells: Array<readonly InlineNode[]> = []
 				for (let column = 0; column < header.length; column += 1)
 					cells.push(row[column]?.inlines ?? [])
 				body.push(cells)
@@ -2010,7 +2010,7 @@ export function htmlToMarkdown(node: HTMLNode): MarkdownDocument {
  * ```
  */
 export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
-	const stack: { readonly node: MarkdownNode; readonly depth: number }[] = [{ node, depth: 0 }]
+	const stack: Array<{ readonly node: MarkdownNode; readonly depth: number }> = [{ node, depth: 0 }]
 	while (stack.length > 0) {
 		const frame = stack.pop()
 		if (frame === undefined) continue
@@ -2081,12 +2081,12 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
  * ```
  */
 export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, depth: number): T {
-	const stack: {
+	const stack: Array<{
 		readonly node: MarkdownNode
 		readonly depth: number
 		readonly expanded: boolean
 		readonly count: number
-	}[] = [{ node, depth, expanded: false, count: 0 }]
+	}> = [{ node, depth, expanded: false, count: 0 }]
 	const values: T[] = []
 	while (stack.length > 0) {
 		const frame = stack.pop()
@@ -2257,12 +2257,12 @@ export function rewriteDocument(
 	document: MarkdownDocument,
 	rewrite: MarkdownRewriteHandler,
 ): MarkdownDocument {
-	const stack: {
+	const stack: Array<{
 		readonly node: MarkdownNode
 		readonly depth: number
 		readonly expanded: boolean
 		readonly count: number
-	}[] = [{ node: document, depth: -1, expanded: false, count: 0 }]
+	}> = [{ node: document, depth: -1, expanded: false, count: 0 }]
 	const values: MarkdownNode[] = []
 	while (stack.length > 0) {
 		const frame = stack.pop()
@@ -2390,7 +2390,7 @@ export function rewriteDocument(
 			}
 			case 'table': {
 				let offset = 0
-				const header: (readonly InlineNode[])[] = []
+				const header: Array<readonly InlineNode[]> = []
 				for (const cell of current.header) {
 					if (cell === undefined) continue
 					const inlines: InlineNode[] = []
@@ -2402,10 +2402,10 @@ export function rewriteDocument(
 					}
 					header.push(inlines)
 				}
-				const rows: (readonly (readonly InlineNode[])[])[] = []
+				const rows: Array<readonly (readonly InlineNode[])[]> = []
 				for (const row of current.rows) {
 					if (row === undefined) continue
-					const cells: (readonly InlineNode[])[] = []
+					const cells: Array<readonly InlineNode[]> = []
 					for (const cell of row) {
 						if (cell === undefined) continue
 						const inlines: InlineNode[] = []
@@ -2475,7 +2475,7 @@ export function rewriteDocument(
  * ```
  */
 export function flattenText(node: MarkdownNode): string {
-	const stack: { readonly node: MarkdownNode; readonly depth: number }[] = [{ node, depth: 0 }]
+	const stack: Array<{ readonly node: MarkdownNode; readonly depth: number }> = [{ node, depth: 0 }]
 	let value = ''
 	while (stack.length > 0) {
 		const frame = stack.pop()

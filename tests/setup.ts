@@ -149,11 +149,11 @@ export function projectHTML(html: string): MarkdownDocument {
 }
 
 /** Markdown sources whose parsed AST must survive canonical rendering and reparsing. */
-export const MARKDOWN_FIXPOINT_CORPUS: readonly {
+export const MARKDOWN_FIXPOINT_CORPUS: ReadonlyArray<{
 	readonly name: string
 	readonly source: string
 	readonly rendered: string
-}[] = [
+}> = [
 	{
 		name: 'emphasis containing strong',
 		source: '_a **c** b_',
@@ -172,7 +172,7 @@ export const MARKDOWN_FIXPOINT_CORPUS: readonly {
 ]
 
 /** The HTML documents the projection's round-trip anchor law is proved over. */
-export const PROJECTION_CORPUS: readonly { readonly name: string; readonly html: string }[] = [
+export const PROJECTION_CORPUS: ReadonlyArray<{ readonly name: string; readonly html: string }> = [
 	{ name: 'headings', html: '<h1>Title</h1><h2>Sub &amp; more</h2><h6>Deep</h6>' },
 	{ name: 'emphasis nesting', html: '<p>a <strong><em>c</em> and b</strong> d</p>' },
 	{

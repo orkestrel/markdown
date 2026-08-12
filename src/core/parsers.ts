@@ -146,9 +146,9 @@ export function collectTable(
 	const columns = headerCells.length
 	const header = headerCells.map((cell) => parseInline(cell.trim()))
 	const align = delimiterToAlignments(lines[start + 1] ?? '')
-	const padded: (TableAlign | null)[] = []
+	const padded: Array<TableAlign | null> = []
 	for (let column = 0; column < columns; column += 1) padded.push(align[column] ?? null)
-	const rows: (readonly InlineNode[])[][] = []
+	const rows: Array<readonly InlineNode[]>[] = []
 	let index = start + 2
 	while (
 		index < lines.length &&
@@ -156,7 +156,7 @@ export function collectTable(
 		(lines[index] ?? '').includes('|')
 	) {
 		const cells = splitTableRow(lines[index] ?? '')
-		const row: (readonly InlineNode[])[] = []
+		const row: Array<readonly InlineNode[]> = []
 		for (let column = 0; column < columns; column += 1)
 			row.push(parseInline((cells[column] ?? '').trim()))
 		rows.push(row)

@@ -162,16 +162,16 @@ export interface ListNode {
 export interface TableNode {
 	readonly element: 'table'
 	/** The header row - one cell of inline content per column. */
-	readonly header: readonly (readonly InlineNode[])[]
+	readonly header: ReadonlyArray<readonly InlineNode[]>
 	/** The body rows - each a list of cells, each cell inline content. */
-	readonly rows: readonly (readonly (readonly InlineNode[])[])[]
+	readonly rows: ReadonlyArray<readonly (readonly InlineNode[])[]>
 	/**
 	 * The per-column alignment from the delimiter row, in column order. `null`
 	 * represents a bare `---` delimiter because this positional array requires one
 	 * entry per column, JSON cannot carry `undefined` in an array, and the delimiter
 	 * is an explicit no-alignment marker rather than an omitted value.
 	 */
-	readonly align: readonly (TableAlign | null)[]
+	readonly align: ReadonlyArray<TableAlign | null>
 }
 
 /**
@@ -267,7 +267,7 @@ export interface MarkdownProjection {
 	/** The cells this node contributes to an enclosing row. */
 	readonly cells: readonly MarkdownCell[]
 	/** The rows this node contributes to an enclosing table - each its cells, in column order. */
-	readonly rows: readonly (readonly MarkdownCell[])[]
+	readonly rows: ReadonlyArray<readonly MarkdownCell[]>
 }
 
 /**

@@ -271,7 +271,7 @@ describe('from-unknown AST guards: rejection of non-node values', () => {
 		Symbol('x'),
 	]
 
-	const guards: readonly ((value: unknown) => boolean)[] = [
+	const guards: ReadonlyArray<(value: unknown) => boolean> = [
 		isInlineNode,
 		isBlockNode,
 		isMarkdownNode,

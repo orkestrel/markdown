@@ -82,7 +82,7 @@ describe('parseDocument — paragraphs', () => {
 	})
 
 	it('stops the paragraph at each block-starting construct without a blank line', () => {
-		const cases: readonly { readonly markdown: string; readonly kinds: readonly string[] }[] = [
+		const cases: ReadonlyArray<{ readonly markdown: string; readonly kinds: readonly string[] }> = [
 			{ markdown: 'para\n```\ncode\n```', kinds: ['paragraph', 'codeBlock'] },
 			{ markdown: 'para\n---', kinds: ['paragraph', 'thematicBreak'] },
 			{ markdown: 'para\n> quote', kinds: ['paragraph', 'blockquote'] },

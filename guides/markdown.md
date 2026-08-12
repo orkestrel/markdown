@@ -1,6 +1,6 @@
 # Markdown
 
-> A types-first markdown layer over `@orkestrel/html` — a hand-written, linear-time scanner turns a markdown string into a typed AST held by a stateful `Markdown` workspace, and standalone projections carry that AST out (to sanitized HTML, or to canonical markdown source) and carry an HTML AST back in. Source: [`src/core`](../../src/core). Surfaced through the `@src/core` barrel.
+> A types-first markdown layer over `@orkestrel/html` — a hand-written, linear-time scanner turns a markdown string into a typed AST held by a stateful `Markdown` workspace, and standalone projections carry that AST out (to sanitized HTML, or to canonical markdown source) and carry an HTML AST back in. Source: [`src/core`](../src/core). Surfaced through the `@src/core` barrel.
 
 Markdown here is: parse once into a stateful `Markdown` workspace, then treat every output as a projection of it. `parseDocument` runs a block phase (headings / paragraphs / lists / GFM tables / fenced code / blockquotes / thematic breaks) then an inline phase (emphasis / inline code / links / images / hard breaks) over each block's text, and returns a render-agnostic `MarkdownDocument` — a discriminated union of node values keyed by `element` (the axis that varies, AGENTS §4.4: never `kind` / `type`). A `Markdown` instance wraps that AST with query (`find` / `filter` / `reduce` / iteration), rewrite (`map`), fold, and streaming operations. The AST itself is the primary contract — render-agnostic and exhaustively testable — with a from-unknown validation surface (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) for when an AST arrives from outside `parseDocument` (a deserialized document, a value crossing a process/RPC boundary).
 
@@ -10,7 +10,7 @@ Markdown here is: parse once into a stateful `Markdown` workspace, then treat ev
 
 ### Types
 
-The full node shape and workspace contract, from [`types.ts`](../../src/core/types.ts). `element` is the discriminant every node carries; block nodes carry document structure, inline nodes carry the inline content of a heading / paragraph / list item / table cell.
+The full node shape and workspace contract, from [`types.ts`](../src/core/types.ts). `element` is the discriminant every node carries; block nodes carry document structure, inline nodes carry the inline content of a heading / paragraph / list item / table cell.
 
 | Type                        | Kind      | Shape                                                                                                                                                                                                                                            |
 | --------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -43,7 +43,7 @@ The full node shape and workspace contract, from [`types.ts`](../../src/core/typ
 
 ### Constants
 
-From [`constants.ts`](../../src/core/constants.ts).
+From [`constants.ts`](../src/core/constants.ts).
 
 | Constant           | Kind  | Behavior                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -52,7 +52,7 @@ From [`constants.ts`](../../src/core/constants.ts).
 
 ### Parsers
 
-The block/inline parsing pipeline, from [`parsers.ts`](../../src/core/parsers.ts) — the orchestration `parseDocument` composes out of `helpers.ts`'s pure scanning leaves (AGENTS §5). `parseBlocks` / `collectTable` / `collectList` are the recursive spine; each is exported and independently testable.
+The block/inline parsing pipeline, from [`parsers.ts`](../src/core/parsers.ts) — the orchestration `parseDocument` composes out of `helpers.ts`'s pure scanning leaves (AGENTS §5). `parseBlocks` / `collectTable` / `collectList` are the recursive spine; each is exported and independently testable.
 
 | Parser          | Kind     | Signature                                                                                      | Behavior                                                                                                                                         |
 | --------------- | -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -64,7 +64,7 @@ The block/inline parsing pipeline, from [`parsers.ts`](../../src/core/parsers.ts
 
 ### Helpers
 
-Pure, total leaves from [`helpers.ts`](../../src/core/helpers.ts) — the scanning functional core `parsers.ts` composes, the four AST-crossing projections (`markdownToHTML`, `renderHTML`, `renderMarkdown`, `htmlToMarkdown`) plus the projection leaves they are built from, and the traversal engines `Markdown` delegates to (AGENTS §5). Every function is unit-testable in isolation; malformed input degrades to text, never throws.
+Pure, total leaves from [`helpers.ts`](../src/core/helpers.ts) — the scanning functional core `parsers.ts` composes, the four AST-crossing projections (`markdownToHTML`, `renderHTML`, `renderMarkdown`, `htmlToMarkdown`) plus the projection leaves they are built from, and the traversal engines `Markdown` delegates to (AGENTS §5). Every function is unit-testable in isolation; malformed input degrades to text, never throws.
 
 | Helper                  | Kind     | Signature                                                                                            | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ----------------------- | -------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -101,7 +101,7 @@ Pure, total leaves from [`helpers.ts`](../../src/core/helpers.ts) — the scanni
 
 ### Shapers
 
-Declarative `ContractShape` values (from `@orkestrel/contract`) from [`shapers.ts`](../../src/core/shapers.ts) — one shape compiles into a guard, coercing parser, JSON Schema, and seeded generator (the compilers live in `@orkestrel/contract`, invoked here via `createContract` in `factories.ts`). Only the NON-recursive node types shape here; any type whose fields recurse into `BlockNode` / `InlineNode` / `MarkdownNode` stays guard-only (`validators.ts`, via `lazyOf`) — see [Relationship with @orkestrel/contract](#relationship-with-orkestrelcontract).
+Declarative `ContractShape` values (from `@orkestrel/contract`) from [`shapers.ts`](../src/core/shapers.ts) — one shape compiles into a guard, coercing parser, JSON Schema, and seeded generator (the compilers live in `@orkestrel/contract`, invoked here via `createContract` in `factories.ts`). Only the NON-recursive node types shape here; any type whose fields recurse into `BlockNode` / `InlineNode` / `MarkdownNode` stays guard-only (`validators.ts`, via `lazyOf`) — see [Relationship with @orkestrel/contract](#relationship-with-orkestrelcontract).
 
 | Shaper               | Kind  | Builds                                                                                                  |
 | -------------------- | ----- | ------------------------------------------------------------------------------------------------------- |
@@ -115,7 +115,7 @@ Declarative `ContractShape` values (from `@orkestrel/contract`) from [`shapers.t
 
 ### Validators
 
-Line/character structural predicates plus node guards, from [`validators.ts`](../../src/core/validators.ts). The structural predicates test raw strings during parsing; the `is{Element}Node` guards narrow an ALREADY-PARSED `MarkdownNode` by its `element` tag; the from-unknown guards (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) instead validate an arbitrary `unknown` value against the full node shape, composed from `@orkestrel/contract` combinators. Two distinct guard families: the **from-unknown boundary guards** (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) take `unknown` and validate an entire untrusted value from scratch; the **narrowing guards** (`is{Element}Node`, e.g. `isTableNode`) take an already-typed `MarkdownNode` and narrow it to one member of the union by its `element` tag — they assume the value is already a valid node shape.
+Line/character structural predicates plus node guards, from [`validators.ts`](../src/core/validators.ts). The structural predicates test raw strings during parsing; the `is{Element}Node` guards narrow an ALREADY-PARSED `MarkdownNode` by its `element` tag; the from-unknown guards (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) instead validate an arbitrary `unknown` value against the full node shape, composed from `@orkestrel/contract` combinators. Two distinct guard families: the **from-unknown boundary guards** (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) take `unknown` and validate an entire untrusted value from scratch; the **narrowing guards** (`is{Element}Node`, e.g. `isTableNode`) take an already-typed `MarkdownNode` and narrow it to one member of the union by its `element` tag — they assume the value is already a valid node shape.
 
 | Guard                 | Kind     | Narrows to / Tests                                 | Behavior                                                                                                                                                   |
 | --------------------- | -------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -147,11 +147,11 @@ Line/character structural predicates plus node guards, from [`validators.ts`](..
 
 ### `Markdown`
 
-The implementing class of `MarkdownInterface`, from [`Markdown.ts`](../../src/core/Markdown.ts). A stateful, parsed markdown workspace: constructed from a markdown `string` (runs `parseDocument`) or an already-parsed `MarkdownDocument` (adopted AS-IS, not re-validated). Exposes its AST through the `readonly document` member (documented here in Surface prose, per the `ContractInterface` precedent, alongside `walk` — both are part of the documented surface even though `document` carries no row in the [`## Methods`](#methods) table below, which lists only call-signature members). `walk` is the deep traversal — a lazy, depth-first, pre-order, root-inclusive generator over every node; its sync `for (const node of markdown.walk())` surface is also consumable by `for await (const node of markdown.walk())` (JavaScript accepts a sync iterable in a `for await`), so an async pipeline needs no separate iterator. Contrast with `stream`: `walk` is deep (every node) and sync; `stream` is shallow (top-level blocks only) and backpressure-respecting. Immutable — `map` never mutates the stored AST, it returns a new `Markdown`. See [`## Methods`](#methods) for its public call-signature surface.
+The implementing class of `MarkdownInterface`, from [`Markdown.ts`](../src/core/Markdown.ts). A stateful, parsed markdown workspace: constructed from a markdown `string` (runs `parseDocument`) or an already-parsed `MarkdownDocument` (adopted AS-IS, not re-validated). Exposes its AST through the `readonly document` member (documented here in Surface prose, per the `ContractInterface` precedent, alongside `walk` — both are part of the documented surface even though `document` carries no row in the [`## Methods`](#methods) table below, which lists only call-signature members). `walk` is the deep traversal — a lazy, depth-first, pre-order, root-inclusive generator over every node; its sync `for (const node of markdown.walk())` surface is also consumable by `for await (const node of markdown.walk())` (JavaScript accepts a sync iterable in a `for await`), so an async pipeline needs no separate iterator. Contrast with `stream`: `walk` is deep (every node) and sync; `stream` is shallow (top-level blocks only) and backpressure-respecting. Immutable — `map` never mutates the stored AST, it returns a new `Markdown`. See [`## Methods`](#methods) for its public call-signature surface.
 
 ### Factories
 
-From [`factories.ts`](../../src/core/factories.ts).
+From [`factories.ts`](../src/core/factories.ts).
 
 | Factory                       | Kind     | Signature                                                     | Behavior                                                                                                         |
 | ----------------------------- | -------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -655,14 +655,14 @@ text.is(fixture) // true — guard / generator stay in lockstep
 
 ## Tests
 
-- [`tests/src/core/Markdown.test.ts`](../../tests/src/core/Markdown.test.ts) — `walk` / `find` / `filter` / `map` / `reduce` / `fold` / `stream` behavior, construction from a string vs. an already-parsed document.
-- [`tests/src/core/parsers.test.ts`](../../tests/src/core/parsers.test.ts) — `parseDocument` / `parseInline` / `parseBlocks` / `collectTable` / `collectList`, incl. degrade semantics at `MAX_DEPTH`.
-- [`tests/src/core/validators.test.ts`](../../tests/src/core/validators.test.ts) — structural predicates + per-node guards + the from-unknown AST guards (soundness on cyclic / adversarial input).
-- [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) — the pure line/block/inline scanning leaves; `markdownToHTML` / `renderHTML` (structure, escaping, the composed URL floor, the `src` widening, the depth cap) and `renderMarkdown` (canonical forms, the emphasis-parity corpus, the parse↔render round-trip); the projection leaves (`trimInlines` / `normalizeInlines` / `mergeProjections` / `projectionToBlocks` / `projectionToInlines` / `projectHTMLLeaf` / `projectHTMLNode`) and `htmlToMarkdown` end to end — element mapping, adversarial and cyclic input, the round-trip anchor law over the projection corpus, and the grand markdown → HTML → markdown trip; plus `walkNodes` / `foldNode` / `rewriteDocument` / `flattenText`.
-- [`tests/src/core/shapers.test.ts`](../../tests/src/core/shapers.test.ts) — per-shape guard exactness, JSON Schema essentials, seeded generate round-trips, parse rebuilds, and bidirectional `Infer` ↔ interface type parity.
-- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createMarkdown` + the compiled node contracts (`is` / `parse` / `schema` / `generate` round-trips).
+- [`tests/src/core/Markdown.test.ts`](../tests/src/core/Markdown.test.ts) — `walk` / `find` / `filter` / `map` / `reduce` / `fold` / `stream` behavior, construction from a string vs. an already-parsed document.
+- [`tests/src/core/parsers.test.ts`](../tests/src/core/parsers.test.ts) — `parseDocument` / `parseInline` / `parseBlocks` / `collectTable` / `collectList`, incl. degrade semantics at `MAX_DEPTH`.
+- [`tests/src/core/validators.test.ts`](../tests/src/core/validators.test.ts) — structural predicates + per-node guards + the from-unknown AST guards (soundness on cyclic / adversarial input).
+- [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — the pure line/block/inline scanning leaves; `markdownToHTML` / `renderHTML` (structure, escaping, the composed URL floor, the `src` widening, the depth cap) and `renderMarkdown` (canonical forms, the emphasis-parity corpus, the parse↔render round-trip); the projection leaves (`trimInlines` / `normalizeInlines` / `mergeProjections` / `projectionToBlocks` / `projectionToInlines` / `projectHTMLLeaf` / `projectHTMLNode`) and `htmlToMarkdown` end to end — element mapping, adversarial and cyclic input, the round-trip anchor law over the projection corpus, and the grand markdown → HTML → markdown trip; plus `walkNodes` / `foldNode` / `rewriteDocument` / `flattenText`.
+- [`tests/src/core/shapers.test.ts`](../tests/src/core/shapers.test.ts) — per-shape guard exactness, JSON Schema essentials, seeded generate round-trips, parse rebuilds, and bidirectional `Infer` ↔ interface type parity.
+- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — `createMarkdown` + the compiled node contracts (`is` / `parse` / `schema` / `generate` round-trips).
 
 ## See also
 
-- [`AGENTS.md`](../../AGENTS.md) — the rules; §5 centralized-file pattern, §14 guard totality, §22 documentation-as-contracts.
-- [`README.md`](../README.md) — the guides index.
+- [`AGENTS.md`](../AGENTS.md) — the rules; §5 centralized-file pattern, §14 guard totality, §22 documentation-as-contracts.
+- [`README.md`](README.md) — the guides index.
