@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/markdown",
-	"version": "0.0.7",
+	"version": "0.0.8",
 	"description": "A types-first markdown layer over @orkestrel/html — typed AST, both conversion directions, and sanitized HTML by default.",
 	"keywords": [
 		"ast",
@@ -66,8 +66,8 @@
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run build && npm test"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.10",
-		"@orkestrel/html": "^0.0.2"
+		"@orkestrel/contract": "^0.0.11",
+		"@orkestrel/html": "^0.0.3"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.58.12",
