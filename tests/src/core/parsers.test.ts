@@ -15,25 +15,19 @@ import {
 	firstBlock,
 	inlineText,
 } from '../../setup.js'
-import {
-	MAX_DEPTH,
-	collectList,
-	collectTable,
-	parseBlocks,
-	parseDocument,
-	parseInline,
-} from '@src/core'
+import { MAX_DEPTH, parseBlocks, parseDocument, parseInline } from '@src/core'
 
 // The markdown parser's parse-behavior surface — parseDocument (the block phase
-// entry point), parseInline (the inline phase entry point), and their block-phase
-// helpers parseBlocks / collectList / collectTable. The AST is the contract: each
-// construct (heading / paragraph / list / GFM table / fenced + inline code / link /
-// emphasis / blockquote / thematic break) parses to the right discriminated node.
-// Pure + total: malformed markdown degrades to text, never throws, and a MAX_DEPTH
-// recursion cap degrades pathologically deep input to a single literal node rather
-// than exhausting the call stack. Render/HTML behavior lives in helpers.test.ts
-// (renderHTML). The AST narrowers and deep-input builders are centralized in
-// tests/setup.ts (AGENTS §16).
+// entry point), parseInline (the inline phase entry point), and the block-phase
+// recursion parseBlocks. The construct scanners those compose (collectTable /
+// collectList) are helpers.ts leaves, covered in helpers.test.ts. The AST is the
+// contract: each construct (heading / paragraph / list / GFM table / fenced + inline
+// code / link / emphasis / blockquote / thematic break) parses to the right
+// discriminated node. Pure + total: malformed markdown degrades to text, never throws,
+// and a MAX_DEPTH recursion cap degrades pathologically deep input to a single literal
+// node rather than exhausting the call stack. Render/HTML behavior lives in
+// helpers.test.ts (renderHTML). The AST narrowers and deep-input builders are
+// centralized in tests/setup.ts (AGENTS §16).
 
 describe('parseDocument — headings', () => {
 	it('parses each ATX level (# … ######) to the right heading level', () => {
@@ -745,75 +739,5 @@ describe('parseBlocks', () => {
 	it('parses normally below MAX_DEPTH', () => {
 		const blocks = parseBlocks(['# h', 'para'], 0)
 		expect(blocks.map((block) => block.element)).toEqual(['heading', 'paragraph'])
-	})
-})
-
-describe('collectList', () => {
-	it('collects a list slice, returning the node and the index after it', () => {
-		const lines = ['- one', '- two', 'after']
-		const { node, next } = collectList(lines, 0, 0)
-		expect(node.element).toBe('list')
-		expect(node.items).toHaveLength(2)
-		expect(next).toBe(3)
-	})
-
-	it('collects an ordered list slice starting mid-array', () => {
-		const lines = ['plain', '3. three', '4. four']
-		const { node, next } = collectList(lines, 1, 0)
-		expect(node.ordered).toBe(true)
-		expect(node.start).toBe(3)
-		expect(next).toBe(3)
-	})
-
-	it('preserves mixed markers and residual source when a mid-array chain reaches the cap', () => {
-		const lines = ['plain', '- ', '  3. ', '     - leaf']
-		const { node, next } = collectList(lines, 1, MAX_DEPTH - 2)
-
-		expect(next).toBe(lines.length)
-		expect(node).toEqual({
-			element: 'list',
-			ordered: false,
-			start: 1,
-			items: [
-				{
-					element: 'listItem',
-					children: [
-						{
-							element: 'list',
-							ordered: true,
-							start: 3,
-							items: [
-								{
-									element: 'listItem',
-									children: [
-										{
-											element: 'paragraph',
-											children: [{ element: 'text', value: '\n- leaf' }],
-										},
-									],
-								},
-							],
-						},
-					],
-				},
-			],
-		})
-	})
-})
-
-describe('collectTable', () => {
-	it('collects a table slice, returning the node and the index after it', () => {
-		const lines = ['| a | b |', '| - | - |', '| 1 | 2 |', 'after']
-		const { node, next } = collectTable(lines, 0)
-		expect(node.element).toBe('table')
-		expect(node.header.map(inlineText)).toEqual(['a', 'b'])
-		expect(next).toBe(3)
-	})
-
-	it('collects a header-only table with no body rows', () => {
-		const lines = ['| a |', '| - |']
-		const { node, next } = collectTable(lines, 0)
-		expect(node.rows).toEqual([])
-		expect(next).toBe(2)
 	})
 })

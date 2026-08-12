@@ -13,6 +13,7 @@ import type {
 	LinkNode,
 	ListItemNode,
 	ListItemMatch,
+	ListNode,
 	MarkdownCell,
 	MarkdownDocument,
 	MarkdownHandlers,
@@ -20,10 +21,12 @@ import type {
 	MarkdownProjection,
 	MarkdownRewriteHandler,
 	TableAlign,
+	TableNode,
 } from './types.js'
 import { MAX_DEPTH } from './constants.js'
 import { createProjection } from './factories.js'
 import {
+	isBlankLine,
 	isBlockNode,
 	isEscapable,
 	isInlineNode,
@@ -32,6 +35,7 @@ import {
 	isThematicBreak,
 	isWhitespace,
 } from './validators.js'
+import { parseBlocks, parseInline } from './parsers.js'
 import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '@orkestrel/contract'
 import {
 	HTML,
@@ -50,13 +54,15 @@ import {
 //
 // The pure leaf primitives {@link parseDocument} composes: the line / block
 // scanners (headings, fences, list items, table rows, quotes, thematic breaks), the
-// inline `scan*` engine (emphasis / links / code with backslash escapes), and the HTML
-// AST projection the renderer composes with @orkestrel/html. Every function is PURE, TOTAL, and
+// `collect*` construct scanners (GFM tables and lists), the inline `scan*` engine
+// (emphasis / links / code with backslash escapes), and the HTML AST projection the
+// renderer composes with @orkestrel/html. Every function is PURE, TOTAL, and
 // referentially transparent - malformed input degrades to text, never throws (AGENTS
-// §14) - so each is unit-tested in isolation. The ORCHESTRATION that threads these
-// together (the block / inline / render recursion) lives in parsers.ts's functions,
-// not here (AGENTS §5): a helper is a functional-core leaf, a method is the
-// composition. Inline scanning is index-based (no backtracking regex) so it is
+// §14) - so each is unit-tested in isolation. The `parse*` ENTRY POINTS that thread
+// these together (the block / inline phase entries) live in parsers.ts (AGENTS §5): a
+// helper is a functional-core leaf, a parser is the phase it names. A construct scanner
+// calls back into its phase entry, so helpers.ts and parsers.ts are mutually recursive
+// by design. Inline scanning is index-based (no backtracking regex) so it is
 // linear-time - no ReDoS on adversarial input.
 
 //  Text + line utilities
@@ -638,6 +644,147 @@ export function scanInline(
 	}
 	if (pending.length > 0) nodes.push({ element: 'text', value: pending })
 	return nodes
+}
+
+/**
+ * Collects a GFM table starting at a header row, parsing the header, the
+ * alignment row, and every contiguous body row that follows.
+ *
+ * @param lines - The markdown lines to scan.
+ * @param start - The index of the header row.
+ * @returns The parsed table node and the index of the first line after it.
+ *
+ * @example
+ * ```ts
+ * collectTable(['| a |', '| - |'], 0) // { node: { element: 'table', ... }, next: 2 }
+ * ```
+ */
+export function collectTable(
+	lines: readonly string[],
+	start: number,
+): { readonly node: TableNode; readonly next: number } {
+	const headerCells = splitTableRow(lines[start] ?? '')
+	const columns = headerCells.length
+	const header = headerCells.map((cell) => parseInline(cell.trim()))
+	const align = delimiterToAlignments(lines[start + 1] ?? '')
+	const padded: Array<TableAlign | null> = []
+	for (let column = 0; column < columns; column += 1) padded.push(align[column] ?? null)
+	const rows: Array<Array<readonly InlineNode[]>> = []
+	let index = start + 2
+	while (
+		index < lines.length &&
+		!isBlankLine(lines[index] ?? '') &&
+		(lines[index] ?? '').includes('|')
+	) {
+		const cells = splitTableRow(lines[index] ?? '')
+		const row: Array<readonly InlineNode[]> = []
+		for (let column = 0; column < columns; column += 1)
+			row.push(parseInline((cells[column] ?? '').trim()))
+		rows.push(row)
+		index += 1
+	}
+	return { node: { element: 'table', header, rows, align: padded }, next: index }
+}
+
+/**
+ * Collects a list starting at the first item, gathering sibling items at the
+ * same indent/ordering and recursing into each item's own block content.
+ *
+ * @param lines - The markdown lines to scan.
+ * @param start - The index of the first list item.
+ * @param depth - The current recursion depth (each item recurses at `depth + 1`).
+ * @returns The parsed list node and the index of the first line after it.
+ *
+ * @example
+ * ```ts
+ * collectList(['- item'], 0, 0) // { node: { element: 'list', ... }, next: 1 }
+ * ```
+ */
+export function collectList(
+	lines: readonly string[],
+	start: number,
+	depth: number,
+): { readonly node: ListNode; readonly next: number } {
+	const first = extractListItem(lines[start] ?? '')
+	const ordered = first?.ordered ?? false
+	const startOrdinal = first?.start ?? 1
+	const topIndent = first?.indent ?? 0
+	const items: ListItemNode[] = []
+	// A single nested-item chain would otherwise rescan and slice the whole suffix
+	// once per level before reaching the cap. Recognize that shape in one pass and
+	// build the same bounded AST bottom-up.
+	const chain: ListItemMatch[] = []
+	let nested = true
+	for (let cursor = start; cursor < lines.length; cursor += 1) {
+		const parsed = extractListItem(lines[cursor] ?? '')
+		const previous = chain[chain.length - 1]
+		if (
+			parsed === undefined ||
+			(previous !== undefined && (previous.content.length > 0 || parsed.indent !== previous.marker))
+		) {
+			nested = false
+			break
+		}
+		chain.push(parsed)
+	}
+	const remaining = MAX_DEPTH - depth
+	if (nested && remaining > 0 && chain.length > remaining) {
+		const terminal = chain[remaining - 1]
+		if (terminal !== undefined) {
+			const source = [terminal.content]
+			for (let cursor = start + remaining; cursor < lines.length; cursor += 1) {
+				source.push((lines[cursor] ?? '').slice(terminal.marker))
+			}
+			let children: readonly BlockNode[] = [
+				{ element: 'paragraph', children: [{ element: 'text', value: source.join('\n') }] },
+			]
+			let node: ListNode | undefined
+			for (let cursor = remaining - 1; cursor >= 0; cursor -= 1) {
+				const parsed = chain[cursor]
+				if (parsed === undefined) continue
+				node = {
+					element: 'list',
+					ordered: parsed.ordered,
+					start: parsed.start,
+					items: [{ element: 'listItem', children }],
+				}
+				children = [node]
+			}
+			if (node !== undefined) return { node, next: lines.length }
+		}
+	}
+	let index = start
+	while (index < lines.length) {
+		const parsed = extractListItem(lines[index] ?? '')
+		// A sibling item shares the list's (top) indent + ordering; anything else stops
+		// the top loop (a deeper item is a nested list, gathered as continuation below).
+		if (!parsed || parsed.indent > topIndent || parsed.ordered !== ordered) break
+		const itemLines: string[] = [parsed.content]
+		const continuation = parsed.marker
+		index += 1
+		while (index < lines.length) {
+			const next = lines[index] ?? ''
+			if (isBlankLine(next)) {
+				const after = lines[index + 1] ?? ''
+				if (index + 1 < lines.length && !isBlankLine(after) && countIndent(after) >= continuation) {
+					itemLines.push('')
+					index += 1
+					continue
+				}
+				break
+			}
+			if (countIndent(next) >= continuation) {
+				itemLines.push(next.slice(continuation))
+				index += 1
+				continue
+			}
+			if (extractListItem(next) || startsBlock(lines, index)) break
+			itemLines.push(next.trim()) // a lazy paragraph-continuation line
+			index += 1
+		}
+		items.push({ element: 'listItem', children: parseBlocks(itemLines, depth + 1) })
+	}
+	return { node: { element: 'list', ordered, start: startOrdinal, items }, next: index }
 }
 
 //  Rendering (Markdown AST → HTML AST → sanitized HTML string)
@@ -1914,7 +2061,7 @@ export function projectHTMLNode(
 				header.push(cell?.inlines ?? [])
 				align.push(cell?.align ?? null)
 			}
-			const body: Array<readonly (readonly InlineNode[])[]> = []
+			const body: Array<ReadonlyArray<readonly InlineNode[]>> = []
 			for (const [index, row] of rows.entries()) {
 				if (row === undefined || index === position) continue
 				const cells: Array<readonly InlineNode[]> = []
@@ -2402,7 +2549,7 @@ export function rewriteDocument(
 					}
 					header.push(inlines)
 				}
-				const rows: Array<readonly (readonly InlineNode[])[]> = []
+				const rows: Array<ReadonlyArray<readonly InlineNode[]>> = []
 				for (const row of current.rows) {
 					if (row === undefined) continue
 					const cells: Array<readonly InlineNode[]> = []

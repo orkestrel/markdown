@@ -164,7 +164,7 @@ export interface TableNode {
 	/** The header row - one cell of inline content per column. */
 	readonly header: ReadonlyArray<readonly InlineNode[]>
 	/** The body rows - each a list of cells, each cell inline content. */
-	readonly rows: ReadonlyArray<readonly (readonly InlineNode[])[]>
+	readonly rows: ReadonlyArray<ReadonlyArray<readonly InlineNode[]>>
 	/**
 	 * The per-column alignment from the delimiter row, in column order. `null`
 	 * represents a bare `---` delimiter because this positional array requires one

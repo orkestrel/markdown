@@ -12,6 +12,8 @@ import type {
 import {
 	MAX_DEPTH,
 	coalesceText,
+	collectList,
+	collectTable,
 	extractFence,
 	extractHeading,
 	extractListItem,
@@ -56,12 +58,13 @@ import {
 	buildDeepEmphasisInput,
 	buildProjection,
 	firstBlock,
+	inlineText,
 	projectHTML,
 } from '../../setup'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 // The markdown parser's pure helper surface (block extractors, inline scanners,
-// escaping / sanitization primitives) plus the AST-level surface (renderHTML,
+// construct scanners, escaping / sanitization primitives) plus the AST-level surface (renderHTML,
 // renderMarkdown, walkNodes, foldNode, rewriteDocument, flattenText). Each is pure
 // and total; malformed input degrades instead of throwing. parsers.test.ts covers
 // the composed parse-behavior corpus. This suite mirrors every exported helpers.ts
@@ -450,6 +453,76 @@ describe('scanInline', () => {
 	it('does not throw on a pathologically deep nested-emphasis/link source', () => {
 		const source = buildDeepEmphasisInput(10000)
 		expect(() => scanInline(source, 0, source.length)).not.toThrow()
+	})
+})
+
+describe('collectTable', () => {
+	it('collects a table slice, returning the node and the index after it', () => {
+		const lines = ['| a | b |', '| - | - |', '| 1 | 2 |', 'after']
+		const { node, next } = collectTable(lines, 0)
+		expect(node.element).toBe('table')
+		expect(node.header.map(inlineText)).toEqual(['a', 'b'])
+		expect(next).toBe(3)
+	})
+
+	it('collects a header-only table with no body rows', () => {
+		const lines = ['| a |', '| - |']
+		const { node, next } = collectTable(lines, 0)
+		expect(node.rows).toEqual([])
+		expect(next).toBe(2)
+	})
+})
+
+describe('collectList', () => {
+	it('collects a list slice, returning the node and the index after it', () => {
+		const lines = ['- one', '- two', 'after']
+		const { node, next } = collectList(lines, 0, 0)
+		expect(node.element).toBe('list')
+		expect(node.items).toHaveLength(2)
+		expect(next).toBe(3)
+	})
+
+	it('collects an ordered list slice starting mid-array', () => {
+		const lines = ['plain', '3. three', '4. four']
+		const { node, next } = collectList(lines, 1, 0)
+		expect(node.ordered).toBe(true)
+		expect(node.start).toBe(3)
+		expect(next).toBe(3)
+	})
+
+	it('preserves mixed markers and residual source when a mid-array chain reaches the cap', () => {
+		const lines = ['plain', '- ', '  3. ', '     - leaf']
+		const { node, next } = collectList(lines, 1, MAX_DEPTH - 2)
+
+		expect(next).toBe(lines.length)
+		expect(node).toEqual({
+			element: 'list',
+			ordered: false,
+			start: 1,
+			items: [
+				{
+					element: 'listItem',
+					children: [
+						{
+							element: 'list',
+							ordered: true,
+							start: 3,
+							items: [
+								{
+									element: 'listItem',
+									children: [
+										{
+											element: 'paragraph',
+											children: [{ element: 'text', value: '\n- leaf' }],
+										},
+									],
+								},
+							],
+						},
+					],
+				},
+			],
+		})
 	})
 })
 
@@ -1545,7 +1618,7 @@ describe('rewriteDocument', () => {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
-		const snapshot = JSON.parse(JSON.stringify(document)) as unknown
+		const snapshot: unknown = JSON.parse(JSON.stringify(document))
 		rewriteDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)

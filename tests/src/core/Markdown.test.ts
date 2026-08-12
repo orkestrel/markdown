@@ -130,7 +130,7 @@ describe('Markdown — map', () => {
 	it('never mutates the original instance (copy-on-write)', () => {
 		const markdown = new Markdown('a lowercase paragraph')
 		const rewritten = markdown.map(upper)
-		expect((firstBlock('a lowercase paragraph') as { element: string }).element).toBe('paragraph')
+		expect(firstBlock('a lowercase paragraph').element).toBe('paragraph')
 		const originalText = markdown.filter(isTextNode)[0]
 		const rewrittenText = rewritten.filter(isTextNode)[0]
 		expect(originalText?.value).toBe('a lowercase paragraph')
