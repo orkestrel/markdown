@@ -634,7 +634,7 @@ createDoctypeContract().is({ category: 'doctype', name: 'html' }) // true
 - [`tests/src/core/shapers.test.ts`](../../tests/src/core/shapers.test.ts) — per-shape guard exactness, closed JSON Schemas, seeded generation, parse rebuilds, and `Infer` ↔ interface parity in both directions.
 - [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createHTML` against the class it constructs, and the four compiled node contracts.
 - [`tests/policy.test.ts`](../../tests/policy.test.ts) — repository coding law: source placement, exports, readonly contracts, and syntax.
-- [`tests/guides/src/parity.test.ts`](../../tests/guides/src/parity.test.ts) — this guide against the real surface, in both directions.
+- [`tests/guides.test.ts`](../../tests/guides.test.ts) — this guide against the real surface, in both directions.
 
 ## See also
 
