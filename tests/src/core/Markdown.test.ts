@@ -7,19 +7,9 @@ import type {
 	ParagraphNode,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
+import { collectStream } from '@orkestrel/test'
 import { buildDeepQuoteInput, firstBlock } from '../../setup.js'
 import { Markdown, isHeadingNode, isMarkdownDocument, isTextNode } from '@src/core'
-
-// Reads a ReadableStream to completion via its reader, in order - the universal
-// (reader-based) consumption form, used across this suite's stream() assertions.
-async function collectStream<T>(stream: ReadableStream<T>): Promise<T[]> {
-	const reader = stream.getReader()
-	const values: T[] = []
-	for (let result = await reader.read(); !result.done; result = await reader.read()) {
-		values.push(result.value)
-	}
-	return values
-}
 
 // The Markdown CLASS — the stateful wrapper around a parsed MarkdownDocument AST,
 // exposing query (find/filter/reduce/iteration), rewrite (map), fold, and streaming
