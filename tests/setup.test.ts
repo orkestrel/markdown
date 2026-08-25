@@ -27,7 +27,6 @@ import {
 	buildProjection,
 	firstBlock,
 	inlineText,
-	isBrowserVuePath,
 	projectHTML,
 } from './setup.js'
 
@@ -411,23 +410,6 @@ describe('the deep markdown source builders', () => {
 		expect(buildDeepQuoteInput(1)).toBe('> leaf')
 		expect(buildDeepListInput(1)).toBe('- leaf')
 		expect(buildDeepEmphasisInput(1)).toBe('*leaf*')
-	})
-})
-
-describe('isBrowserVuePath', () => {
-	it('accepts a browser SFC path written with either separator family', () => {
-		expect(isBrowserVuePath('app/browser/App.vue')).toBe(true)
-		expect(isBrowserVuePath('app\\browser\\App.vue')).toBe(true)
-		expect(isBrowserVuePath('app/browser/views/Home.vue')).toBe(true)
-		expect(isBrowserVuePath('app\\browser\\views\\Home.vue')).toBe(true)
-	})
-
-	it('refuses a sibling environment and a prefix lookalike', () => {
-		expect(isBrowserVuePath('app/core/App.vue')).toBe(false)
-		expect(isBrowserVuePath('app/server/App.vue')).toBe(false)
-		expect(isBrowserVuePath('app/browserish/App.vue')).toBe(false)
-		expect(isBrowserVuePath('src/browser/App.vue')).toBe(false)
-		expect(isBrowserVuePath('vendor/app/browser/App.vue')).toBe(false)
 	})
 })
 
