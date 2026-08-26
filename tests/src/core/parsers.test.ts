@@ -1,3 +1,4 @@
+import type { MarkdownNode, MarkdownSpan } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import {
 	assertBlockquoteNode,
@@ -21,6 +22,7 @@ import {
 	parseDocument,
 	parseInline,
 	parseProvenance,
+	scanInlineSource,
 	splitLines,
 	walkNodes,
 } from '@src/core'
@@ -759,6 +761,11 @@ describe('parseProvenance — original-source spans', () => {
 		expect(markdown.slice(span.start, span.end)).toBe(markdown)
 	})
 
+	it('spans the whole input on the document a handle-free parse returns', () => {
+		const [document, spans] = parseProvenance('# Title\n\nA **bold** word.')
+		expect(spans.get(document)).toEqual({ start: 0, end: 25 })
+	})
+
 	it('records heading and heading-text spans', () => {
 		const markdown = '  ## Head ##  '
 		const [document, spans] = parseProvenance(markdown)
@@ -950,5 +957,19 @@ describe('parseProvenance — original-source spans', () => {
 			'{"element":"document","children":[{"element":"heading","level":1,"children":[{"element":"text","value":"Head"}]},{"element":"paragraph","children":[{"element":"text","value":"Plain *literal* "},{"element":"emphasis","strong":true,"children":[{"element":"text","value":"bold"}]},{"element":"text","value":" "},{"element":"codeSpan","value":"code"},{"element":"text","value":" "},{"element":"link","href":"target","children":[{"element":"text","value":"link"}]},{"element":"text","value":" "},{"element":"image","src":"image","children":[{"element":"text","value":"alt"}]},{"element":"break"},{"element":"text","value":"next"}]},{"element":"blockquote","children":[{"element":"paragraph","children":[{"element":"text","value":"quote"}]}]},{"element":"list","ordered":false,"start":1,"items":[{"element":"listItem","children":[{"element":"paragraph","children":[{"element":"text","value":"item\\ncontinuation"}]}]}]},{"element":"table","header":[[{"element":"text","value":"head"}]],"rows":[[[{"element":"text","value":"cell"}]]],"align":[null]},{"element":"codeBlock","lang":"ts","code":"code"},{"element":"thematicBreak"}]}',
 		)
 		for (const node of walkNodes(document)) expect(spans.has(node)).toBe(true)
+	})
+})
+
+// The inline phase's offset-bearing entry point. `scanInlineSource` runs the same scan
+// `parseInline` composes and records each emitted node into a caller-owned recorder, so a
+// caller writing its own block phase over `splitLines` output keeps original coordinates.
+describe('scanInlineSource — coordinates inside one line', () => {
+	it('records each emitted node against the original coordinates of the scanned line', () => {
+		const [line] = splitLines('> a *b*')
+		const spans = new Map<MarkdownNode, MarkdownSpan>()
+		const nodes = line === undefined ? [] : scanInlineSource(line, 2, line.text.length, spans, 0)
+		const [text, emphasis] = nodes
+		expect(text === undefined ? undefined : spans.get(text)).toEqual({ start: 2, end: 4 })
+		expect(emphasis === undefined ? undefined : spans.get(emphasis)).toEqual({ start: 4, end: 7 })
 	})
 })

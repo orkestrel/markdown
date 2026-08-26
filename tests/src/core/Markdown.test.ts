@@ -9,7 +9,7 @@ import type {
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import { collectStream } from '@orkestrel/test'
-import { buildDeepQuoteInput, firstBlock } from '../../setup.js'
+import { buildDeepQuoteInput, firstBlock, projectHTML } from '../../setup.js'
 import { Markdown, isHeadingNode, isMarkdownDocument, isTextNode } from '@src/core'
 
 // The Markdown CLASS — the stateful wrapper around a parsed MarkdownDocument AST,
@@ -62,6 +62,28 @@ describe('Markdown — span', () => {
 		expect(markdown.span(markdown.document)).toEqual({ start: 0, end: source.length })
 	})
 
+	it('covers the marker a heading value drops, so the region opens before its text', () => {
+		const source = '# Title\n\nA **bold** word.'
+		const markdown = new Markdown(source)
+		const heading = markdown.find(isHeadingNode)
+		if (heading === undefined) throw new Error('expected a heading')
+		const region = markdown.span(heading)
+		expect(region).toEqual({ start: 0, end: 7 })
+		if (region === undefined) throw new Error('expected heading provenance')
+		expect(source.slice(region.start, region.end)).toBe('# Title')
+	})
+
+	it('slices the constructor string verbatim where the value decoded an escape', () => {
+		const source = 'a \\* b *c*'
+		const markdown = new Markdown(source)
+		const [text] = markdown.filter(isTextNode)
+		expect(text?.value).toBe('a * b ')
+		const region = text === undefined ? undefined : markdown.span(text)
+		expect(region).toEqual({ start: 0, end: 7 })
+		if (region === undefined) throw new Error('expected text provenance')
+		expect(source.slice(region.start, region.end)).toBe('a \\* b ')
+	})
+
 	it('returns a fresh value per call, so a mutated return never reaches the next', () => {
 		const markdown = new Markdown('# Title')
 		const first = markdown.span(markdown.document)
@@ -87,6 +109,14 @@ describe('Markdown — span', () => {
 			undefined,
 			undefined,
 		])
+	})
+
+	it('reports undefined for every node of a document projected in from HTML', () => {
+		const imported = new Markdown(projectHTML('<div>text<p>para</p></div>'))
+		expect(imported.span(imported.document)).toBeUndefined()
+		const nodes = [...imported.walk()]
+		expect(nodes.length).toBeGreaterThan(1)
+		expect(nodes.every((node) => imported.span(node) === undefined)).toBe(true)
 	})
 
 	it('keeps two handles over the same text on independent maps', () => {
@@ -237,6 +267,26 @@ describe('Markdown — map provenance', () => {
 		const heading = rewritten.find(isHeadingNode)
 		if (heading === undefined) throw new Error('expected the untouched heading')
 		expect(rewritten.span(heading)).toEqual({ start: 0, end: 7 })
+	})
+
+	it('gives a lowercased text node the region its input occupied in the original', () => {
+		const markdown = new Markdown('# Hi\n\nText.')
+		const lowered = markdown.map((node) =>
+			node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
+		)
+		const [first] = lowered.filter(isTextNode)
+		expect(first?.value).toBe('hi')
+		expect(first === undefined ? undefined : lowered.span(first)).toEqual({ start: 2, end: 4 })
+	})
+
+	it('keeps the own region of an already-spanned node returned for several inputs', () => {
+		const markdown = new Markdown('a *b* c')
+		const [first] = markdown.filter(isTextNode)
+		if (first === undefined) throw new Error('expected a text node')
+		expect(markdown.span(first)).toEqual({ start: 0, end: 2 })
+		const kept = markdown.map((node) => (isTextNode(node) ? first : node))
+		expect(kept.filter(isTextNode)).toHaveLength(3)
+		expect(kept.span(first)).toEqual({ start: 0, end: 2 })
 	})
 
 	it('leaves an output node assembled from separate sources without a region', () => {
