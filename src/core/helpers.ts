@@ -836,7 +836,7 @@ export function locateEmphasis(
  * matching closing run of the same marker + width while skipping complete nested runs
  * from the other marker family, and requires non-space immediately inside both
  * delimiters (the CommonMark flanking simplification that blocks `* x *`) through
- * {@link locateEmphasis} - and returns the parsed node and end index. Returns
+ * {@link locateEmphasis}, and returns the parsed node and end index. Returns
  * `undefined` when no valid closer exists (it then degrades to a literal marker).
  *
  * @param source - The inline source text
@@ -1239,10 +1239,10 @@ export function collectList(
 		}
 		const tail = itemLines[itemLines.length - 1]
 		const segment = tail?.segments[tail.segments.length - 1]
-		const itemLimit = index === lines.length && end !== undefined ? end : segment?.end
+		const itemEnd = index === lines.length && end !== undefined ? end : segment?.end
 		const item: ListItemNode = {
 			element: 'listItem',
-			children: parseBlocks(itemLines, depth + 1, spans, itemLimit),
+			children: parseBlocks(itemLines, depth + 1, spans, itemEnd),
 		}
 		const source = joinSources(lines.slice(itemStart, index), '\n')
 		const span = projectSpan(source, 0, source.text.length)
