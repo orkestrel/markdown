@@ -36,15 +36,20 @@ export interface ListItemMatch {
 }
 
 /**
- * A half-open region of the ORIGINAL markdown string, in UTF-16 code units -
+ * Addresses a half-open region of the ORIGINAL markdown string, in UTF-16 code units -
  * `start` inclusive, `end` exclusive. The provenance a parse records for a node and
  * {@link MarkdownInterface.span} reads back.
  *
  * @remarks
- * The coordinates address the string the handle was constructed from, never the
- * line text a later phase walks, so `markdown.slice(span.start, span.end)` returns
- * the source the node was parsed from. The region's length is `end - start`; no
- * length member exists to drift from the two offsets.
+ * The coordinates address the string the handle was constructed from, never the line
+ * text a later phase walks, so `markdown.slice(span.start, span.end)` returns the
+ * ORIGINAL source region the node was produced from. That region is not the node's
+ * value: it carries the syntax the value drops, such as a `\` escape marker, and the
+ * characters normalization removed, such as a trailing space the paragraph phase
+ * trimmed. The text node of `'a \nb'` values `a\nb` and reports
+ * `{ start: 0, end: 4 }`, which slices the whole `a \nb`. Read a value off the node
+ * and a region off the source; never derive either from the other. The region's length
+ * is `end - start`; no length member exists to drift from the two offsets.
  */
 export interface MarkdownSpan {
 	/** The first code unit of the region, inclusive. */
@@ -54,20 +59,31 @@ export interface MarkdownSpan {
 }
 
 /**
- * One run of a {@link MarkdownSource} - the mapping from a stretch of derived text
- * back to the region of the ORIGINAL markdown string it was taken from.
+ * Maps one run of a {@link MarkdownSource} back to the region of the ORIGINAL
+ * markdown string it was taken from.
  *
  * @remarks
  * `offset` addresses {@link MarkdownSource.text}; `start` and `end` address the
  * original string. The run's original length derives from `end - start` rather than
- * being stored beside them, so no length member exists to drift, and a position `p`
- * inside the run projects back to `start + (p - offset)`. The run's DERIVED extent
- * ends where the next segment's `offset` begins, so a run may cover more of the
+ * being stored beside them, so no length member exists to drift. The run's DERIVED
+ * extent ends where the next segment's `offset` begins, so a run may cover more of the
  * original than it holds derived: the separator run `joinSources` records over a
  * normalized `\r\n` terminator is one derived code unit over a two-unit original
- * region, and the run's end boundary claims that whole region. Every strip, trim, and
- * join the block phase performs is affine at this granularity, which is what lets a
- * derived offset carry an original coordinate.
+ * region.
+ *
+ * `projectSpan` resolves a derived position `p` against that shape by the following
+ * rules rather than by a single affine relation:
+ *
+ * - strictly inside the run, `p` projects to `start + (p - offset)`;
+ * - at the run's derived end, `p` projects to `end`, so the boundary claims the run's
+ *   whole original region instead of the prefix an affine step would reach - which is
+ *   how the one-unit `\r\n` separator run above reports its two-unit region;
+ * - a zero-width `p` that coincides with a later segment's `offset` resolves through the
+ *   LAST segment whose `offset` equals `p`, skipping every earlier segment at that
+ *   position whatever its extent, so a discontinuous abutment reports that final run's
+ *   `start` rather than the earlier run's `end`.
+ *
+ * The mapping is therefore affine strictly inside a run and clamped at its end.
  */
 export interface MarkdownSegment {
 	/** The first code unit of the run inside {@link MarkdownSource.text}. */
@@ -79,15 +95,23 @@ export interface MarkdownSegment {
 }
 
 /**
- * A piece of derived markdown text paired with the runs mapping it back to the
+ * Pairs a piece of derived markdown text with the runs mapping it back to the
  * original string - what `splitLines` returns per line, so every phase downstream of
  * it keeps original coordinates instead of reconstructing them from node values.
  *
  * @remarks
  * `text` is the line a parser reads: its terminator, `>` quote marker, or leading
- * indent already removed. `segments` cover `text` in ascending `offset` order, one
- * run per contiguous stretch of the original; a piece assembled from separate
- * stretches carries one segment per stretch.
+ * indent already removed. `segments` run in ascending `offset` order, one run per
+ * contiguous stretch of the original; a piece assembled from separate stretches
+ * carries one segment per stretch.
+ *
+ * The runs need not cover every position of `text`. `joinSources` records a segment
+ * for its separator only where the two sides leave a gap in the original, so joining
+ * two abutting regions with a separator leaves that separator's derived position
+ * uncovered. `projectSpan` resolves a range's two boundaries against the runs
+ * independently: it reports `undefined` when either boundary lands in an uncovered
+ * position, and it bridges an uncovered interior when both boundaries resolve. Test
+ * coverage with `projectSpan` rather than assuming it.
  */
 export interface MarkdownSource {
 	/** The derived text a parser reads. */
@@ -390,13 +414,16 @@ export interface MarkdownHandlers<T> {
 export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
 
 /**
- * A parsed document paired with the {@link MarkdownSpan} of each of its nodes - what
+ * Pairs a parsed document with the {@link MarkdownSpan} of each of its nodes - what
  * `parseProvenance` returns, and what `parseDocument` projects the document out of.
  *
  * @remarks
  * `spans` is keyed by node identity, so it addresses the nodes of THAT document and
- * no other; a node built from separate regions of the source, or from none, is
- * absent rather than mapped to a placeholder region. Destructure it as
+ * no other. A node the parse merged from adjacent scanner output - the text run
+ * `coalesceText` joins - is present and carries the region ENCLOSING its parts, from
+ * the first part's `start` to the last part's `end`, which can include original text
+ * lying between them. Absence means the parse recorded no region for the node, not
+ * that the node was assembled from more than one region. Destructure it as
  * `const [document, spans] = parseProvenance(markdown)`.
  */
 export type MarkdownParseResult = readonly [
@@ -405,19 +432,28 @@ export type MarkdownParseResult = readonly [
 ]
 
 /**
- * A rewritten value paired with the input node each rewritten node came from - what
+ * Pairs a rewritten value with the input node each rewritten node came from - what
  * `rewriteDocument` returns, so provenance survives a rewrite instead of ending at
  * it. `T` is the rewritten value: the document for a whole-document rewrite.
  *
  * @remarks
- * `derivations` is keyed by the nodes of the OUTPUT and read against the source
- * handle's own spans:
+ * `derivations` is keyed by the nodes of the OUTPUT, and each entry names the DIRECT
+ * input the rewrite drew that output from. {@link MarkdownInterface.map} resolves each
+ * output node against the source handle's own spans in a fixed order, and follows no
+ * second derivation edge:
  *
- * - a node mapped to an input node takes that input's span;
- * - a node mapped to `undefined` was produced from separate sources - a joined text
- *   run, a synthesized paragraph - so no single input covers it and it has no span;
- * - an absent entry means the output node kept its own identity, unchanged by the
- *   rewrite, so the span it already had still stands.
+ * - the output identity's OWN span in the source handle wins, whatever the map says,
+ *   so an identity the rewrite reused - one node returned for several inputs, or a
+ *   node the handler moved elsewhere in the tree - keeps the region it already had;
+ * - otherwise the span of the direct input the entry names, where that input has one;
+ * - otherwise none. Where the output identity holds no region of its own, a node mapped
+ *   to `undefined`, a node whose direct input has no span, and a node with no entry at
+ *   all each report `undefined`. Own-region resolution runs first, so an identity that
+ *   does hold a region keeps it in every one of those cases.
+ *
+ * An absent entry does not by itself mean the output node kept its identity. A node
+ * the handler synthesized beneath its replacement is absent too, and it reports no
+ * span because the rewrite named no input for it.
  */
 export type MarkdownDerivation<T> = readonly [
 	value: T,
@@ -468,20 +504,23 @@ export interface MarkdownInterface {
 	/** Collects every node (depth-first, pre-order) matching a predicate. */
 	filter(predicate: (node: MarkdownNode) => boolean): readonly MarkdownNode[]
 	/**
-	 * Reads the region of the original markdown string a node was parsed from.
+	 * Reads the region of the original markdown string a node was produced from.
 	 *
 	 * @param node - A node of this handle's document.
-	 * @returns A fresh {@link MarkdownSpan}, or `undefined` when the node has no single
-	 * source region.
+	 * @returns A fresh {@link MarkdownSpan}, or `undefined` when this handle holds no
+	 * region for the node.
 	 *
 	 * @remarks
-	 * Provenance is per handle and per node identity, so a node reports a region
-	 * only where THIS handle parsed it from a string. A handle constructed from
-	 * an adopted {@link MarkdownDocument} reports `undefined` for every node: it parsed
-	 * no string, so no coordinates exist to report. A node assembled from separate
-	 * sources - a joined text run, a synthesized paragraph - reports `undefined` too,
-	 * because no single region of the original covers it. Each call returns a fresh
-	 * value rather than the stored one.
+	 * Provenance is per handle and per node identity, so a node reports a region only
+	 * where THIS handle holds coordinates for it. A handle constructed from an adopted
+	 * {@link MarkdownDocument} reports `undefined` for every node: it parsed no string,
+	 * so no coordinates exist to report. A text run the PARSE joined from adjacent
+	 * scanner output reports the region enclosing its parts rather than `undefined`;
+	 * only a REWRITE output that holds no region of its own and was assembled from
+	 * separate source nodes reports `undefined`. The region a node does report is the
+	 * original source it was produced from, which can include syntax its value drops
+	 * and characters normalization removed. Each call returns a fresh value rather than
+	 * the stored one.
 	 */
 	span(node: MarkdownNode): MarkdownSpan | undefined
 	/** Rewrites the AST bottom-up (copy-on-write) and returns a new {@link MarkdownInterface}. */

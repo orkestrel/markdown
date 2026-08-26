@@ -189,8 +189,8 @@ The public methods of each behavioral interface — one table per type, keyed by
 | `walk`   | `Generator<MarkdownNode>`                 | THE deep traversal — a lazy, depth-first, pre-order, root-inclusive generator over every node. The sync `for…of` surface is also consumable by `for await…of` (no separate async iterator needed).                                                                                                    |
 | `find`   | `T \| MarkdownNode \| undefined`          | Finds the first node (depth-first, pre-order), narrowed by a type guard or matched by a predicate. `undefined` when nothing matches.                                                                                                                                                                  |
 | `filter` | `readonly T[] \| readonly MarkdownNode[]` | Collects every node (depth-first, pre-order), narrowed by a type guard or matched by a predicate.                                                                                                                                                                                                     |
-| `span`   | `MarkdownSpan \| undefined`               | Reads the region of the original markdown string a node was parsed from, as a FRESH value per call. `undefined` for a node with no single source region — a foreign node, an adopted document's nodes, a rewrite output assembled from separate sources (§ [Source provenance](#source-provenance)).  |
-| `map`    | `MarkdownInterface`                       | Rewrites the AST bottom-up (copy-on-write) through a `MarkdownRewriteHandler` and returns a NEW `MarkdownInterface`; never mutates the original. Resolves each output node's region through the rewrite's derivations.                                                                                |
+| `span`   | `MarkdownSpan \| undefined`               | Reads the region of the original markdown string a node was produced from, as a FRESH value per call. `undefined` for a node this handle holds no region for — a foreign node, an adopted document's nodes, a rewrite output built fresh from separate sources (§ [Source provenance](#source-provenance)). |
+| `map`    | `MarkdownInterface`                       | Rewrites the AST bottom-up (copy-on-write) through a `MarkdownRewriteHandler` and returns a NEW `MarkdownInterface`; never mutates the original. Resolves each output node's region from its own prior region first, then through the rewrite's derivations.                                          |
 | `reduce` | `T`                                       | Folds the AST depth-first, pre-order into an accumulator via a plain reducer callback.                                                                                                                                                                                                                |
 | `fold`   | `T`                                       | Runs a total catamorphism over the document using a `MarkdownHandlers<T>` table (one handler per AST element).                                                                                                                                                                                        |
 | `stream` | `ReadableStream<BlockNode>`               | A fresh, web-standard, pull-based stream over the document's top-level block nodes only (shallow, source order) — NOT a deep traversal. One block is enqueued per `pull`, so a slow consumer's backpressure is respected; cancellable, and pipeable through any `TransformStream` / `WritableStream`. |
@@ -226,7 +226,7 @@ Two syntax hazards come with them. An image is written `![alt](src)`, which is a
 1. **Block phase** — splits the document into lines (`splitLines`, CRLF/CR normalized) and walks them, detecting fences, thematic breaks, ATX headings, blockquotes, GFM tables, and lists (`parseBlocks`, `collectTable`, `collectList`); anything left over collects into a paragraph. `startsBlock` lets a new block interrupt a paragraph without a separating blank line.
 2. **Inline phase** — each block's raw text runs through `scanInline` (backslash escapes, code spans, links, images, emphasis, and the two-trailing-space hard break) via `parseInline`, then `coalesceText` merges adjacent text runs.
 
-**Lines carry coordinates, not only text.** `splitLines` returns a `MarkdownSource` per line rather than a bare string: `{ text, segments }`, where `text` is the line a parser reads and `segments` are the `MarkdownSegment` runs mapping that text back to the original string. Each run is `{ offset, start, end }` — `offset` addresses `text`, `start` and `end` address the original, and the run's original length derives from `end - start` rather than being stored beside them. Every strip, trim, and join the block phase performs (`sliceSource`, `trimSource`, `stripQuote`, `joinSources`, `normalizeParagraphLine`, `splitTableSources`) narrows or remaps those runs instead of discarding them, so `projectSpan` can turn any derived range back into an original one. That is what lets provenance be read off the source rather than reconstructed from node values, which would be wrong the moment a value differs from its spelling (§ [Source provenance](#source-provenance)).
+**Lines carry coordinates, not only text.** `splitLines` returns a `MarkdownSource` per line rather than a bare string: `{ text, segments }`, where `text` is the line a parser reads and `segments` are the `MarkdownSegment` runs mapping that text back to the original string. Each run is `{ offset, start, end }` — `offset` addresses `text`, `start` and `end` address the original, and the run's original length derives from `end - start` rather than being stored beside them. Every strip, trim, and join the block phase performs (`sliceSource`, `trimSource`, `stripQuote`, `joinSources`, `normalizeParagraphLine`, `splitTableSources`) narrows or remaps those runs instead of discarding them, so `projectSpan` turns a derived range back into an original one by resolving the range's two boundaries against those runs. It reports `undefined` when either boundary lands in a position the runs leave uncovered — as a separator joined between two abutting regions is — and it bridges an uncovered interior when both boundaries resolve. That is what lets provenance be read off the source rather than reconstructed from node values, which would be wrong the moment a value differs from its spelling (§ [Source provenance](#source-provenance)).
 
 `new Markdown(markdown)` (or `createMarkdown(markdown)`) calls `parseProvenance` internally and stores the resulting document as its `document`, alongside the span map `span` reads back. `markdownToHTML(node)`, `renderHTML(node)`, and `renderMarkdown(node)` are **separate**, downstream, standalone projections out of an AST — never fused into parsing, so a caller can inspect, transform, or fold the AST (through `Markdown`'s `find` / `filter` / `map` / `reduce` / `fold`) before ever calling one, or never call one at all. `htmlToMarkdown(node)` is the standalone projection IN, and produces the same `MarkdownDocument` shape `parseDocument` does, so everything downstream of a parse works identically on a projection.
 
@@ -267,23 +267,30 @@ These rules fix what a region means, and every one of them is about the string t
 constructed from:
 
 - **A region addresses the ORIGINAL constructor string**, never the line text a later phase walks.
-  `source.slice(region.start, region.end)` returns the source the node was parsed from.
+  `source.slice(region.start, region.end)` returns the original source the node was produced from,
+  which is not the node's value: the region carries the syntax the value drops and the characters
+  normalization removed.
 - **A region is half-open and counted in UTF-16 code units** — `start` inclusive, `end` exclusive.
   Its length derives from `end - start`; no length member exists to drift from the two offsets.
-- **A parsed node covers the syntax it consumed**, markers included. The heading in the preceding
-  fence starts at `0`, not at `2` where its text starts, and an emphasis node covers its `**`
-  delimiters.
+- **A parsed node covers the source it was produced from**, markers included, and sometimes more.
+  The heading in the preceding fence starts at `0`, not at `2` where its text starts, and an
+  emphasis node covers its `**` delimiters. A text node can also cover source its value drops: in
+  `'a \nb'` the paragraph phase trims the trailing space, so the node values `a\nb` while its region
+  is `{ start: 0, end: 4 }` — the whole `a \nb`, trimmed space included.
 - **A one-source rewrite keeps its source's region through `map`.** A node the handler replaced
   from one input node reports that input's region; a rebuilt ancestor reports its original's.
-- **A node with no single source region reports `undefined`** — a foreign node, every node of an
-  adopted document, and a rewrite output assembled from separate source nodes.
+- **A node this handle holds no region for reports `undefined`** — a foreign node, every node of an
+  adopted document, and a rewrite output the handler built fresh from separate source nodes.
 
-**Line endings normalize at line granularity, and nothing else does.** `splitLines` treats `\r\n`
-and a lone `\r` as terminators and drops them with the line boundary, so a region can span a
-terminator the derived text no longer holds — that is what the separator segment `joinSources`
-records is for. Within a line the parser rewrites no character at all: an escape stays decoded in
-the node's `value` and undecoded in the region, so a region always slices the constructor string
-verbatim. Read provenance off the source; never reconstruct it from a node value.
+**A region always slices the constructor string verbatim; the derived text a phase reads does not.**
+`splitLines` treats `\r\n` and a lone `\r` as terminators and drops them with the line boundary, so
+a region can span a terminator the derived text no longer holds — that is what the separator segment
+`joinSources` records is for. Inside a line the phases rewrite derived text too:
+`normalizeParagraphLine` trims trailing spaces, `splitTableSources` turns an escaped `\|` into one
+`|`, and the inline scan decodes every escape into the node's `value`. Each rewrite keeps the
+original coordinates of what it retained, so a region still slices the constructor string verbatim
+while the value it belongs to does not match that slice. Read provenance off the source; never
+reconstruct it from a node value.
 
 ```ts
 import { Markdown, isTextNode } from '@orkestrel/markdown'
@@ -314,9 +321,11 @@ instances over the same text hold independent maps, and a node from one reports 
 other.
 
 **A rewrite carries regions forward through its derivations.** `rewriteDocument` returns a
-`MarkdownDerivation`, and `map` resolves each output node against the source instance's map: an
-output that kept its identity keeps the region it had, an output derived from one input node takes
-that input's region, and an output derived from separate inputs takes none.
+`MarkdownDerivation`, and `map` resolves each output node against the source instance's map in a
+fixed order: an output identity that already holds a region keeps it, an output derived from one
+input node takes that input's region, and anything else takes none. The resolution reads the DIRECT
+input the rewrite named for that output and stops there — it never follows a second derivation edge
+back into an earlier rewrite's input.
 
 ```ts
 import { Markdown, isTextNode } from '@orkestrel/markdown'
@@ -333,9 +342,9 @@ region // { start: 2, end: 4 } — where `Hi` sits in the ORIGINAL source
 ```
 
 **Where provenance stops, and why.** An adopted document, the inbound projection, and a rewrite
-output assembled from separate sources each report `undefined` rather than an approximate region,
-because an approximate region is worse than none — it claims the author wrote something they did
-not:
+output that holds no region of its own and was assembled from separate sources each report
+`undefined` rather than an approximate region, because an approximate region is worse than none — it
+claims the author wrote something they did not:
 
 - **An adopted document.** `new Markdown(document)` parsed no string, so no coordinates exist to
   report. Adoption keeps the tree by reference and starts with an empty map, including where those
@@ -344,8 +353,11 @@ not:
   coordinates, so nothing it emits has a region — a paragraph `mergeProjections` synthesizes from a
   run of pending siblings least of all. That paragraph has no single source even in principle: it
   was assembled from an HTML wrapper's children, not written as a paragraph anywhere.
-- **A rewrite output assembled from separate sources.** One node returned for several input nodes
-  is covered by no single region of the original, so `map` resolves it to `undefined`.
+- **A rewrite output assembled from separate sources, where that output holds no region of its
+  own.** A node the handler built fresh and returned for several input nodes is covered by no single
+  region of the original, so `map` resolves it to `undefined`. An identity that already carries a
+  region is the exception: returning an existing spanned node for several inputs keeps that node's
+  own region, because own-region resolution runs first.
 
 ```ts
 import { Markdown, htmlToMarkdown, isTextNode } from '@orkestrel/markdown'

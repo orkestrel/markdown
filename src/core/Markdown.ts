@@ -24,8 +24,11 @@ import { parseProvenance } from './parsers.js'
  *   node came from, and it is handle-relative: a string-constructed handle exposes the
  *   regions of the nodes it parsed, an adopted document exposes none, and a node from
  *   another handle reports `undefined` here whatever that handle reports. Each call
- *   returns a fresh value. A node with no single source region - a joined text run, a
- *   synthesized paragraph, an output built from separate sources - reports `undefined`.
+ *   returns a fresh value. A node reports the region THIS handle holds for its identity,
+ *   else the region of the direct input a rewrite named for it, else `undefined`: a text
+ *   run the parse joined from adjacent scanner output reports the region enclosing its
+ *   parts, and only a rewrite output that holds no region of its own and was assembled
+ *   from separate source nodes reports `undefined`.
  *   {@link map} carries provenance across the rewrite: an unchanged node keeps its
  *   region, a one-source replacement takes the region of the node it replaced, and a
  *   rebuilt parent takes its original's.
@@ -73,8 +76,8 @@ export class Markdown implements MarkdownInterface {
 	 * from.
 	 *
 	 * @param node - The node whose provenance to read
-	 * @returns A fresh {@link MarkdownSpan}, or `undefined` when the node has no single
-	 * source region here
+	 * @returns A fresh {@link MarkdownSpan}, or `undefined` when this handle holds no
+	 * region for the node
 	 *
 	 * @example
 	 * ```ts
