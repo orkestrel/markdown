@@ -268,6 +268,31 @@ describe('projectSpan', () => {
 		expect(projectSpan(source, 1, 1)).toEqual({ start: 5, end: 5 })
 	})
 
+	it('resolves a zero-width position shared by several segments through the last one at that offset', () => {
+		const source: MarkdownSource = {
+			text: 'ab',
+			segments: [
+				{ offset: 0, start: 0, end: 1 },
+				{ offset: 1, start: 5, end: 5 },
+				{ offset: 1, start: 9, end: 10 },
+			],
+		}
+		expect(projectSpan(source, 1, 1)).toEqual({ start: 9, end: 9 })
+	})
+
+	it('bridges an uncovered interior when both range boundaries resolve', () => {
+		const source: MarkdownSource = {
+			text: 'a\nb',
+			segments: [
+				{ offset: 0, start: 0, end: 1 },
+				{ offset: 2, start: 1, end: 2 },
+			],
+		}
+		expect(projectSpan(source, 0, 3)).toEqual({ start: 0, end: 2 })
+		expect(projectSpan(source, 1, 2)).toBeUndefined()
+		expect(projectSpan(source, 2, 3)).toEqual({ start: 1, end: 2 })
+	})
+
 	it('returns undefined for a fabricated blank source', () => {
 		expect(projectSpan({ text: '', segments: [] }, 0, 0)).toBeUndefined()
 	})
@@ -721,6 +746,20 @@ describe('scanInlineSource', () => {
 		if (child === undefined) throw new Error('expected emphasis text')
 		expect(spans.get(emphasis)).toEqual({ start: 7, end: 15 })
 		expect(spans.get(child)).toEqual({ start: 9, end: 13 })
+	})
+})
+
+// The inline phase's offset-bearing entry point. `scanInlineSource` runs the same scan
+// `parseInline` composes and records each emitted node into a caller-owned recorder, so a
+// caller writing its own block phase over `splitLines` output keeps original coordinates.
+describe('scanInlineSource — coordinates inside one line', () => {
+	it('records each emitted node against the original coordinates of the scanned line', () => {
+		const [line] = splitLines('> a *b*')
+		const spans = new Map<MarkdownNode, MarkdownSpan>()
+		const nodes = line === undefined ? [] : scanInlineSource(line, 2, line.text.length, spans, 0)
+		const [text, emphasis] = nodes
+		expect(text === undefined ? undefined : spans.get(text)).toEqual({ start: 2, end: 4 })
+		expect(emphasis === undefined ? undefined : spans.get(emphasis)).toEqual({ start: 4, end: 7 })
 	})
 })
 

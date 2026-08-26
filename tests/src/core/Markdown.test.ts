@@ -84,6 +84,17 @@ describe('Markdown — span', () => {
 		expect(source.slice(region.start, region.end)).toBe('a \\* b ')
 	})
 
+	it('reports the region across a trimmed trailing space, the trimmed space included', () => {
+		const source = 'a \nb'
+		const markdown = new Markdown(source)
+		const [text] = markdown.filter(isTextNode)
+		expect(text?.value).toBe('a\nb')
+		const region = text === undefined ? undefined : markdown.span(text)
+		expect(region).toEqual({ start: 0, end: 4 })
+		if (region === undefined) throw new Error('expected text provenance')
+		expect(source.slice(region.start, region.end)).toBe('a \nb')
+	})
+
 	it('returns a fresh value per call, so a mutated return never reaches the next', () => {
 		const markdown = new Markdown('# Title')
 		const first = markdown.span(markdown.document)
