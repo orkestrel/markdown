@@ -21,8 +21,8 @@ import { parseProvenance } from './parsers.js'
  *   that parse recorded. Given a {@link MarkdownDocument}, the document is adopted AS-IS
  *   and is NOT re-validated - gate an untrusted value with `isMarkdownDocument` first.
  * - **Provenance.** {@link span} reads the region of the ORIGINAL constructor string a
- *   node came from, and it is handle-relative: a string-constructed handle exposes the
- *   regions of the nodes it parsed, an adopted document exposes none, and a node from
+ *   node was produced from, and it is handle-relative: a string-constructed handle exposes
+ *   the regions of the nodes it parsed, an adopted document exposes none, and a node from
  *   another handle reports `undefined` here whatever that handle reports. Each call
  *   returns a fresh value. A node reports the region THIS handle holds for its identity,
  *   else the region of the direct input a rewrite named for it, else `undefined`: a text
@@ -72,8 +72,8 @@ export class Markdown implements MarkdownInterface {
 	}
 
 	/**
-	 * Reads the region of the original markdown string a node of this handle's tree came
-	 * from.
+	 * Reads the region of the original markdown string a node of this handle's tree was
+	 * produced from.
 	 *
 	 * @param node - The node whose provenance to read
 	 * @returns A fresh {@link MarkdownSpan}, or `undefined` when this handle holds no

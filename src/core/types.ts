@@ -45,8 +45,8 @@ export interface ListItemMatch {
  * text a later phase walks, so `markdown.slice(span.start, span.end)` returns the
  * ORIGINAL source region the node was produced from. That region is not the node's
  * value: it carries the syntax the value drops, such as a `\` escape marker, and the
- * characters normalization removed, such as a trailing space the paragraph phase
- * trimmed. The text node of `'a \nb'` values `a\nb` and reports
+ * characters that normalization removed, such as a trailing space the paragraph phase
+ * trimmed. The text node of `'a \nb'` has the `value` `a\nb` and reports
  * `{ start: 0, end: 4 }`, which slices the whole `a \nb`. Read a value off the node
  * and a region off the source; never derive either from the other. The region's length
  * is `end - start`; no length member exists to drift from the two offsets.
@@ -88,7 +88,7 @@ export interface MarkdownSpan {
 export interface MarkdownSegment {
 	/** The first code unit of the run inside {@link MarkdownSource.text}. */
 	readonly offset: number
-	/** The first code unit of the original-string region the run came from, inclusive. */
+	/** The first code unit of the original-string region the run was produced from, inclusive. */
 	readonly start: number
 	/** The code unit one past that region's last, exclusive. */
 	readonly end: number
@@ -432,8 +432,8 @@ export type MarkdownParseResult = readonly [
 ]
 
 /**
- * Pairs a rewritten value with the input node each rewritten node came from - what
- * `rewriteDocument` returns, so provenance survives a rewrite instead of ending at
+ * Pairs a rewritten value with the input node each rewritten node was produced from -
+ * what `rewriteDocument` returns, so provenance survives a rewrite instead of ending at
  * it. `T` is the rewritten value: the document for a whole-document rewrite.
  *
  * @remarks
@@ -519,8 +519,8 @@ export interface MarkdownInterface {
 	 * only a REWRITE output that holds no region of its own and was assembled from
 	 * separate source nodes reports `undefined`. The region a node does report is the
 	 * original source it was produced from, which can include syntax its value drops
-	 * and characters normalization removed. Each call returns a fresh value rather than
-	 * the stored one.
+	 * and characters that normalization removed. Each call returns a fresh value rather
+	 * than the stored one.
 	 */
 	span(node: MarkdownNode): MarkdownSpan | undefined
 	/** Rewrites the AST bottom-up (copy-on-write) and returns a new {@link MarkdownInterface}. */
