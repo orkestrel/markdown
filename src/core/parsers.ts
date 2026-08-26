@@ -35,7 +35,7 @@ import { isNonEmptyArray } from '@orkestrel/contract'
  * @param lines - The markdown lines to parse.
  * @param depth - The current recursion depth (blockquotes/lists increment it).
  * @param spans - The optional operation-owned node span recorder.
- * @param limit - The original-source end of this line run, including a removed terminator.
+ * @param end - The original-source end of this line run, including a removed terminator.
  * @returns The parsed block nodes.
  *
  * @example
@@ -47,7 +47,7 @@ export function parseBlocks(
 	lines: readonly MarkdownSource[],
 	depth: number,
 	spans = new Map<MarkdownNode, MarkdownSpan>(),
-	limit?: number,
+	end?: number,
 ): readonly BlockNode[] {
 	const text = lines.map((line) => line.text)
 	if (depth >= MAX_DEPTH) {
@@ -93,7 +93,7 @@ export function parseBlocks(
 			const source = joinSources(lines.slice(start, index), '\n')
 			const span = projectSpan(source, 0, source.text.length)
 			if (span !== undefined)
-				spans.set(node, !closed && limit !== undefined ? { start: span.start, end: limit } : span)
+				spans.set(node, !closed && end !== undefined ? { start: span.start, end } : span)
 			blocks.push(node)
 			continue
 		}
@@ -141,7 +141,7 @@ export function parseBlocks(
 					quoted,
 					depth + 1,
 					spans,
-					index === lines.length && limit !== undefined ? limit : span?.end,
+					index === lines.length && end !== undefined ? end : span?.end,
 				),
 			}
 			if (span !== undefined) spans.set(node, span)
@@ -155,7 +155,7 @@ export function parseBlocks(
 			continue
 		}
 		if (extractListItem(line)) {
-			const list = collectList(lines, index, depth, spans, limit)
+			const list = collectList(lines, index, depth, spans, end)
 			blocks.push(list.node)
 			index = list.next
 			continue

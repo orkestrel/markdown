@@ -433,7 +433,8 @@ export function stripQuote(source: MarkdownSource): MarkdownSource {
 /**
  * Split one GFM table row into its cell strings - outer pipes are optional, an escaped
  * pipe (`\|`) inside a cell is NOT a separator (it becomes a literal `|`), and the
- * empty leading / trailing cell produced by an outer `|` is dropped.
+ * empty leading / trailing cell produced by an outer `|` is dropped. Derives the string
+ * form from {@link splitTableSources}, which owns the escaped-pipe splitting rule.
  *
  * @param row - The raw table row line
  * @returns The row's cells, in column order
@@ -444,26 +445,7 @@ export function stripQuote(source: MarkdownSource): MarkdownSource {
  * ```
  */
 export function splitTableRow(row: string): readonly string[] {
-	const cells: string[] = []
-	let current = ''
-	const trimmed = row.trim()
-	for (let index = 0; index < trimmed.length; index += 1) {
-		const character = trimmed[index]
-		if (character === '\\' && trimmed[index + 1] === '|') {
-			current += '|'
-			index += 1
-		} else if (character === '|') {
-			cells.push(current)
-			current = ''
-		} else {
-			current += character
-		}
-	}
-	cells.push(current)
-	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[0] ?? '').trim())) cells.shift()
-	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[cells.length - 1] ?? '').trim()))
-		cells.pop()
-	return cells
+	return splitTableSources({ text: row, segments: [] }).map((cell) => cell.text)
 }
 
 /**
@@ -742,13 +724,25 @@ export function locateLink(
 }
 
 /**
- * Scans a link `[text](href)` at `start` and returns its parsed node and end index.
+ * Scans a link `[text](href)` at `start` - the text runs to a BALANCED `]`, then `(`
+ * must immediately follow and the destination runs to the matching `)` (both respect
+ * nested delimiters + escapes) through {@link locateLink}, and returns the parsed node
+ * and end index. Returns `undefined` when the shape does not hold (it then degrades to
+ * a literal `[`).
  *
  * @param source - The inline source text
  * @param start - The index of the opening `[`
  * @param to - The exclusive end of the scan window
- * @param depth - The current inline-recursion depth
+ * @param depth - The current inline-recursion depth, forwarded to {@link scanInline}
+ *   incremented by one for the link text's children. At {@link MAX_DEPTH} that
+ *   recursion emits the text as a single literal text node instead of scanning it.
  * @returns The parsed link and end index, or `undefined` when the shape does not hold
+ *
+ * @example
+ * ```ts
+ * scanLink('[text](url)', 0, 11)
+ * // { node: { element: 'link', href: 'url', children: [{ element: 'text', value: 'text' }] }, end: 11 }
+ * ```
  */
 export function scanLink(
 	source: string,
@@ -838,13 +832,26 @@ export function locateEmphasis(
 }
 
 /**
- * Scans an emphasis run at `start` and returns its parsed node and end index.
+ * Scans an emphasis run at `start` (`*` / `_`, doubled for strong) - finds the nearest
+ * matching closing run of the same marker + width while skipping complete nested runs
+ * from the other marker family, and requires non-space immediately inside both
+ * delimiters (the CommonMark flanking simplification that blocks `* x *`) through
+ * {@link locateEmphasis} - and returns the parsed node and end index. Returns
+ * `undefined` when no valid closer exists (it then degrades to a literal marker).
  *
  * @param source - The inline source text
  * @param start - The index of the opening marker
  * @param to - The exclusive end of the scan window
- * @param depth - The current inline-recursion depth
+ * @param depth - The current inline-recursion depth, forwarded to {@link scanInline}
+ *   incremented by one for the run's children. At {@link MAX_DEPTH} that recursion
+ *   emits the content as a single literal text node instead of scanning it.
  * @returns The parsed emphasis and end index, or `undefined` when no closer exists
+ *
+ * @example
+ * ```ts
+ * scanEmphasis('*em*', 0, 4)
+ * // { node: { element: 'emphasis', strong: false, children: [{ element: 'text', value: 'em' }] }, end: 4 }
+ * ```
  */
 export function scanEmphasis(
 	source: string,
@@ -914,6 +921,17 @@ export function scanInline(
  * @param spans - The operation-owned node span recorder
  * @param depth - The current inline-recursion depth
  * @returns The parsed inline nodes before adjacent text coalescing
+ *
+ * @example
+ * ```ts
+ * scanInlineSource(
+ * 	{ text: 'hi *there*', segments: [{ offset: 0, start: 0, end: 10 }] },
+ * 	0,
+ * 	10,
+ * 	new Map(),
+ * )
+ * // [{ element: 'text', value: 'hi ' }, { element: 'emphasis', ... }]
+ * ```
  */
 export function scanInlineSource(
 	source: MarkdownSource,
@@ -1099,7 +1117,7 @@ export function collectTable(
  * @param start - The index of the first list item.
  * @param depth - The current recursion depth (each item recurses at `depth + 1`).
  * @param spans - The optional operation-owned node span recorder.
- * @param limit - The original-source end of this line run, including a removed terminator.
+ * @param end - The original-source end of this line run, including a removed terminator.
  * @returns The parsed list node and the index of the first line after it.
  *
  * @example
@@ -1112,7 +1130,7 @@ export function collectList(
 	start: number,
 	depth: number,
 	spans = new Map<MarkdownNode, MarkdownSpan>(),
-	limit?: number,
+	end?: number,
 ): { readonly node: ListNode; readonly next: number } {
 	const text = lines.map((line) => line.text)
 	const first = extractListItem(text[start] ?? '')
@@ -1221,7 +1239,7 @@ export function collectList(
 		}
 		const tail = itemLines[itemLines.length - 1]
 		const segment = tail?.segments[tail.segments.length - 1]
-		const itemLimit = index === lines.length && limit !== undefined ? limit : segment?.end
+		const itemLimit = index === lines.length && end !== undefined ? end : segment?.end
 		const item: ListItemNode = {
 			element: 'listItem',
 			children: parseBlocks(itemLines, depth + 1, spans, itemLimit),
