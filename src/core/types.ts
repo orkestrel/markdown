@@ -36,6 +36,67 @@ export interface ListItemMatch {
 }
 
 /**
+ * A half-open region of the ORIGINAL markdown string, in UTF-16 code units -
+ * `start` inclusive, `end` exclusive. The provenance a parse records for a node and
+ * {@link MarkdownInterface.span} reads back.
+ *
+ * @remarks
+ * The coordinates address the string the handle was constructed from, never the
+ * line text a later phase walks, so `markdown.slice(span.start, span.end)` returns
+ * the source the node was parsed from. The region's length is `end - start`; no
+ * length member exists to drift from the two offsets.
+ */
+export interface MarkdownSpan {
+	/** The first code unit of the region, inclusive. */
+	readonly start: number
+	/** The code unit one past the region's last, exclusive. */
+	readonly end: number
+}
+
+/**
+ * One run of a {@link MarkdownSource} - the mapping from a stretch of derived text
+ * back to the region of the ORIGINAL markdown string it was taken from.
+ *
+ * @remarks
+ * `offset` addresses {@link MarkdownSource.text}; `start` and `end` address the
+ * original string. The run's original length derives from `end - start` rather than
+ * being stored beside them, so no length member exists to drift, and a position `p`
+ * inside the run projects back to `start + (p - offset)`. The run's DERIVED extent
+ * ends where the next segment's `offset` begins, so a run may cover more of the
+ * original than it holds derived: the separator run `joinSources` records over a
+ * normalized `\r\n` terminator is one derived code unit over a two-unit original
+ * region, and the run's end boundary claims that whole region. Every strip, trim, and
+ * join the block phase performs is affine at this granularity, which is what lets a
+ * derived offset carry an original coordinate.
+ */
+export interface MarkdownSegment {
+	/** The first code unit of the run inside {@link MarkdownSource.text}. */
+	readonly offset: number
+	/** The first code unit of the original-string region the run came from, inclusive. */
+	readonly start: number
+	/** The code unit one past that region's last, exclusive. */
+	readonly end: number
+}
+
+/**
+ * A piece of derived markdown text paired with the runs mapping it back to the
+ * original string - what `splitLines` returns per line, so every phase downstream of
+ * it keeps original coordinates instead of reconstructing them from node values.
+ *
+ * @remarks
+ * `text` is the line a parser reads: its terminator, `>` quote marker, or leading
+ * indent already removed. `segments` cover `text` in ascending `offset` order, one
+ * run per contiguous stretch of the original; a piece assembled from separate
+ * stretches carries one segment per stretch.
+ */
+export interface MarkdownSource {
+	/** The derived text a parser reads. */
+	readonly text: string
+	/** The runs mapping `text` back to the original string, in ascending `offset` order. */
+	readonly segments: readonly MarkdownSegment[]
+}
+
+/**
  * A run of plain text - the leaf inline node. `value` is the decoded text with
  * markdown escapes (`\*`, `\_`, …) already resolved to their literal characters;
  * html's text encoder escapes `&`, `<`, `>` on the way out; `"` and `'` stay literal
@@ -329,6 +390,41 @@ export interface MarkdownHandlers<T> {
 export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
 
 /**
+ * A parsed document paired with the {@link MarkdownSpan} of each of its nodes - what
+ * `parseProvenance` returns, and what `parseDocument` projects the document out of.
+ *
+ * @remarks
+ * `spans` is keyed by node identity, so it addresses the nodes of THAT document and
+ * no other; a node built from separate regions of the source, or from none, is
+ * absent rather than mapped to a placeholder region. Destructure it as
+ * `const [document, spans] = parseProvenance(markdown)`.
+ */
+export type MarkdownParseResult = readonly [
+	document: MarkdownDocument,
+	spans: ReadonlyMap<MarkdownNode, MarkdownSpan>,
+]
+
+/**
+ * A rewritten value paired with the input node each rewritten node came from - what
+ * `rewriteDocument` returns, so provenance survives a rewrite instead of ending at
+ * it. `T` is the rewritten value: the document for a whole-document rewrite.
+ *
+ * @remarks
+ * `derivations` is keyed by the nodes of the OUTPUT and read against the source
+ * handle's own spans:
+ *
+ * - a node mapped to an input node takes that input's span;
+ * - a node mapped to `undefined` was produced from separate sources - a joined text
+ *   run, a synthesized paragraph - so no single input covers it and it has no span;
+ * - an absent entry means the output node kept its own identity, unchanged by the
+ *   rewrite, so the span it already had still stands.
+ */
+export type MarkdownDerivation<T> = readonly [
+	value: T,
+	derivations: ReadonlyMap<MarkdownNode, MarkdownNode | undefined>,
+]
+
+/**
  * A stateful, parsed markdown document: the typed {@link MarkdownDocument} AST plus
  * the query, rewrite, and fold operations over it.
  *
@@ -345,10 +441,10 @@ export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
  *   of demand. Cancellable via the returned stream's own `cancel()`, async-iterable
  *   wherever the platform supports it (Node, Deno, and browsers that ship the
  *   proposal), and pipeable through any {@link TransformStream} / {@link WritableStream}.
- * - **The seven-method surface.** `document` (the AST root), `walk` (the deep
- *   traversal), `find` / `filter` / `reduce` (queries built on `walk`), `map` (the
- *   bottom-up rewrite), `fold` (the total catamorphism), and `stream` (the shallow,
- *   backpressured top-level source).
+ * - **The surface.** `document` (the AST root), `walk` (the deep traversal), `find` /
+ *   `filter` / `reduce` (queries built on `walk`), `span` (the region of the original
+ *   markdown a node was parsed from), `map` (the bottom-up rewrite), `fold` (the
+ *   total catamorphism), and `stream` (the shallow, backpressured top-level source).
  */
 export interface MarkdownInterface {
 	/** The stored {@link MarkdownDocument} AST root. */
@@ -371,6 +467,23 @@ export interface MarkdownInterface {
 	filter<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): readonly T[]
 	/** Collects every node (depth-first, pre-order) matching a predicate. */
 	filter(predicate: (node: MarkdownNode) => boolean): readonly MarkdownNode[]
+	/**
+	 * Reads the region of the original markdown string a node was parsed from.
+	 *
+	 * @param node - A node of this handle's document.
+	 * @returns A fresh {@link MarkdownSpan}, or `undefined` when the node has no single
+	 * source region.
+	 *
+	 * @remarks
+	 * Provenance is per handle and per node identity, so a node reports a region
+	 * only where THIS handle parsed it from a string. A handle constructed from
+	 * an adopted {@link MarkdownDocument} reports `undefined` for every node: it parsed
+	 * no string, so no coordinates exist to report. A node assembled from separate
+	 * sources - a joined text run, a synthesized paragraph - reports `undefined` too,
+	 * because no single region of the original covers it. Each call returns a fresh
+	 * value rather than the stored one.
+	 */
+	span(node: MarkdownNode): MarkdownSpan | undefined
 	/** Rewrites the AST bottom-up (copy-on-write) and returns a new {@link MarkdownInterface}. */
 	map(rewrite: MarkdownRewriteHandler): MarkdownInterface
 	/** Folds the AST depth-first, pre-order into an accumulator. */

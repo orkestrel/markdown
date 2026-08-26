@@ -7,6 +7,8 @@ import type {
 	MarkdownHandlers,
 	MarkdownNode,
 	ParagraphNode,
+	MarkdownSource,
+	MarkdownSpan,
 	TableNode,
 } from '@src/core'
 import {
@@ -22,11 +24,16 @@ import {
 	htmlToMarkdown,
 	countIndent,
 	markdownToHTML,
+	joinSources,
+	locateEmphasis,
+	locateLink,
 	mergeProjections,
 	normalizeInlines,
+	normalizeParagraphLine,
 	parseDocument,
 	projectHTMLLeaf,
 	projectHTMLNode,
+	projectSpan,
 	projectionToBlocks,
 	projectionToInlines,
 	renderHTML,
@@ -35,13 +42,17 @@ import {
 	scanCode,
 	scanEmphasis,
 	scanInline,
+	scanInlineSource,
 	scanLink,
+	sliceSource,
 	splitLines,
 	splitTableRow,
+	splitTableSources,
 	startsBlock,
 	stripQuote,
 	delimiterToAlignments,
 	trimInlines,
+	trimSource,
 	unescapeText,
 	walkNodes,
 } from '@src/core'
@@ -54,6 +65,7 @@ import {
 import {
 	MARKDOWN_FIXPOINT_CORPUS,
 	PROJECTION_CORPUS,
+	assertEmphasisNode,
 	assertTableNode,
 	buildDeepEmphasisInput,
 	buildProjection,
@@ -72,27 +84,215 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 
 describe('splitLines', () => {
 	it('splits on \\n', () => {
-		expect(splitLines('a\nb\nc')).toEqual(['a', 'b', 'c'])
+		expect(splitLines('a\nb\nc').map((line) => line.text)).toEqual(['a', 'b', 'c'])
 	})
 
 	it('normalizes CRLF and bare CR to \\n', () => {
-		expect(splitLines('a\r\nb\rc')).toEqual(['a', 'b', 'c'])
+		expect(splitLines('a\r\nb\rc').map((line) => line.text)).toEqual(['a', 'b', 'c'])
 	})
 
 	it('normalizes mixed line endings in one document', () => {
-		expect(splitLines('a\r\nb\nc\rd')).toEqual(['a', 'b', 'c', 'd'])
+		expect(splitLines('a\r\nb\nc\rd').map((line) => line.text)).toEqual(['a', 'b', 'c', 'd'])
 	})
 
 	it('drops a single trailing-newline empty line but keeps interior blanks', () => {
-		expect(splitLines('a\n\nb\n')).toEqual(['a', '', 'b'])
+		expect(splitLines('a\n\nb\n').map((line) => line.text)).toEqual(['a', '', 'b'])
+	})
+
+	it('drops one trailing LF, CR, or CRLF terminator', () => {
+		expect(splitLines('a\n').map((line) => line.text)).toEqual(['a'])
+		expect(splitLines('a\r').map((line) => line.text)).toEqual(['a'])
+		expect(splitLines('a\r\n').map((line) => line.text)).toEqual(['a'])
 	})
 
 	it('keeps multiple trailing blank lines except the very last', () => {
-		expect(splitLines('a\n\n\n')).toEqual(['a', '', ''])
+		expect(splitLines('a\n\n\n').map((line) => line.text)).toEqual(['a', '', ''])
 	})
 
 	it('returns a single empty line for an empty string', () => {
-		expect(splitLines('')).toEqual([''])
+		expect(splitLines('').map((line) => line.text)).toEqual([''])
+	})
+
+	it('maps normalized lines to their original UTF-16 offsets', () => {
+		const markdown = 'alpha\r\nbeta\rgamma\0🙂\nomega\n'
+		const lines = splitLines(markdown)
+		expect(lines).toEqual([
+			{ text: 'alpha', segments: [{ offset: 0, start: 0, end: 5 }] },
+			{ text: 'beta', segments: [{ offset: 0, start: 7, end: 11 }] },
+			{ text: 'gamma\0🙂', segments: [{ offset: 0, start: 12, end: 20 }] },
+			{ text: 'omega', segments: [{ offset: 0, start: 21, end: 26 }] },
+		])
+		for (const line of lines) {
+			const segment = line.segments[0]
+			if (segment === undefined) continue
+			expect(markdown.slice(segment.start, segment.end)).toBe(line.text)
+		}
+	})
+})
+
+describe('sliceSource', () => {
+	it('narrows a mapped run to the requested text range', () => {
+		const source: MarkdownSource = {
+			text: 'alpha',
+			segments: [{ offset: 0, start: 10, end: 15 }],
+		}
+		expect(sliceSource(source, 1, 4)).toEqual({
+			text: 'lph',
+			segments: [{ offset: 0, start: 11, end: 14 }],
+		})
+	})
+
+	it('returns no segment for a range that misses every mapped run', () => {
+		const source: MarkdownSource = {
+			text: 'a_b',
+			segments: [
+				{ offset: 0, start: 0, end: 1 },
+				{ offset: 2, start: 2, end: 3 },
+			],
+		}
+		expect(sliceSource(source, 1, 2)).toEqual({ text: '_', segments: [] })
+	})
+
+	it('preserves the whole source at its boundaries', () => {
+		const source: MarkdownSource = {
+			text: 'edge',
+			segments: [{ offset: 0, start: 4, end: 8 }],
+		}
+		expect(sliceSource(source, 0, 4)).toEqual(source)
+	})
+
+	it('keeps a fabricated blank source without inventing a segment', () => {
+		expect(sliceSource({ text: '', segments: [] }, 0, 0)).toEqual({ text: '', segments: [] })
+	})
+})
+
+describe('joinSources', () => {
+	it('maps a separator to the original newline between sources', () => {
+		const sources: readonly MarkdownSource[] = [
+			{ text: 'a', segments: [{ offset: 0, start: 0, end: 1 }] },
+			{ text: 'b', segments: [{ offset: 0, start: 2, end: 3 }] },
+		]
+		expect(joinSources(sources, '\n')).toEqual({
+			text: 'a\nb',
+			segments: [
+				{ offset: 0, start: 0, end: 1 },
+				{ offset: 1, start: 1, end: 2 },
+				{ offset: 2, start: 2, end: 3 },
+			],
+		})
+	})
+
+	it('maps a normalized separator across an original CRLF boundary', () => {
+		const sources: readonly MarkdownSource[] = [
+			{ text: 'a', segments: [{ offset: 0, start: 0, end: 1 }] },
+			{ text: 'b', segments: [{ offset: 0, start: 3, end: 4 }] },
+		]
+		const joined = joinSources(sources, '\n')
+		expect(joined).toEqual({
+			text: 'a\nb',
+			segments: [
+				{ offset: 0, start: 0, end: 1 },
+				{ offset: 1, start: 1, end: 3 },
+				{ offset: 2, start: 3, end: 4 },
+			],
+		})
+		expect(projectSpan(joined, 1, 2)).toEqual({ start: 1, end: 3 })
+	})
+
+	it('returns an empty source when no sources can contribute', () => {
+		expect(joinSources([], '\n')).toEqual({ text: '', segments: [] })
+	})
+
+	it('preserves a single source without adding a boundary', () => {
+		const source: MarkdownSource = {
+			text: 'edge',
+			segments: [{ offset: 0, start: 4, end: 8 }],
+		}
+		expect(joinSources([source], '\n')).toEqual(source)
+	})
+
+	it('does not map separators around a fabricated blank source', () => {
+		const sources: readonly MarkdownSource[] = [
+			{ text: 'a', segments: [{ offset: 0, start: 0, end: 1 }] },
+			{ text: '', segments: [] },
+			{ text: 'b', segments: [{ offset: 0, start: 2, end: 3 }] },
+		]
+		expect(joinSources(sources, '\n')).toEqual({
+			text: 'a\n\nb',
+			segments: [
+				{ offset: 0, start: 0, end: 1 },
+				{ offset: 3, start: 2, end: 3 },
+			],
+		})
+	})
+})
+
+describe('projectSpan', () => {
+	it('projects a range across mapped source runs', () => {
+		const source: MarkdownSource = {
+			text: 'a\nb',
+			segments: [
+				{ offset: 0, start: 0, end: 1 },
+				{ offset: 1, start: 1, end: 2 },
+				{ offset: 2, start: 2, end: 3 },
+			],
+		}
+		expect(projectSpan(source, 0, 3)).toEqual({ start: 0, end: 3 })
+	})
+
+	it('returns undefined when either boundary misses every segment', () => {
+		const source: MarkdownSource = {
+			text: '_a_',
+			segments: [{ offset: 1, start: 4, end: 5 }],
+		}
+		expect(projectSpan(source, 0, 2)).toBeUndefined()
+		expect(projectSpan(source, 1, 3)).toBeUndefined()
+	})
+
+	it('projects exact segment boundaries', () => {
+		const source: MarkdownSource = {
+			text: 'edge',
+			segments: [{ offset: 0, start: 4, end: 8 }],
+		}
+		expect(projectSpan(source, 0, 4)).toEqual({ start: 4, end: 8 })
+	})
+
+	it('projects a zero-width abutment through the later segment', () => {
+		const source: MarkdownSource = {
+			text: 'ab',
+			segments: [
+				{ offset: 0, start: 0, end: 1 },
+				{ offset: 1, start: 5, end: 6 },
+			],
+		}
+		expect(projectSpan(source, 1, 1)).toEqual({ start: 5, end: 5 })
+	})
+
+	it('returns undefined for a fabricated blank source', () => {
+		expect(projectSpan({ text: '', segments: [] }, 0, 0)).toBeUndefined()
+	})
+})
+
+describe('trimSource / normalizeParagraphLine', () => {
+	it('trims through source coordinates', () => {
+		const source = splitLines('  text  ')[0]
+		if (source === undefined) throw new Error('expected a source line')
+		expect(trimSource(source)).toEqual({
+			text: 'text',
+			segments: [{ offset: 0, start: 2, end: 6 }],
+		})
+	})
+
+	it('maps a normalized hard-break suffix to the whole trailing-space run', () => {
+		const source = splitLines('  text   \r\nnext')[0]
+		if (source === undefined) throw new Error('expected a source line')
+		expect(normalizeParagraphLine(source, true)).toEqual({
+			text: 'text  ',
+			segments: [
+				{ offset: 0, start: 2, end: 6 },
+				{ offset: 4, start: 6, end: 9 },
+			],
+		})
 	})
 })
 
@@ -118,12 +318,12 @@ describe('countIndent', () => {
 
 describe('extractHeading', () => {
 	it('extracts every level 1-6 with its level and text', () => {
-		expect(extractHeading('# A')).toEqual({ level: 1, text: 'A' })
-		expect(extractHeading('## A')).toEqual({ level: 2, text: 'A' })
-		expect(extractHeading('### A')).toEqual({ level: 3, text: 'A' })
-		expect(extractHeading('#### A')).toEqual({ level: 4, text: 'A' })
-		expect(extractHeading('##### A')).toEqual({ level: 5, text: 'A' })
-		expect(extractHeading('###### A')).toEqual({ level: 6, text: 'A' })
+		expect(extractHeading('# A')).toEqual({ level: 1, text: 'A', offset: 2 })
+		expect(extractHeading('## A')).toEqual({ level: 2, text: 'A', offset: 3 })
+		expect(extractHeading('### A')).toEqual({ level: 3, text: 'A', offset: 4 })
+		expect(extractHeading('#### A')).toEqual({ level: 4, text: 'A', offset: 5 })
+		expect(extractHeading('##### A')).toEqual({ level: 5, text: 'A', offset: 6 })
+		expect(extractHeading('###### A')).toEqual({ level: 6, text: 'A', offset: 7 })
 	})
 
 	it('rejects a no-space #tag', () => {
@@ -135,12 +335,16 @@ describe('extractHeading', () => {
 	})
 
 	it('strips a closing ### run and trailing whitespace', () => {
-		expect(extractHeading('## Title ##')).toEqual({ level: 2, text: 'Title' })
-		expect(extractHeading('# Title   ')).toEqual({ level: 1, text: 'Title' })
+		expect(extractHeading('## Title ##')).toEqual({ level: 2, text: 'Title', offset: 3 })
+		expect(extractHeading('# Title   ')).toEqual({ level: 1, text: 'Title', offset: 2 })
 	})
 
 	it('yields empty text for a bare heading marker with no text', () => {
-		expect(extractHeading('###')).toEqual({ level: 3, text: '' })
+		expect(extractHeading('###')).toEqual({ level: 3, text: '', offset: 3 })
+	})
+
+	it('locates trimmed heading text inside the original line', () => {
+		expect(extractHeading('  ##   Title ##  ')).toEqual({ level: 2, text: 'Title', offset: 7 })
 	})
 })
 
@@ -225,12 +429,21 @@ describe('extractListItem', () => {
 
 describe('stripQuote', () => {
 	it('de-quotes a blockquote line, with or without the following space', () => {
-		expect(stripQuote('> hi')).toBe('hi')
-		expect(stripQuote('>hi')).toBe('hi')
+		expect(stripQuote({ text: '> hi', segments: [{ offset: 0, start: 0, end: 4 }] })).toEqual({
+			text: 'hi',
+			segments: [{ offset: 0, start: 2, end: 4 }],
+		})
+		expect(stripQuote({ text: '>hi', segments: [{ offset: 0, start: 5, end: 8 }] })).toEqual({
+			text: 'hi',
+			segments: [{ offset: 0, start: 6, end: 8 }],
+		})
 	})
 
 	it('strips up to 3 leading spaces before the marker', () => {
-		expect(stripQuote('   > hi')).toBe('hi')
+		expect(stripQuote({ text: '   > hi', segments: [{ offset: 0, start: 10, end: 17 }] })).toEqual({
+			text: 'hi',
+			segments: [{ offset: 0, start: 15, end: 17 }],
+		})
 	})
 })
 
@@ -259,6 +472,16 @@ describe('splitTableRow / delimiterToAlignments', () => {
 			'right',
 			null,
 		])
+	})
+})
+
+describe('splitTableSources', () => {
+	it('keeps an escaped pipe cell mapped to its complete source spelling', () => {
+		const source = splitLines('| a\\|b |')[0]
+		if (source === undefined) throw new Error('expected a table source')
+		const cell = trimSource(splitTableSources(source)[0] ?? { text: '', segments: [] })
+		expect(cell.text).toBe('a|b')
+		expect(projectSpan(cell, 0, cell.text.length)).toEqual({ start: 2, end: 6 })
 	})
 })
 
@@ -330,6 +553,20 @@ describe('coalesceText', () => {
 	it('returns an empty array for an empty input', () => {
 		expect(coalesceText([])).toEqual([])
 	})
+
+	it('maps a joined text node across the whole coalesced source run', () => {
+		const left: InlineNode = { element: 'text', value: 'a' }
+		const right: InlineNode = { element: 'text', value: 'b' }
+		const spans = new Map<MarkdownNode, MarkdownSpan>([
+			[left, { start: 2, end: 3 }],
+			[right, { start: 6, end: 8 }],
+		])
+		const merged = coalesceText([left, right], spans)[0]
+		if (merged === undefined) throw new Error('expected coalesced text')
+		expect(spans.get(merged)).toEqual({ start: 2, end: 8 })
+		expect(spans.has(left)).toBe(false)
+		expect(spans.has(right)).toBe(false)
+	})
 })
 
 describe('scanCode', () => {
@@ -380,6 +617,12 @@ describe('scanLink', () => {
 	})
 })
 
+describe('locateLink', () => {
+	it('locates the label close and the consumed syntax end', () => {
+		expect(locateLink('[a [b]](c)', 0, 10)).toEqual({ close: 6, end: 10 })
+	})
+})
+
 describe('scanEmphasis', () => {
 	it('reads single * / _ as non-strong emphasis', () => {
 		const em = scanEmphasis('*x*', 0, 3)
@@ -406,6 +649,17 @@ describe('scanEmphasis', () => {
 	it('skips over a code span while scanning for the closer', () => {
 		const em = scanEmphasis('*a`*`b*', 0, 7)
 		expect(em?.node).toBeDefined()
+	})
+})
+
+describe('locateEmphasis', () => {
+	it('locates the content and consumed syntax boundaries', () => {
+		expect(locateEmphasis('**text**', 0, 8)).toEqual({
+			strong: true,
+			open: 2,
+			close: 6,
+			end: 8,
+		})
 	})
 })
 
@@ -456,9 +710,23 @@ describe('scanInline', () => {
 	})
 })
 
+describe('scanInlineSource', () => {
+	it('records nested inline nodes against offset-bearing fragments', () => {
+		const source = splitLines('before **bold** after')[0]
+		if (source === undefined) throw new Error('expected inline source')
+		const spans = new Map<MarkdownNode, MarkdownSpan>()
+		const nodes = scanInlineSource(source, 7, 15, spans)
+		const emphasis = assertEmphasisNode(nodes[0])
+		const child = emphasis.children[0]
+		if (child === undefined) throw new Error('expected emphasis text')
+		expect(spans.get(emphasis)).toEqual({ start: 7, end: 15 })
+		expect(spans.get(child)).toEqual({ start: 9, end: 13 })
+	})
+})
+
 describe('collectTable', () => {
 	it('collects a table slice, returning the node and the index after it', () => {
-		const lines = ['| a | b |', '| - | - |', '| 1 | 2 |', 'after']
+		const lines = splitLines('| a | b |\n| - | - |\n| 1 | 2 |\nafter')
 		const { node, next } = collectTable(lines, 0)
 		expect(node.element).toBe('table')
 		expect(node.header.map(inlineText)).toEqual(['a', 'b'])
@@ -466,7 +734,7 @@ describe('collectTable', () => {
 	})
 
 	it('collects a header-only table with no body rows', () => {
-		const lines = ['| a |', '| - |']
+		const lines = splitLines('| a |\n| - |')
 		const { node, next } = collectTable(lines, 0)
 		expect(node.rows).toEqual([])
 		expect(next).toBe(2)
@@ -475,7 +743,7 @@ describe('collectTable', () => {
 
 describe('collectList', () => {
 	it('collects a list slice, returning the node and the index after it', () => {
-		const lines = ['- one', '- two', 'after']
+		const lines = splitLines('- one\n- two\nafter')
 		const { node, next } = collectList(lines, 0, 0)
 		expect(node.element).toBe('list')
 		expect(node.items).toHaveLength(2)
@@ -483,7 +751,7 @@ describe('collectList', () => {
 	})
 
 	it('collects an ordered list slice starting mid-array', () => {
-		const lines = ['plain', '3. three', '4. four']
+		const lines = splitLines('plain\n3. three\n4. four')
 		const { node, next } = collectList(lines, 1, 0)
 		expect(node.ordered).toBe(true)
 		expect(node.start).toBe(3)
@@ -491,7 +759,7 @@ describe('collectList', () => {
 	})
 
 	it('preserves mixed markers and residual source when a mid-array chain reaches the cap', () => {
-		const lines = ['plain', '- ', '  3. ', '     - leaf']
+		const lines = splitLines('plain\n- \n  3. \n     - leaf')
 		const { node, next } = collectList(lines, 1, MAX_DEPTH - 2)
 
 		expect(next).toBe(lines.length)
@@ -1545,7 +1813,7 @@ describe('foldNode', () => {
 		expect(foldNode(document, countHandlers, 0)).toBe([...walkNodes(document)].length)
 	})
 
-	it('keeps every iterative AST engine total across a very wide document', () => {
+	it('keeps every iterative AST engine total while an identity rewrite reuses a wide document', () => {
 		const blocks: BlockNode[] = []
 		for (let index = 0; index < 150_000; index += 1) blocks.push({ element: 'thematicBreak' })
 		const document: MarkdownDocument = { element: 'document', children: blocks }
@@ -1555,11 +1823,13 @@ describe('foldNode', () => {
 		const walked = [...walkNodes(document)].length
 		expect(walked).toBe(blocks.length + 1)
 		expect(foldNode(document, countHandlers, 0)).toBe(blocks.length + 1)
-		expect(rewriteDocument(document, (node) => node).children).toHaveLength(blocks.length)
+		const [rewritten] = rewriteDocument(document, (node) => node)
+		expect(rewritten).toBe(document)
+		expect(rewritten.children).toHaveLength(blocks.length)
 		expect(flattenText(document)).toBe('')
 	})
 
-	it('keeps sparse adopted arrays isolated instead of consuming a sibling result', () => {
+	it('keeps sparse adopted arrays isolated while rebuilding each changed spine', () => {
 		const inlines: InlineNode[] = []
 		inlines[1] = { element: 'text', value: 'b' }
 		const blocks: BlockNode[] = [
@@ -1578,7 +1848,7 @@ describe('foldNode', () => {
 			'text',
 		])
 		expect(foldNode(document, countHandlers, 0)).toBe(5)
-		const rewritten = rewriteDocument(document, (node) =>
+		const [rewritten] = rewriteDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
 		expect(renderHTML(rewritten)).toBe('<h1>A</h1><p>B</p>')
@@ -1587,17 +1857,142 @@ describe('foldNode', () => {
 })
 
 describe('rewriteDocument', () => {
+	it('keeps the document identity and records no derivations when the rewrite changes nothing', () => {
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'same' }] }],
+		}
+
+		const [rewritten, derivations] = rewriteDocument(document, (node) => node)
+
+		expect(rewritten).toBe(document)
+		expect([...derivations]).toEqual([])
+	})
+
+	it('rebuilds and maps only the changed text spine while reusing its sibling subtree', () => {
+		const changed: InlineNode = { element: 'text', value: 'change' }
+		const paragraph: ParagraphNode = { element: 'paragraph', children: [changed] }
+		const sibling: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'codeSpan', value: 'same' }],
+		}
+		const document: MarkdownDocument = { element: 'document', children: [paragraph, sibling] }
+
+		const [rewritten, derivations] = rewriteDocument(document, (node) =>
+			node === changed ? { element: 'text', value: 'changed' } : node,
+		)
+		const rewrittenParagraph = rewritten.children[0]
+		const rewrittenSibling = rewritten.children[1]
+		if (rewrittenParagraph?.element !== 'paragraph')
+			throw new Error('expected the rewritten paragraph')
+		const rewrittenText = rewrittenParagraph.children[0]
+		if (rewrittenText === undefined) throw new Error('expected the rewritten text')
+
+		expect(rewritten).not.toBe(document)
+		expect(rewrittenParagraph).not.toBe(paragraph)
+		expect(rewrittenText).not.toBe(changed)
+		expect(rewrittenSibling).toBe(sibling)
+		expect(
+			rewrittenSibling?.element === 'paragraph' ? rewrittenSibling.children[0] : undefined,
+		).toBe(sibling.children[0])
+		expect(derivations).toEqual(
+			new Map<MarkdownNode, MarkdownNode | undefined>([
+				[rewrittenText, changed],
+				[rewrittenParagraph, paragraph],
+				[rewritten, document],
+			]),
+		)
+		expect(derivations.has(sibling)).toBe(false)
+	})
+
+	it('maps a handler replacement to the input node it replaces', () => {
+		const source: InlineNode = { element: 'text', value: 'source' }
+		const paragraph: ParagraphNode = { element: 'paragraph', children: [source] }
+		const document: MarkdownDocument = { element: 'document', children: [paragraph] }
+		const replacement: InlineNode = { element: 'codeSpan', value: 'replacement' }
+
+		const [rewritten, derivations] = rewriteDocument(document, (node) =>
+			node === source ? replacement : node,
+		)
+		const rewrittenParagraph = rewritten.children[0]
+		if (rewrittenParagraph?.element !== 'paragraph')
+			throw new Error('expected the rewritten paragraph')
+
+		expect(rewrittenParagraph.children[0]).toBe(replacement)
+		expect(derivations.get(replacement)).toBe(source)
+		expect(derivations.get(rewrittenParagraph)).toBe(paragraph)
+		expect(derivations.get(rewritten)).toBe(document)
+	})
+
+	it('leaves joined, normalized, and synthesized replacement descendants without derivations', () => {
+		const joined = coalesceText([
+			{ element: 'text', value: 'joined ' },
+			{ element: 'text', value: 'text' },
+		])[0]
+		const normalized = normalizeInlines(
+			[
+				{ element: 'text', value: 'normalized' },
+				{ element: 'break' },
+				{ element: 'text', value: 'text' },
+			],
+			false,
+		)[0]
+		if (joined === undefined || normalized === undefined)
+			throw new Error('expected joined and normalized text')
+		const projection = mergeProjections([
+			buildProjection({ blocks: [{ element: 'thematicBreak' }] }),
+			buildProjection({
+				inlines: [joined, { element: 'codeSpan', value: 'separator' }, normalized],
+			}),
+		])
+		const synthesized = projection.blocks[1]
+		if (synthesized?.element !== 'paragraph') throw new Error('expected a synthesized paragraph')
+		const source: BlockquoteNode = {
+			element: 'blockquote',
+			children: [{ element: 'codeBlock', code: 'source' }],
+		}
+		const replacement: BlockquoteNode = { element: 'blockquote', children: projection.blocks }
+		const document: MarkdownDocument = { element: 'document', children: [source] }
+
+		const [rewritten, derivations] = rewriteDocument(document, (node) =>
+			node === source ? replacement : node,
+		)
+
+		expect(rewritten.children[0]).toBe(replacement)
+		expect(derivations.get(replacement)).toBe(source)
+		expect(derivations.has(synthesized)).toBe(false)
+		expect(derivations.has(joined)).toBe(false)
+		expect(derivations.has(normalized)).toBe(false)
+	})
+
+	it('keeps a slot-mismatch child by identity and records no derivation for that reuse', () => {
+		const child: InlineNode = { element: 'text', value: 'source' }
+		const paragraph: ParagraphNode = { element: 'paragraph', children: [child] }
+		const document: MarkdownDocument = { element: 'document', children: [paragraph] }
+
+		const [rewritten, derivations] = rewriteDocument(document, (node) =>
+			node === child ? { element: 'thematicBreak' } : node,
+		)
+
+		expect(rewritten).toBe(document)
+		expect(rewritten.children[0]).toBe(paragraph)
+		expect(paragraph.children[0]).toBe(child)
+		expect(derivations.has(child)).toBe(false)
+		expect([...derivations]).toEqual([])
+	})
+
 	it('rewrites bottom-up (children rewritten before the node they belong to)', () => {
 		const order: string[] = []
 		const document: MarkdownDocument = {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
-		rewriteDocument(document, (node) => {
+		const [rewritten] = rewriteDocument(document, (node) => {
 			order.push(node.element)
 			return node
 		})
 		expect(order).toEqual(['text', 'paragraph'])
+		expect(rewritten).toBe(document)
 	})
 
 	it('never passes the document root to rewrite', () => {
@@ -1606,11 +2001,12 @@ describe('rewriteDocument', () => {
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
 		const seen: string[] = []
-		rewriteDocument(document, (node) => {
+		const [rewritten] = rewriteDocument(document, (node) => {
 			seen.push(node.element)
 			return node
 		})
 		expect(seen).not.toContain('document')
+		expect(rewritten).toBe(document)
 	})
 
 	it('never mutates the input document (copy-on-write)', () => {
@@ -1619,10 +2015,11 @@ describe('rewriteDocument', () => {
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
 		const snapshot: unknown = JSON.parse(JSON.stringify(document))
-		rewriteDocument(document, (node) =>
+		const [rewritten] = rewriteDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
 		expect(document).toEqual(snapshot)
+		expect(rewritten).not.toBe(document)
 	})
 
 	it('reflects a text-value rewrite in the output', () => {
@@ -1630,7 +2027,7 @@ describe('rewriteDocument', () => {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
-		const rewritten = rewriteDocument(document, (node) =>
+		const [rewritten] = rewriteDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
 		const paragraph = rewritten.children[0]
@@ -1654,7 +2051,7 @@ describe('rewriteDocument', () => {
 				},
 			],
 		}
-		const rewritten = rewriteDocument(document, (node) =>
+		const [rewritten] = rewriteDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
 		expect(rewritten).toEqual({
@@ -1694,7 +2091,7 @@ describe('rewriteDocument', () => {
 
 		expect(() => rewriteDocument(document, rewrite)).not.toThrow()
 
-		const rewritten = rewriteDocument(document, rewrite)
+		const [rewritten] = rewriteDocument(document, rewrite)
 		let atCap: BlockNode | undefined = rewritten.children[0]
 		for (let level = 0; level < MAX_DEPTH; level += 1) {
 			if (atCap === undefined || atCap.element !== 'blockquote')

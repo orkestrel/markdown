@@ -1,4 +1,12 @@
-import type { BlockNode, InlineNode, MarkdownDocument } from './types.js'
+import type {
+	BlockNode,
+	InlineNode,
+	MarkdownDocument,
+	MarkdownNode,
+	MarkdownParseResult,
+	MarkdownSource,
+	MarkdownSpan,
+} from './types.js'
 import {
 	coalesceText,
 	collectList,
@@ -6,7 +14,12 @@ import {
 	extractFence,
 	extractHeading,
 	extractListItem,
+	joinSources,
+	normalizeParagraphLine,
+	projectSpan,
 	scanInline,
+	scanInlineSource,
+	sliceSource,
 	splitLines,
 	startsBlock,
 	stripQuote,
@@ -21,96 +34,157 @@ import { isNonEmptyArray } from '@orkestrel/contract'
  *
  * @param lines - The markdown lines to parse.
  * @param depth - The current recursion depth (blockquotes/lists increment it).
+ * @param spans - The optional operation-owned node span recorder.
+ * @param limit - The original-source end of this line run, including a removed terminator.
  * @returns The parsed block nodes.
  *
  * @example
  * ```ts
- * parseBlocks(['# Hi'], 0) // [{ element: 'heading', level: 1, children: [...] }]
+ * parseBlocks(splitLines('# Hi'), 0) // [{ element: 'heading', level: 1, children: [...] }]
  * ```
  */
-export function parseBlocks(lines: readonly string[], depth: number): readonly BlockNode[] {
+export function parseBlocks(
+	lines: readonly MarkdownSource[],
+	depth: number,
+	spans = new Map<MarkdownNode, MarkdownSpan>(),
+	limit?: number,
+): readonly BlockNode[] {
+	const text = lines.map((line) => line.text)
 	if (depth >= MAX_DEPTH) {
-		return lines.length > 0
-			? [{ element: 'paragraph', children: [{ element: 'text', value: lines.join('\n') }] }]
-			: []
+		if (lines.length === 0) return []
+		const source = joinSources(lines, '\n')
+		const inline: InlineNode = { element: 'text', value: source.text }
+		const paragraph: BlockNode = { element: 'paragraph', children: [inline] }
+		const span = projectSpan(source, 0, source.text.length)
+		if (span !== undefined) {
+			spans.set(inline, span)
+			spans.set(paragraph, span)
+		}
+		return [paragraph]
 	}
 	const blocks: BlockNode[] = []
 	let index = 0
 	while (index < lines.length) {
-		const line = lines[index] ?? ''
+		const line = text[index] ?? ''
 		if (isBlankLine(line)) {
 			index += 1
 			continue
 		}
 		const fence = extractFence(line)
 		if (fence) {
-			const body: string[] = []
+			const start = index
+			const body: MarkdownSource[] = []
+			let closed = false
 			index += 1
-			while (index < lines.length && !isFenceClose(lines[index] ?? '', fence.marker)) {
-				body.push(lines[index] ?? '')
+			while (index < lines.length && !isFenceClose(text[index] ?? '', fence.marker)) {
+				const bodyLine = lines[index]
+				if (bodyLine !== undefined) body.push(bodyLine)
 				index += 1
 			}
-			index += 1 // step past the closing fence (a no-op past EOF)
-			blocks.push({
+			if (index < lines.length) {
+				closed = true
+				index += 1
+			}
+			const node: BlockNode = {
 				element: 'codeBlock',
 				...(fence.lang === undefined ? {} : { lang: fence.lang }),
-				code: body.join('\n'),
-			})
+				code: joinSources(body, '\n').text,
+			}
+			const source = joinSources(lines.slice(start, index), '\n')
+			const span = projectSpan(source, 0, source.text.length)
+			if (span !== undefined)
+				spans.set(node, !closed && limit !== undefined ? { start: span.start, end: limit } : span)
+			blocks.push(node)
 			continue
 		}
 		if (isThematicBreak(line)) {
-			blocks.push({ element: 'thematicBreak' })
+			const node: BlockNode = { element: 'thematicBreak' }
+			const source = lines[index]
+			const span = source === undefined ? undefined : projectSpan(source, 0, source.text.length)
+			if (span !== undefined) spans.set(node, span)
+			blocks.push(node)
 			index += 1
 			continue
 		}
 		const heading = extractHeading(line)
 		if (heading) {
-			blocks.push({
+			const source = lines[index]
+			const content =
+				source === undefined
+					? { text: heading.text, segments: [] }
+					: sliceSource(source, heading.offset, heading.offset + heading.text.length)
+			const node: BlockNode = {
 				element: 'heading',
 				level: heading.level,
-				children: parseInline(heading.text),
-			})
+				children: coalesceText(scanInlineSource(content, 0, content.text.length, spans), spans),
+			}
+			const span = source === undefined ? undefined : projectSpan(source, 0, source.text.length)
+			if (span !== undefined) spans.set(node, span)
+			blocks.push(node)
 			index += 1
 			continue
 		}
 		if (isQuote(line)) {
-			const quoted: string[] = []
-			while (index < lines.length && isQuote(lines[index] ?? '')) {
-				quoted.push(stripQuote(lines[index] ?? ''))
+			const start = index
+			const quoted: MarkdownSource[] = []
+			while (index < lines.length && isQuote(text[index] ?? '')) {
+				const quotedLine = lines[index]
+				if (quotedLine === undefined) break
+				quoted.push(stripQuote(quotedLine))
 				index += 1
 			}
-			blocks.push({ element: 'blockquote', children: parseBlocks(quoted, depth + 1) })
+			const source = joinSources(lines.slice(start, index), '\n')
+			const span = projectSpan(source, 0, source.text.length)
+			const node: BlockNode = {
+				element: 'blockquote',
+				children: parseBlocks(
+					quoted,
+					depth + 1,
+					spans,
+					index === lines.length && limit !== undefined ? limit : span?.end,
+				),
+			}
+			if (span !== undefined) spans.set(node, span)
+			blocks.push(node)
 			continue
 		}
-		if (isTableStart(line, lines[index + 1])) {
-			const table = collectTable(lines, index)
+		if (isTableStart(line, text[index + 1])) {
+			const table = collectTable(lines, index, spans)
 			blocks.push(table.node)
 			index = table.next
 			continue
 		}
 		if (extractListItem(line)) {
-			const list = collectList(lines, index, depth)
+			const list = collectList(lines, index, depth, spans, limit)
 			blocks.push(list.node)
 			index = list.next
 			continue
 		}
-		const paragraph: string[] = []
+		const start = index
+		const paragraph: MarkdownSource[] = []
 		while (
 			index < lines.length &&
-			!isBlankLine(lines[index] ?? '') &&
-			!(isNonEmptyArray(paragraph) && startsBlock(lines, index))
+			!isBlankLine(text[index] ?? '') &&
+			!(isNonEmptyArray(paragraph) && startsBlock(text, index))
 		) {
-			paragraph.push(lines[index] ?? '')
+			const paragraphLine = lines[index]
+			if (paragraphLine !== undefined) paragraph.push(paragraphLine)
 			index += 1
 		}
-		const source = paragraph
-			.map((paragraphLine, position) =>
-				position < paragraph.length - 1 && paragraphLine.endsWith('  ')
-					? `${paragraphLine.trim()}  `
-					: paragraphLine.trim(),
-			)
-			.join('\n')
-		blocks.push({ element: 'paragraph', children: parseInline(source) })
+		const source = joinSources(
+			paragraph.map((paragraphLine, position) =>
+				normalizeParagraphLine(paragraphLine, position < paragraph.length - 1),
+			),
+			'\n',
+		)
+		const node: BlockNode = {
+			element: 'paragraph',
+			children: coalesceText(scanInlineSource(source, 0, source.text.length, spans), spans),
+		}
+		const region = joinSources(lines.slice(start, index), '\n')
+		const span = projectSpan(region, 0, region.text.length)
+		if (span !== undefined) spans.set(node, span)
+		blocks.push(node)
 	}
 	return blocks
 }
@@ -123,7 +197,24 @@ export function parseBlocks(lines: readonly string[], depth: number): readonly B
  * @returns The parsed document.
  */
 export function parseDocument(markdown: string): MarkdownDocument {
-	return { element: 'document', children: parseBlocks(splitLines(markdown), 0) }
+	const [document] = parseProvenance(markdown)
+	return document
+}
+
+/**
+ * Parses a markdown string into a document and its original-source spans.
+ *
+ * @param markdown - The markdown source to parse.
+ * @returns The parsed document and its node-identity span map.
+ */
+export function parseProvenance(markdown: string): MarkdownParseResult {
+	const spans = new Map<MarkdownNode, MarkdownSpan>()
+	const document: MarkdownDocument = {
+		element: 'document',
+		children: parseBlocks(splitLines(markdown), 0, spans, markdown.length),
+	}
+	spans.set(document, { start: 0, end: markdown.length })
+	return [document, spans]
 }
 
 /**

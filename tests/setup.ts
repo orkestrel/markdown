@@ -63,18 +63,24 @@ export function firstBlock(markdown: string): BlockNode {
 	return block
 }
 
-export function assertHeadingNode(block: BlockNode): HeadingNode {
-	if (!isHeadingNode(block)) throw new Error(`expected heading, got ${block.element}`)
+export function assertHeadingNode(block: BlockNode | undefined): HeadingNode {
+	if (block === undefined || !isHeadingNode(block)) {
+		throw new Error(`expected heading, got ${block?.element}`)
+	}
 	return block
 }
 
-export function assertListNode(block: BlockNode): ListNode {
-	if (!isListNode(block)) throw new Error(`expected list, got ${block.element}`)
+export function assertListNode(block: BlockNode | undefined): ListNode {
+	if (block === undefined || !isListNode(block)) {
+		throw new Error(`expected list, got ${block?.element}`)
+	}
 	return block
 }
 
-export function assertTableNode(block: BlockNode): TableNode {
-	if (!isTableNode(block)) throw new Error(`expected table, got ${block.element}`)
+export function assertTableNode(block: BlockNode | undefined): TableNode {
+	if (block === undefined || !isTableNode(block)) {
+		throw new Error(`expected table, got ${block?.element}`)
+	}
 	return block
 }
 
@@ -85,13 +91,17 @@ export function assertParagraphNode(block: BlockNode | undefined): ParagraphNode
 	return block
 }
 
-export function assertCodeBlockNode(block: BlockNode): CodeBlockNode {
-	if (!isCodeBlockNode(block)) throw new Error(`expected codeBlock, got ${block.element}`)
+export function assertCodeBlockNode(block: BlockNode | undefined): CodeBlockNode {
+	if (block === undefined || !isCodeBlockNode(block)) {
+		throw new Error(`expected codeBlock, got ${block?.element}`)
+	}
 	return block
 }
 
-export function assertBlockquoteNode(block: BlockNode): BlockquoteNode {
-	if (!isBlockquoteNode(block)) throw new Error(`expected blockquote, got ${block.element}`)
+export function assertBlockquoteNode(block: BlockNode | undefined): BlockquoteNode {
+	if (block === undefined || !isBlockquoteNode(block)) {
+		throw new Error(`expected blockquote, got ${block?.element}`)
+	}
 	return block
 }
 

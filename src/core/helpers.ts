@@ -15,11 +15,15 @@ import type {
 	ListItemMatch,
 	ListNode,
 	MarkdownCell,
+	MarkdownDerivation,
 	MarkdownDocument,
 	MarkdownHandlers,
 	MarkdownNode,
 	MarkdownProjection,
 	MarkdownRewriteHandler,
+	MarkdownSegment,
+	MarkdownSource,
+	MarkdownSpan,
 	TableAlign,
 	TableNode,
 } from './types.js'
@@ -35,7 +39,7 @@ import {
 	isThematicBreak,
 	isWhitespace,
 } from './validators.js'
-import { parseBlocks, parseInline } from './parsers.js'
+import { parseBlocks } from './parsers.js'
 import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '@orkestrel/contract'
 import {
 	HTML,
@@ -68,23 +72,223 @@ import {
 //  Text + line utilities
 
 /**
- * Normalize line endings to `\n` and split a markdown document into its lines - CRLF
- * (`\r\n`) and bare CR (`\r`) both collapse to `\n` first, so a Windows-origin
- * document parses identically. A single trailing newline does not yield a final
- * empty line.
+ * Splits a markdown document into offset-bearing lines while normalizing CRLF and
+ * bare CR terminators at the line boundary. A single trailing terminator does not
+ * yield a final empty line.
  *
  * @param markdown - The raw markdown source
- * @returns The document's lines, line-terminators stripped
+ * @returns The document's lines with their original-string coordinates
  *
  * @example
  * ```ts
- * splitLines('a\r\nb\nc') // ['a', 'b', 'c']
+ * splitLines('a\r\nb') // [{ text: 'a', segments: [{ offset: 0, start: 0, end: 1 }] }, ...]
  * ```
  */
-export function splitLines(markdown: string): readonly string[] {
-	const lines = markdown.replace(/\r\n?/g, '\n').split('\n')
-	if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
+export function splitLines(markdown: string): readonly MarkdownSource[] {
+	const lines: MarkdownSource[] = []
+	let start = 0
+	let index = 0
+	while (index < markdown.length) {
+		const character = markdown[index]
+		if (character !== '\r' && character !== '\n') {
+			index += 1
+			continue
+		}
+		lines.push({
+			text: markdown.slice(start, index),
+			segments: [{ offset: 0, start, end: index }],
+		})
+		index += character === '\r' && markdown[index + 1] === '\n' ? 2 : 1
+		start = index
+	}
+	lines.push({
+		text: markdown.slice(start),
+		segments: [{ offset: 0, start, end: markdown.length }],
+	})
+	if (lines.length > 1 && lines[lines.length - 1]?.text === '') lines.pop()
 	return lines
+}
+
+/**
+ * Slices derived markdown text and narrows each intersecting source segment to the
+ * same text-relative range.
+ *
+ * @param source - The offset-bearing source to slice
+ * @param from - The inclusive text offset
+ * @param to - The exclusive text offset
+ * @returns The sliced text and its narrowed original-string segments
+ *
+ * @example
+ * ```ts
+ * sliceSource({ text: 'abc', segments: [{ offset: 0, start: 4, end: 7 }] }, 1, 3)
+ * // { text: 'bc', segments: [{ offset: 0, start: 5, end: 7 }] }
+ * ```
+ */
+export function sliceSource(source: MarkdownSource, from: number, to: number): MarkdownSource {
+	const start = Math.max(0, Math.min(from, source.text.length))
+	const end = Math.max(start, Math.min(to, source.text.length))
+	const segments: MarkdownSegment[] = []
+	for (let index = 0; index < source.segments.length; index += 1) {
+		const segment = source.segments[index]
+		if (segment === undefined) continue
+		const next = source.segments[index + 1]
+		const limit = Math.min(
+			segment.offset + (segment.end - segment.start),
+			next === undefined ? source.text.length : next.offset,
+		)
+		const overlapStart = Math.max(start, segment.offset)
+		const overlapEnd = Math.min(end, limit)
+		const empty = segment.offset === limit && overlapStart === segment.offset
+		if (overlapStart >= overlapEnd && !empty) continue
+		const originalStart =
+			overlapStart === limit
+				? segment.end
+				: Math.min(segment.end, segment.start + overlapStart - segment.offset)
+		const originalEnd =
+			overlapEnd === limit
+				? segment.end
+				: Math.min(segment.end, segment.start + overlapEnd - segment.offset)
+		segments.push({
+			offset: overlapStart - start,
+			start: originalStart,
+			end: originalEnd,
+		})
+	}
+	return { text: source.text.slice(start, end), segments }
+}
+
+/**
+ * Joins offset-bearing markdown sources while mapping a separator to the original
+ * region between adjacent mapped sources.
+ *
+ * @param sources - The sources to join
+ * @param separator - The derived text inserted between sources
+ * @returns The joined text and every source-backed segment
+ *
+ * @example
+ * ```ts
+ * joinSources(splitLines('a\nb'), '\n')
+ * // { text: 'a\nb', segments: [...] }
+ * ```
+ */
+export function joinSources(sources: readonly MarkdownSource[], separator: string): MarkdownSource {
+	let text = ''
+	const segments: MarkdownSegment[] = []
+	for (let index = 0; index < sources.length; index += 1) {
+		const source = sources[index]
+		if (source === undefined) continue
+		if (index > 0) {
+			const previous = sources[index - 1]
+			const left = previous?.segments[previous.segments.length - 1]
+			const right = source.segments[0]
+			if (
+				separator.length > 0 &&
+				left !== undefined &&
+				right !== undefined &&
+				left.end < right.start
+			)
+				segments.push({ offset: text.length, start: left.end, end: right.start })
+			text += separator
+		}
+		for (const segment of source.segments) {
+			segments.push({
+				offset: text.length + segment.offset,
+				start: segment.start,
+				end: segment.end,
+			})
+		}
+		text += source.text
+	}
+	return { text, segments }
+}
+
+/**
+ * Projects a derived text range through its segments to a half-open region of the
+ * original markdown string.
+ *
+ * @param source - The offset-bearing source carrying the range
+ * @param from - The inclusive derived-text boundary
+ * @param to - The exclusive derived-text boundary
+ * @returns The original-string span, or `undefined` when either boundary is unmapped
+ *
+ * @example
+ * ```ts
+ * projectSpan({ text: 'a', segments: [{ offset: 0, start: 4, end: 5 }] }, 0, 1)
+ * // { start: 4, end: 5 }
+ * ```
+ */
+export function projectSpan(
+	source: MarkdownSource,
+	from: number,
+	to: number,
+): MarkdownSpan | undefined {
+	if (from < 0 || to < from || to > source.text.length) return undefined
+	let start: number | undefined
+	let end: number | undefined
+	for (let index = 0; index < source.segments.length; index += 1) {
+		const segment = source.segments[index]
+		if (segment === undefined) continue
+		const next = source.segments[index + 1]
+		const limit = Math.min(
+			segment.offset + (segment.end - segment.start),
+			next === undefined ? source.text.length : next.offset,
+		)
+		if (from === to && from >= segment.offset && from <= limit) {
+			if (next !== undefined && from === next.offset) continue
+			const position =
+				from === limit ? segment.end : Math.min(segment.end, segment.start + from - segment.offset)
+			return { start: position, end: position }
+		}
+		if (start === undefined && from >= segment.offset && from < limit)
+			start = segment.start + from - segment.offset
+		if (to > segment.offset && to <= limit)
+			end = to === limit ? segment.end : Math.min(segment.end, segment.start + to - segment.offset)
+	}
+	return start === undefined || end === undefined ? undefined : { start, end }
+}
+
+/**
+ * Trims an offset-bearing source without losing the coordinates of its retained text.
+ *
+ * @param source - The source to trim
+ * @returns The trimmed text and its narrowed original-string segments
+ *
+ * @example
+ * ```ts
+ * trimSource({ text: ' a ', segments: [{ offset: 0, start: 4, end: 7 }] })
+ * // { text: 'a', segments: [{ offset: 0, start: 5, end: 6 }] }
+ * ```
+ */
+export function trimSource(source: MarkdownSource): MarkdownSource {
+	const start = source.text.length - source.text.trimStart().length
+	const end = source.text.trimEnd().length
+	return sliceSource(source, start, Math.max(start, end))
+}
+
+/**
+ * Normalizes one paragraph line while retaining the full source run consumed by a
+ * trailing-space hard break.
+ *
+ * @param source - The offset-bearing paragraph line
+ * @param breaks - If `true`, preserves a trailing run of at least two spaces as the
+ *   scanner's two-space hard-break syntax; if `false`, trims the line normally
+ * @returns The normalized line and its original-string segments
+ *
+ * @example
+ * ```ts
+ * normalizeParagraphLine(splitLines('text   \nnext')[0], true).text // 'text  '
+ * ```
+ */
+export function normalizeParagraphLine(source: MarkdownSource, breaks: boolean): MarkdownSource {
+	if (!breaks || !source.text.endsWith('  ')) return trimSource(source)
+	const contentEnd = source.text.trimEnd().length
+	const content = trimSource(sliceSource(source, 0, contentEnd))
+	const span = projectSpan(source, contentEnd, source.text.length)
+	const suffix: MarkdownSource = {
+		text: '  ',
+		segments: span === undefined ? [] : [{ offset: 0, start: span.start, end: span.end }],
+	}
+	return joinSources([content, suffix], '')
 }
 
 /**
@@ -111,27 +315,38 @@ export function countIndent(line: string): number {
 //  Block-level detection
 
 /**
- * Extract an ATX heading line (`#` … `######` followed by text) into its
- * `{ level, text }`, or `undefined` when `line` is not a heading. A run of more than 6
- * `#`s, or `#`s not followed by whitespace + text, is not a
- * heading; an optional closing `###` run is stripped.
+ * Extracts an ATX heading line (`#` … `######` followed by text) into its level,
+ * trimmed text, and the text's offset inside the line. A run of more than 6 `#`s, or
+ * `#`s not followed by whitespace + text, is not a heading; an optional closing
+ * `###` run is stripped.
  *
  * @param line - The candidate line
- * @returns The heading level (1–6) and its raw inline text, or `undefined`
+ * @returns The heading level (1–6), raw inline text, and text offset, or `undefined`
  *
  * @example
  * ```ts
- * extractHeading('## Title') // { level: 2, text: 'Title' }
+ * extractHeading('## Title') // { level: 2, text: 'Title', offset: 3 }
  * ```
  */
 export function extractHeading(
 	line: string,
-): { readonly level: number; readonly text: string } | undefined {
-	const match = /^(#{1,6})(?:\s+(.*))?$/.exec(line.trimStart())
+): { readonly level: number; readonly text: string; readonly offset: number } | undefined {
+	const trimmed = line.trimStart()
+	const match = /^(#{1,6})(?:\s+(.*))?$/.exec(trimmed)
 	if (!match || match[1] === undefined) return undefined
 	const level = match[1].length
-	const text = (match[2] ?? '').replace(/\s+#+\s*$/, '').trim()
-	return { level, text }
+	const raw = match[2] ?? ''
+	const withoutClosing = raw.replace(/\s+#+\s*$/, '')
+	const text = withoutClosing.trim()
+	const found = raw.length === 0 ? trimmed.length : trimmed.indexOf(raw, level)
+	const content = found < 0 ? trimmed.length : found
+	const offset =
+		line.length -
+		trimmed.length +
+		content +
+		withoutClosing.length -
+		withoutClosing.trimStart().length
+	return { level, text, offset }
 }
 
 /**
@@ -197,19 +412,22 @@ export function extractListItem(line: string): ListItemMatch | undefined {
 }
 
 /**
- * Strip one level of blockquote marker (`>` plus one optional following space) from a
- * blockquote line, so the de-quoted lines re-parse as nested blocks.
+ * Strips one level of blockquote marker (`>` plus one optional following space) from
+ * an offset-bearing blockquote line, so the de-quoted source re-parses as nested
+ * blocks without losing its original coordinates.
  *
- * @param line - A blockquote line (per {@link isQuote})
- * @returns The line with its leading `>` (and one space) removed
+ * @param source - A blockquote line (per {@link isQuote})
+ * @returns The source with its leading `>` and optional space removed
  *
  * @example
  * ```ts
- * stripQuote('> text') // 'text'
+ * stripQuote({ text: '> text', segments: [{ offset: 0, start: 0, end: 6 }] })
+ * // { text: 'text', segments: [{ offset: 0, start: 2, end: 6 }] }
  * ```
  */
-export function stripQuote(line: string): string {
-	return line.replace(/^\s{0,3}>\s?/, '')
+export function stripQuote(source: MarkdownSource): MarkdownSource {
+	const marker = /^\s{0,3}>\s?/.exec(source.text)?.[0] ?? ''
+	return sliceSource(source, marker.length, source.text.length)
 }
 
 /**
@@ -244,6 +462,54 @@ export function splitTableRow(row: string): readonly string[] {
 	cells.push(current)
 	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[0] ?? '').trim())) cells.shift()
 	if (isNonEmptyArray<string>(cells) && isEmptyString((cells[cells.length - 1] ?? '').trim()))
+		cells.pop()
+	return cells
+}
+
+/**
+ * Splits an offset-bearing GFM table row into offset-bearing cells, retaining the
+ * complete source spelling of an escaped pipe while exposing its literal value.
+ *
+ * @param row - The offset-bearing table row
+ * @returns The row's cells with their original-string coordinates
+ *
+ * @example
+ * ```ts
+ * splitTableSources(splitLines('| a\\|b |')[0]).map((cell) => cell.text) // [' a|b ']
+ * ```
+ */
+export function splitTableSources(row: MarkdownSource): readonly MarkdownSource[] {
+	const source = trimSource(row)
+	const cells: MarkdownSource[] = []
+	let pieces: MarkdownSource[] = []
+	let start = 0
+	for (let index = 0; index < source.text.length; index += 1) {
+		const character = source.text[index]
+		if (character === '\\' && source.text[index + 1] === '|') {
+			pieces.push(sliceSource(source, start, index))
+			const span = projectSpan(source, index, index + 2)
+			pieces.push({
+				text: '|',
+				segments: span === undefined ? [] : [{ offset: 0, start: span.start, end: span.end }],
+			})
+			index += 1
+			start = index + 1
+			continue
+		}
+		if (character !== '|') continue
+		pieces.push(sliceSource(source, start, index))
+		cells.push(joinSources(pieces, ''))
+		pieces = []
+		start = index + 1
+	}
+	pieces.push(sliceSource(source, start, source.text.length))
+	cells.push(joinSources(pieces, ''))
+	if (isNonEmptyArray<MarkdownSource>(cells) && isEmptyString((cells[0]?.text ?? '').trim()))
+		cells.shift()
+	if (
+		isNonEmptyArray<MarkdownSource>(cells) &&
+		isEmptyString((cells[cells.length - 1]?.text ?? '').trim())
+	)
 		cells.pop()
 	return cells
 }
@@ -336,6 +602,7 @@ export function unescapeText(text: string): string {
  * unrecognized character, so coalescing keeps the AST clean and assertion-friendly.
  *
  * @param nodes - The inline nodes (possibly with adjacent text runs)
+ * @param spans - The optional operation-owned node span recorder
  * @returns The nodes with consecutive text nodes concatenated
  *
  * @example
@@ -344,12 +611,24 @@ export function unescapeText(text: string): string {
  * // [{ element: 'text', value: 'ab' }]
  * ```
  */
-export function coalesceText(nodes: readonly InlineNode[]): readonly InlineNode[] {
+export function coalesceText(
+	nodes: readonly InlineNode[],
+	spans?: Map<MarkdownNode, MarkdownSpan>,
+): readonly InlineNode[] {
 	const out: InlineNode[] = []
 	for (const node of nodes) {
 		const last = out[out.length - 1]
 		if (node.element === 'text' && last !== undefined && last.element === 'text') {
-			out[out.length - 1] = { element: 'text', value: last.value + node.value }
+			const merged: InlineNode = { element: 'text', value: last.value + node.value }
+			const left = spans?.get(last)
+			const right = spans?.get(node)
+			if (spans !== undefined) {
+				spans.delete(last)
+				spans.delete(node)
+				if (left !== undefined && right !== undefined)
+					spans.set(merged, { start: left.start, end: right.end })
+			}
+			out[out.length - 1] = merged
 		} else {
 			out.push(node)
 		}
@@ -403,31 +682,26 @@ export function scanCode(
 }
 
 /**
- * Scan a link `[text](href)` at `start` - the text runs to a BALANCED `]`, then `(`
+ * Locates a link `[text](href)` at `start` - the text runs to a BALANCED `]`, then `(`
  * must immediately follow and the destination runs to the matching `)` (both respect
- * nested delimiters + escapes). Returns the link node, or `undefined` when the shape
+ * nested delimiters + escapes). Returns the label close and syntax end, or `undefined` when the shape
  * does not hold (it then degrades to a literal `[`).
  *
  * @param source - The inline source text
  * @param start - The index of the opening `[`
  * @param to - The exclusive end of the scan window
- * @param depth - The current inline-recursion depth (defaults to 0 at the entry point);
- *   at {@link MAX_DEPTH} the link's text children degrade to literal text instead of
- *   recursing further
- * @returns The parsed {@link LinkNode} + end index, or `undefined`
+ * @returns The label close and syntax end indices, or `undefined`
  *
  * @example
  * ```ts
- * scanLink('[text](url)', 0, 11)
- * // { node: { element: 'link', href: 'url', children: [...] }, end: 11 }
+ * locateLink('[text](url)', 0, 11) // { close: 5, end: 11 }
  * ```
  */
-export function scanLink(
+export function locateLink(
 	source: string,
 	start: number,
 	to: number,
-	depth = 0,
-): { readonly node: LinkNode; readonly end: number } | undefined {
+): { readonly close: number; readonly end: number } | undefined {
 	let bracketDepth = 0
 	let close = -1
 	for (let index = start; index < to; index += 1) {
@@ -464,39 +738,61 @@ export function scanLink(
 		}
 	}
 	if (parenClose === -1) return undefined
-	const href = unescapeText(source.slice(close + 2, parenClose).trim())
-	const children = scanInline(source, start + 1, close, depth + 1)
-	return { node: { element: 'link', href, children }, end: parenClose + 1 }
+	return { close, end: parenClose + 1 }
 }
 
 /**
- * Scan an emphasis run at `start` (`*` / `_`, doubled for strong) - finds the nearest
+ * Scans a link `[text](href)` at `start` and returns its parsed node and end index.
+ *
+ * @param source - The inline source text
+ * @param start - The index of the opening `[`
+ * @param to - The exclusive end of the scan window
+ * @param depth - The current inline-recursion depth
+ * @returns The parsed link and end index, or `undefined` when the shape does not hold
+ */
+export function scanLink(
+	source: string,
+	start: number,
+	to: number,
+	depth = 0,
+): { readonly node: LinkNode; readonly end: number } | undefined {
+	const located = locateLink(source, start, to)
+	if (located === undefined) return undefined
+	const href = unescapeText(source.slice(located.close + 2, located.end - 1).trim())
+	const children = scanInline(source, start + 1, located.close, depth + 1)
+	return { node: { element: 'link', href, children }, end: located.end }
+}
+
+/**
+ * Locates an emphasis run at `start` (`*` / `_`, doubled for strong) - finds the nearest
  * matching closing run of the same marker + width while skipping complete nested
  * runs from the other marker family, and requires non-space immediately inside both
  * delimiters (the CommonMark flanking simplification that blocks `* x *`). Returns
- * the emphasis node, or `undefined` when no valid closer exists (it then degrades to
+ * the content and syntax bounds, or `undefined` when no valid closer exists (it then degrades to
  * a literal marker).
  *
  * @param source - The inline source text
  * @param start - The index of the opening marker
  * @param to - The exclusive end of the scan window
- * @param depth - The current inline-recursion depth (defaults to 0 at the entry point);
- *   at {@link MAX_DEPTH} the emphasis's children degrade to literal text instead of
- *   recursing further
- * @returns The parsed {@link EmphasisNode} + end index, or `undefined`
+ * @returns The content and syntax bounds, or `undefined`
  *
  * @example
  * ```ts
- * scanEmphasis('*em*', 0, 4)
- * // { node: { element: 'emphasis', strong: false, children: [...] }, end: 4 }
+ * locateEmphasis('*em*', 0, 4) // { strong: false, open: 1, close: 3, end: 4 }
  * ```
  */
-export function scanEmphasis(
+export function locateEmphasis(
 	source: string,
 	start: number,
 	to: number,
-	depth = 0,
-): { readonly node: EmphasisNode; readonly end: number } | undefined {
+):
+	| {
+			readonly strong: boolean
+			readonly open: number
+			readonly close: number
+			readonly end: number
+	  }
+	| undefined {
 	const marker = source[start] ?? ''
 	let run = 0
 	while (start + run < to && source[start + run] === marker && run < 2) run += 1
@@ -516,7 +812,7 @@ export function scanEmphasis(
 			continue
 		}
 		if ((character === '*' || character === '_') && character !== marker) {
-			const nested = scanEmphasis(source, index, to, depth + 1)
+			const nested = locateEmphasis(source, index, to)
 			if (nested !== undefined) {
 				index = nested.end
 				continue
@@ -527,11 +823,9 @@ export function scanEmphasis(
 			while (index + closeRun < to && source[index + closeRun] === marker) closeRun += 1
 			if (closeRun >= run && !isWhitespace(source[index - 1] ?? '')) {
 				return {
-					node: {
-						element: 'emphasis',
-						strong,
-						children: scanInline(source, openEnd, index, depth + 1),
-					},
+					strong,
+					open: openEnd,
+					close: index,
 					end: index + run,
 				}
 			}
@@ -541,6 +835,33 @@ export function scanEmphasis(
 		index += 1
 	}
 	return undefined
+}
+
+/**
+ * Scans an emphasis run at `start` and returns its parsed node and end index.
+ *
+ * @param source - The inline source text
+ * @param start - The index of the opening marker
+ * @param to - The exclusive end of the scan window
+ * @param depth - The current inline-recursion depth
+ * @returns The parsed emphasis and end index, or `undefined` when no closer exists
+ */
+export function scanEmphasis(
+	source: string,
+	start: number,
+	to: number,
+	depth = 0,
+): { readonly node: EmphasisNode; readonly end: number } | undefined {
+	const located = locateEmphasis(source, start, to)
+	if (located === undefined) return undefined
+	return {
+		node: {
+			element: 'emphasis',
+			strong: located.strong,
+			children: scanInline(source, located.open, located.close, depth + 1),
+		},
+		end: located.end,
+	}
 }
 
 /**
@@ -571,78 +892,151 @@ export function scanInline(
 	to: number,
 	depth = 0,
 ): readonly InlineNode[] {
+	return scanInlineSource(
+		{
+			text: source,
+			segments: [{ offset: 0, start: 0, end: source.length }],
+		},
+		from,
+		to,
+		new Map<MarkdownNode, MarkdownSpan>(),
+		depth,
+	)
+}
+
+/**
+ * Scans an offset-bearing inline window with the same engine as {@link scanInline}
+ * and records each emitted node against the original markdown string.
+ *
+ * @param source - The offset-bearing inline source
+ * @param from - The inclusive start of the scan window
+ * @param to - The exclusive end of the scan window
+ * @param spans - The operation-owned node span recorder
+ * @param depth - The current inline-recursion depth
+ * @returns The parsed inline nodes before adjacent text coalescing
+ */
+export function scanInlineSource(
+	source: MarkdownSource,
+	from: number,
+	to: number,
+	spans: Map<MarkdownNode, MarkdownSpan>,
+	depth = 0,
+): readonly InlineNode[] {
 	if (depth >= MAX_DEPTH)
-		return from < to ? [{ element: 'text', value: source.slice(from, to) }] : []
+		if (from < to) {
+			const node: InlineNode = { element: 'text', value: source.text.slice(from, to) }
+			const span = projectSpan(source, from, to)
+			if (span !== undefined) spans.set(node, span)
+			return [node]
+		} else return []
 	const nodes: InlineNode[] = []
 	let index = from
 	let pending = ''
+	let pendingStart = from
 	while (index < to) {
-		const character = source[index] ?? ''
-		if (character === '\\' && index + 1 < to && isEscapable(source[index + 1] ?? '')) {
-			pending += source[index + 1] ?? ''
+		const character = source.text[index] ?? ''
+		if (character === '\\' && index + 1 < to && isEscapable(source.text[index + 1] ?? '')) {
+			if (pending.length === 0) pendingStart = index
+			pending += source.text[index + 1] ?? ''
 			index += 2
 			continue
 		}
 		if (character === ' ') {
 			let spaceEnd = index
-			while (spaceEnd < to && source[spaceEnd] === ' ') spaceEnd += 1
-			if (spaceEnd - index >= 2 && source[spaceEnd] === '\n') {
+			while (spaceEnd < to && source.text[spaceEnd] === ' ') spaceEnd += 1
+			if (spaceEnd - index >= 2 && source.text[spaceEnd] === '\n') {
 				if (pending.length > 0) {
-					nodes.push({ element: 'text', value: pending })
+					const node: InlineNode = { element: 'text', value: pending }
+					const span = projectSpan(source, pendingStart, index)
+					if (span !== undefined) spans.set(node, span)
+					nodes.push(node)
 					pending = ''
 				}
-				nodes.push({ element: 'break' })
+				const node: InlineNode = { element: 'break' }
+				const span = projectSpan(source, index, spaceEnd + 1)
+				if (span !== undefined) spans.set(node, span)
+				nodes.push(node)
 				index = spaceEnd + 1
+				pendingStart = index
 				continue
 			}
 		}
 		let scanned: InlineNode | undefined
 		let end = index
 		if (character === '`') {
-			const span = scanCode(source, index, to)
+			const span = scanCode(source.text, index, to)
 			if (span) {
 				scanned = { element: 'codeSpan', value: span.value }
 				end = span.end
 			}
 		}
-		if (character === '!' && source[index + 1] === '[') {
-			const link = scanLink(source, index + 1, to, depth)
-			if (link) {
+		if (character === '!' && source.text[index + 1] === '[') {
+			const link = locateLink(source.text, index + 1, to)
+			if (link !== undefined) {
 				scanned = {
 					element: 'image',
-					src: link.node.href,
-					children: link.node.children,
+					src: unescapeText(source.text.slice(link.close + 2, link.end - 1).trim()),
+					children: coalesceText(
+						scanInlineSource(source, index + 2, link.close, spans, depth + 1),
+						spans,
+					),
 				}
 				end = link.end
 			}
 		}
 		if (character === '[') {
-			const link = scanLink(source, index, to, depth)
-			if (link) {
-				scanned = link.node
+			const link = locateLink(source.text, index, to)
+			if (link !== undefined) {
+				scanned = {
+					element: 'link',
+					href: unescapeText(source.text.slice(link.close + 2, link.end - 1).trim()),
+					children: coalesceText(
+						scanInlineSource(source, index + 1, link.close, spans, depth + 1),
+						spans,
+					),
+				}
 				end = link.end
 			}
 		}
 		if (character === '*' || character === '_') {
-			const emphasis = scanEmphasis(source, index, to, depth)
-			if (emphasis) {
-				scanned = emphasis.node
+			const emphasis = locateEmphasis(source.text, index, to)
+			if (emphasis !== undefined) {
+				scanned = {
+					element: 'emphasis',
+					strong: emphasis.strong,
+					children: coalesceText(
+						scanInlineSource(source, emphasis.open, emphasis.close, spans, depth + 1),
+						spans,
+					),
+				}
 				end = emphasis.end
 			}
 		}
 		if (scanned !== undefined) {
 			if (pending.length > 0) {
-				nodes.push({ element: 'text', value: pending })
+				const node: InlineNode = { element: 'text', value: pending }
+				const span = projectSpan(source, pendingStart, index)
+				if (span !== undefined) spans.set(node, span)
+				nodes.push(node)
 				pending = ''
 			}
+			const span = projectSpan(source, index, end)
+			if (span !== undefined) spans.set(scanned, span)
 			nodes.push(scanned)
 			index = end
+			pendingStart = index
 			continue
 		}
+		if (pending.length === 0) pendingStart = index
 		pending += character
 		index += 1
 	}
-	if (pending.length > 0) nodes.push({ element: 'text', value: pending })
+	if (pending.length > 0) {
+		const node: InlineNode = { element: 'text', value: pending }
+		const span = projectSpan(source, pendingStart, index)
+		if (span !== undefined) spans.set(node, span)
+		nodes.push(node)
+	}
 	return nodes
 }
 
@@ -652,38 +1046,49 @@ export function scanInline(
  *
  * @param lines - The markdown lines to scan.
  * @param start - The index of the header row.
+ * @param spans - The optional operation-owned node span recorder.
  * @returns The parsed table node and the index of the first line after it.
  *
  * @example
  * ```ts
- * collectTable(['| a |', '| - |'], 0) // { node: { element: 'table', ... }, next: 2 }
+ * collectTable(splitLines('| a |\n| - |'), 0) // { node: { element: 'table', ... }, next: 2 }
  * ```
  */
 export function collectTable(
-	lines: readonly string[],
+	lines: readonly MarkdownSource[],
 	start: number,
+	spans = new Map<MarkdownNode, MarkdownSpan>(),
 ): { readonly node: TableNode; readonly next: number } {
-	const headerCells = splitTableRow(lines[start] ?? '')
+	const headerCells = splitTableSources(lines[start] ?? { text: '', segments: [] })
 	const columns = headerCells.length
-	const header = headerCells.map((cell) => parseInline(cell.trim()))
-	const align = delimiterToAlignments(lines[start + 1] ?? '')
+	const header = headerCells.map((cell) => {
+		const source = trimSource(cell)
+		return coalesceText(scanInlineSource(source, 0, source.text.length, spans), spans)
+	})
+	const align = delimiterToAlignments(lines[start + 1]?.text ?? '')
 	const padded: Array<TableAlign | null> = []
 	for (let column = 0; column < columns; column += 1) padded.push(align[column] ?? null)
 	const rows: Array<Array<readonly InlineNode[]>> = []
 	let index = start + 2
 	while (
 		index < lines.length &&
-		!isBlankLine(lines[index] ?? '') &&
-		(lines[index] ?? '').includes('|')
+		!isBlankLine(lines[index]?.text ?? '') &&
+		(lines[index]?.text ?? '').includes('|')
 	) {
-		const cells = splitTableRow(lines[index] ?? '')
+		const cells = splitTableSources(lines[index] ?? { text: '', segments: [] })
 		const row: Array<readonly InlineNode[]> = []
-		for (let column = 0; column < columns; column += 1)
-			row.push(parseInline((cells[column] ?? '').trim()))
+		for (let column = 0; column < columns; column += 1) {
+			const source = trimSource(cells[column] ?? { text: '', segments: [] })
+			row.push(coalesceText(scanInlineSource(source, 0, source.text.length, spans), spans))
+		}
 		rows.push(row)
 		index += 1
 	}
-	return { node: { element: 'table', header, rows, align: padded }, next: index }
+	const node: TableNode = { element: 'table', header, rows, align: padded }
+	const source = joinSources(lines.slice(start, index), '\n')
+	const span = projectSpan(source, 0, source.text.length)
+	if (span !== undefined) spans.set(node, span)
+	return { node, next: index }
 }
 
 /**
@@ -693,19 +1098,24 @@ export function collectTable(
  * @param lines - The markdown lines to scan.
  * @param start - The index of the first list item.
  * @param depth - The current recursion depth (each item recurses at `depth + 1`).
+ * @param spans - The optional operation-owned node span recorder.
+ * @param limit - The original-source end of this line run, including a removed terminator.
  * @returns The parsed list node and the index of the first line after it.
  *
  * @example
  * ```ts
- * collectList(['- item'], 0, 0) // { node: { element: 'list', ... }, next: 1 }
+ * collectList(splitLines('- item'), 0, 0) // { node: { element: 'list', ... }, next: 1 }
  * ```
  */
 export function collectList(
-	lines: readonly string[],
+	lines: readonly MarkdownSource[],
 	start: number,
 	depth: number,
+	spans = new Map<MarkdownNode, MarkdownSpan>(),
+	limit?: number,
 ): { readonly node: ListNode; readonly next: number } {
-	const first = extractListItem(lines[start] ?? '')
+	const text = lines.map((line) => line.text)
+	const first = extractListItem(text[start] ?? '')
 	const ordered = first?.ordered ?? false
 	const startOrdinal = first?.start ?? 1
 	const topIndent = first?.indent ?? 0
@@ -716,7 +1126,7 @@ export function collectList(
 	const chain: ListItemMatch[] = []
 	let nested = true
 	for (let cursor = start; cursor < lines.length; cursor += 1) {
-		const parsed = extractListItem(lines[cursor] ?? '')
+		const parsed = extractListItem(text[cursor] ?? '')
 		const previous = chain[chain.length - 1]
 		if (
 			parsed === undefined ||
@@ -730,23 +1140,45 @@ export function collectList(
 	const remaining = MAX_DEPTH - depth
 	if (nested && remaining > 0 && chain.length > remaining) {
 		const terminal = chain[remaining - 1]
-		if (terminal !== undefined) {
-			const source = [terminal.content]
-			for (let cursor = start + remaining; cursor < lines.length; cursor += 1) {
-				source.push((lines[cursor] ?? '').slice(terminal.marker))
-			}
-			let children: readonly BlockNode[] = [
-				{ element: 'paragraph', children: [{ element: 'text', value: source.join('\n') }] },
+		const terminalLine = lines[start + remaining - 1]
+		if (terminal !== undefined && terminalLine !== undefined) {
+			const sources: MarkdownSource[] = [
+				sliceSource(terminalLine, terminal.marker, terminalLine.text.length),
 			]
+			for (let cursor = start + remaining; cursor < lines.length; cursor += 1) {
+				const line = lines[cursor]
+				if (line !== undefined) sources.push(sliceSource(line, terminal.marker, line.text.length))
+			}
+			const source = joinSources(sources, '\n')
+			const textNode: InlineNode = { element: 'text', value: source.text }
+			const paragraph: BlockNode = { element: 'paragraph', children: [textNode] }
+			const residualSpan = projectSpan(source, 0, source.text.length)
+			if (residualSpan !== undefined) {
+				spans.set(textNode, residualSpan)
+				spans.set(paragraph, residualSpan)
+			}
+			let children: readonly BlockNode[] = [paragraph]
 			let node: ListNode | undefined
 			for (let cursor = remaining - 1; cursor >= 0; cursor -= 1) {
 				const parsed = chain[cursor]
 				if (parsed === undefined) continue
+				const item: ListItemNode = { element: 'listItem', children }
 				node = {
 					element: 'list',
 					ordered: parsed.ordered,
 					start: parsed.start,
-					items: [{ element: 'listItem', children }],
+					items: [item],
+				}
+				const region = joinSources(
+					lines
+						.slice(start + cursor)
+						.map((line) => sliceSource(line, parsed.indent, line.text.length)),
+					'\n',
+				)
+				const span = projectSpan(region, 0, region.text.length)
+				if (span !== undefined) {
+					spans.set(item, span)
+					spans.set(node, span)
 				}
 				children = [node]
 			}
@@ -755,36 +1187,55 @@ export function collectList(
 	}
 	let index = start
 	while (index < lines.length) {
-		const parsed = extractListItem(lines[index] ?? '')
+		const parsed = extractListItem(text[index] ?? '')
 		// A sibling item shares the list's (top) indent + ordering; anything else stops
 		// the top loop (a deeper item is a nested list, gathered as continuation below).
 		if (!parsed || parsed.indent > topIndent || parsed.ordered !== ordered) break
-		const itemLines: string[] = [parsed.content]
+		const itemStart = index
+		const itemLine = lines[index]
+		if (itemLine === undefined) break
+		const itemLines: MarkdownSource[] = [sliceSource(itemLine, parsed.marker, itemLine.text.length)]
 		const continuation = parsed.marker
 		index += 1
 		while (index < lines.length) {
-			const next = lines[index] ?? ''
+			const nextSource = lines[index]
+			if (nextSource === undefined) break
+			const next = nextSource.text
 			if (isBlankLine(next)) {
-				const after = lines[index + 1] ?? ''
+				const after = lines[index + 1]?.text ?? ''
 				if (index + 1 < lines.length && !isBlankLine(after) && countIndent(after) >= continuation) {
-					itemLines.push('')
+					itemLines.push(sliceSource(nextSource, 0, 0))
 					index += 1
 					continue
 				}
 				break
 			}
 			if (countIndent(next) >= continuation) {
-				itemLines.push(next.slice(continuation))
+				itemLines.push(sliceSource(nextSource, continuation, next.length))
 				index += 1
 				continue
 			}
-			if (extractListItem(next) || startsBlock(lines, index)) break
-			itemLines.push(next.trim()) // a lazy paragraph-continuation line
+			if (extractListItem(next) || startsBlock(text, index)) break
+			itemLines.push(trimSource(nextSource)) // a lazy paragraph-continuation line
 			index += 1
 		}
-		items.push({ element: 'listItem', children: parseBlocks(itemLines, depth + 1) })
+		const tail = itemLines[itemLines.length - 1]
+		const segment = tail?.segments[tail.segments.length - 1]
+		const itemLimit = index === lines.length && limit !== undefined ? limit : segment?.end
+		const item: ListItemNode = {
+			element: 'listItem',
+			children: parseBlocks(itemLines, depth + 1, spans, itemLimit),
+		}
+		const source = joinSources(lines.slice(itemStart, index), '\n')
+		const span = projectSpan(source, 0, source.text.length)
+		if (span !== undefined) spans.set(item, span)
+		items.push(item)
 	}
-	return { node: { element: 'list', ordered, start: startOrdinal, items }, next: index }
+	const node: ListNode = { element: 'list', ordered, start: startOrdinal, items }
+	const source = joinSources(lines.slice(start, index), '\n')
+	const span = projectSpan(source, 0, source.text.length)
+	if (span !== undefined) spans.set(node, span)
+	return { node, next: index }
 }
 
 //  Rendering (Markdown AST → HTML AST → sanitized HTML string)
@@ -2375,13 +2826,14 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, d
  * always holds). A table's inline cells and a list's items ARE rewritten.
  *
  * @remarks
- * Never mutates `document` - every level is rebuilt into a fresh object/array, even
- * when `rewrite` returns its input unchanged. When `rewrite` returns a node whose
- * `element` does not fit the slot it was called for (a block slot handed a
+ * Never mutates `document`. An unchanged subtree keeps its input identity. A parent
+ * is rebuilt only when an accepted child changes, and the returned derivation map
+ * associates each rebuilt output with its input node. When `rewrite` returns a node
+ * whose `element` does not fit the slot it was called for (a block slot handed a
  * non-{@link BlockNode}, an inline slot handed a non-{@link InlineNode}, a list-item
- * slot handed a non-`listItem`), the ill-fitting result is discarded and the
- * freshly-rebuilt (unrewritten-at-this-level) node is kept instead - `rewriteDocument`
- * stays total and never produces a structurally invalid document.
+ * slot handed a non-`listItem`), the ill-fitting result is discarded and the accepted
+ * input child is reused - `rewriteDocument` stays total and never produces a
+ * structurally invalid document.
  *
  * Descent is capped at {@link MAX_DEPTH}, the same cap {@link walkNodes} and
  * {@link foldNode} observe: at `depth >= MAX_DEPTH` the subtree is passed through
@@ -2391,11 +2843,11 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, d
  *
  * @param document - The document AST to rewrite
  * @param rewrite - The bottom-up {@link MarkdownRewriteHandler}
- * @returns A new, rewritten {@link MarkdownDocument}
+ * @returns The rewritten document and its output-to-input derivations
  *
  * @example
  * ```ts
- * rewriteDocument(document, (node) =>
+ * const [rewritten, derivations] = rewriteDocument(document, (node) =>
  *   node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
  * )
  * ```
@@ -2403,7 +2855,7 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, d
 export function rewriteDocument(
 	document: MarkdownDocument,
 	rewrite: MarkdownRewriteHandler,
-): MarkdownDocument {
+): MarkdownDerivation<MarkdownDocument> {
 	const stack: Array<{
 		readonly node: MarkdownNode
 		readonly depth: number
@@ -2411,6 +2863,7 @@ export function rewriteDocument(
 		readonly count: number
 	}> = [{ node: document, depth: -1, expanded: false, count: 0 }]
 	const values: MarkdownNode[] = []
+	const derivations = new Map<MarkdownNode, MarkdownNode | undefined>()
 	while (stack.length > 0) {
 		const frame = stack.pop()
 		if (frame === undefined) continue
@@ -2457,6 +2910,7 @@ export function rewriteDocument(
 		const children =
 			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
 		let rebuilt: MarkdownNode = current
+		let changed = false
 		switch (current.element) {
 			case 'document': {
 				const blocks: BlockNode[] = []
@@ -2464,13 +2918,13 @@ export function rewriteDocument(
 				for (const block of current.children) {
 					if (block === undefined) continue
 					const child = children[offset]
-					blocks.push(child !== undefined && isBlockNode(child) ? child : block)
+					const accepted = child !== undefined && isBlockNode(child) ? child : block
+					blocks.push(accepted)
+					if (accepted !== block) changed = true
 					offset += 1
 				}
-				const result: MarkdownDocument = { element: 'document', children: blocks }
-				if (stack.length === 0) return result
-				values.push(result)
-				continue
+				if (changed) rebuilt = { element: 'document', children: blocks }
+				break
 			}
 			case 'heading':
 			case 'paragraph': {
@@ -2479,10 +2933,12 @@ export function rewriteDocument(
 				for (const inline of current.children) {
 					if (inline === undefined) continue
 					const child = children[offset]
-					inlines.push(child !== undefined && isInlineNode(child) ? child : inline)
+					const accepted = child !== undefined && isInlineNode(child) ? child : inline
+					inlines.push(accepted)
+					if (accepted !== inline) changed = true
 					offset += 1
 				}
-				rebuilt = { ...current, children: inlines }
+				if (changed) rebuilt = { ...current, children: inlines }
 				break
 			}
 			case 'blockquote': {
@@ -2491,10 +2947,12 @@ export function rewriteDocument(
 				for (const block of current.children) {
 					if (block === undefined) continue
 					const child = children[offset]
-					blocks.push(child !== undefined && isBlockNode(child) ? child : block)
+					const accepted = child !== undefined && isBlockNode(child) ? child : block
+					blocks.push(accepted)
+					if (accepted !== block) changed = true
 					offset += 1
 				}
-				rebuilt = { ...current, children: blocks }
+				if (changed) rebuilt = { ...current, children: blocks }
 				break
 			}
 			case 'listItem': {
@@ -2503,10 +2961,12 @@ export function rewriteDocument(
 				for (const block of current.children) {
 					if (block === undefined) continue
 					const child = children[offset]
-					blocks.push(child !== undefined && isBlockNode(child) ? child : block)
+					const accepted = child !== undefined && isBlockNode(child) ? child : block
+					blocks.push(accepted)
+					if (accepted !== block) changed = true
 					offset += 1
 				}
-				rebuilt = { element: 'listItem', children: blocks }
+				if (changed) rebuilt = { element: 'listItem', children: blocks }
 				break
 			}
 			case 'emphasis':
@@ -2517,10 +2977,12 @@ export function rewriteDocument(
 				for (const inline of current.children) {
 					if (inline === undefined) continue
 					const child = children[offset]
-					inlines.push(child !== undefined && isInlineNode(child) ? child : inline)
+					const accepted = child !== undefined && isInlineNode(child) ? child : inline
+					inlines.push(accepted)
+					if (accepted !== inline) changed = true
 					offset += 1
 				}
-				rebuilt = { ...current, children: inlines }
+				if (changed) rebuilt = { ...current, children: inlines }
 				break
 			}
 			case 'list': {
@@ -2529,10 +2991,12 @@ export function rewriteDocument(
 				for (const item of current.items) {
 					if (item === undefined) continue
 					const child = children[offset]
-					items.push(child?.element === 'listItem' ? child : item)
+					const accepted = child?.element === 'listItem' ? child : item
+					items.push(accepted)
+					if (accepted !== item) changed = true
 					offset += 1
 				}
-				rebuilt = { ...current, items }
+				if (changed) rebuilt = { ...current, items }
 				break
 			}
 			case 'table': {
@@ -2544,7 +3008,9 @@ export function rewriteDocument(
 					for (const inline of cell) {
 						if (inline === undefined) continue
 						const child = children[offset]
-						inlines.push(child !== undefined && isInlineNode(child) ? child : inline)
+						const accepted = child !== undefined && isInlineNode(child) ? child : inline
+						inlines.push(accepted)
+						if (accepted !== inline) changed = true
 						offset += 1
 					}
 					header.push(inlines)
@@ -2559,16 +3025,26 @@ export function rewriteDocument(
 						for (const inline of cell) {
 							if (inline === undefined) continue
 							const child = children[offset]
-							inlines.push(child !== undefined && isInlineNode(child) ? child : inline)
+							const accepted = child !== undefined && isInlineNode(child) ? child : inline
+							inlines.push(accepted)
+							if (accepted !== inline) changed = true
 							offset += 1
 						}
 						cells.push(inlines)
 					}
 					rows.push(cells)
 				}
-				rebuilt = { ...current, header, rows }
+				if (changed) rebuilt = { ...current, header, rows }
 				break
 			}
+		}
+		if (rebuilt !== current) derivations.set(rebuilt, current)
+		if (current.element === 'document') {
+			const result = rebuilt.element === 'document' ? rebuilt : current
+			const output = new Set(walkNodes(result))
+			const retained = new Map<MarkdownNode, MarkdownNode | undefined>()
+			for (const [node, source] of derivations) if (output.has(node)) retained.set(node, source)
+			return [result, retained]
 		}
 		const result = rewrite(rebuilt)
 		let accepted = rebuilt
@@ -2594,9 +3070,14 @@ export function rewriteDocument(
 				if (result.element === 'listItem') accepted = result
 				break
 		}
+		if (accepted !== rebuilt && accepted !== current) {
+			if (derivations.has(accepted) && derivations.get(accepted) !== current)
+				derivations.set(accepted, undefined)
+			else derivations.set(accepted, current)
+		}
 		values.push(accepted)
 	}
-	return { element: 'document', children: [...document.children] }
+	return [document, new Map()]
 }
 
 /**

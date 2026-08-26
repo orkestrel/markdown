@@ -15,7 +15,15 @@ import {
 	firstBlock,
 	inlineText,
 } from '../../setup.js'
-import { MAX_DEPTH, parseBlocks, parseDocument, parseInline } from '@src/core'
+import {
+	MAX_DEPTH,
+	parseBlocks,
+	parseDocument,
+	parseInline,
+	parseProvenance,
+	splitLines,
+	walkNodes,
+} from '@src/core'
 
 // The markdown parser's parse-behavior surface — parseDocument (the block phase
 // entry point), parseInline (the inline phase entry point), and the block-phase
@@ -727,7 +735,7 @@ describe('parseDocument — round-trip over a self-contained composite document'
 
 describe('parseBlocks', () => {
 	it('honors the depth parameter — parseBlocks(lines, MAX_DEPTH) degrades to one literal paragraph', () => {
-		const blocks = parseBlocks(['# heading', 'plain'], MAX_DEPTH)
+		const blocks = parseBlocks(splitLines('# heading\nplain'), MAX_DEPTH)
 		expect(blocks).toHaveLength(1)
 		expect(blocks[0]?.element).toBe('paragraph')
 	})
@@ -737,7 +745,210 @@ describe('parseBlocks', () => {
 	})
 
 	it('parses normally below MAX_DEPTH', () => {
-		const blocks = parseBlocks(['# h', 'para'], 0)
+		const blocks = parseBlocks(splitLines('# h\npara'), 0)
 		expect(blocks.map((block) => block.element)).toEqual(['heading', 'paragraph'])
+	})
+})
+
+describe('parseProvenance — original-source spans', () => {
+	it('records the document span through a trailing terminator', () => {
+		const markdown = '# Head\n'
+		const [document, spans] = parseProvenance(markdown)
+		const span = spans.get(document)
+		if (span === undefined) throw new Error('expected a document span')
+		expect(markdown.slice(span.start, span.end)).toBe(markdown)
+	})
+
+	it('records heading and heading-text spans', () => {
+		const markdown = '  ## Head ##  '
+		const [document, spans] = parseProvenance(markdown)
+		const heading = assertHeadingNode(document.children[0])
+		const headingSpan = spans.get(heading)
+		const text = heading.children[0]
+		const textSpan = text === undefined ? undefined : spans.get(text)
+		if (headingSpan === undefined || textSpan === undefined)
+			throw new Error('expected heading spans')
+		expect(markdown.slice(headingSpan.start, headingSpan.end)).toBe(markdown)
+		expect(markdown.slice(textSpan.start, textSpan.end)).toBe('Head')
+	})
+
+	it('records paragraph and coalesced text spans over consumed spelling', () => {
+		const markdown = '  escaped \\* text  '
+		const [document, spans] = parseProvenance(markdown)
+		const paragraph = assertParagraphNode(document.children[0])
+		const text = paragraph.children[0]
+		const paragraphSpan = spans.get(paragraph)
+		const textSpan = text === undefined ? undefined : spans.get(text)
+		if (paragraphSpan === undefined || textSpan === undefined)
+			throw new Error('expected paragraph spans')
+		expect(markdown.slice(paragraphSpan.start, paragraphSpan.end)).toBe(markdown)
+		expect(markdown.slice(textSpan.start, textSpan.end)).toBe('escaped \\* text')
+	})
+
+	it('records blockquote and nested block spans', () => {
+		const markdown = '> quote\n> **bold**'
+		const [document, spans] = parseProvenance(markdown)
+		const quote = assertBlockquoteNode(document.children[0])
+		const paragraph = assertParagraphNode(quote.children[0])
+		const quoteSpan = spans.get(quote)
+		const paragraphSpan = spans.get(paragraph)
+		if (quoteSpan === undefined || paragraphSpan === undefined)
+			throw new Error('expected blockquote spans')
+		expect(markdown.slice(quoteSpan.start, quoteSpan.end)).toBe(markdown)
+		expect(markdown.slice(paragraphSpan.start, paragraphSpan.end)).toBe('quote\n> **bold**')
+	})
+
+	it('records list and list-item spans through indented and lazy continuations', () => {
+		const markdown = '- item\n  indented\nlazy\n- next'
+		const [document, spans] = parseProvenance(markdown)
+		const list = assertListNode(document.children[0])
+		const first = list.items[0]
+		const second = list.items[1]
+		const listSpan = spans.get(list)
+		const firstSpan = first === undefined ? undefined : spans.get(first)
+		const secondSpan = second === undefined ? undefined : spans.get(second)
+		if (listSpan === undefined || firstSpan === undefined || secondSpan === undefined)
+			throw new Error('expected list spans')
+		expect(markdown.slice(listSpan.start, listSpan.end)).toBe(markdown)
+		expect(markdown.slice(firstSpan.start, firstSpan.end)).toBe('- item\n  indented\nlazy')
+		expect(markdown.slice(secondSpan.start, secondSpan.end)).toBe('- next')
+	})
+
+	it('preserves spans through nested-list and blank-continuation branches', () => {
+		const nestedMarkdown = '- parent\n  - child'
+		const [nestedDocument, nestedSpans] = parseProvenance(nestedMarkdown)
+		const outer = assertListNode(nestedDocument.children[0])
+		const nested = assertListNode(outer.items[0]?.children[1])
+		const nestedItem = nested.items[0]
+		const nestedSpan = nestedSpans.get(nested)
+		const nestedItemSpan = nestedItem === undefined ? undefined : nestedSpans.get(nestedItem)
+		if (nestedSpan === undefined || nestedItemSpan === undefined)
+			throw new Error('expected nested-list spans')
+		expect(nestedMarkdown.slice(nestedSpan.start, nestedSpan.end)).toBe('- child')
+		expect(nestedMarkdown.slice(nestedItemSpan.start, nestedItemSpan.end)).toBe('- child')
+
+		const continuationMarkdown = '- first\n\n  second'
+		const [continuationDocument, continuationSpans] = parseProvenance(continuationMarkdown)
+		const list = assertListNode(continuationDocument.children[0])
+		const item = list.items[0]
+		const itemSpan = item === undefined ? undefined : continuationSpans.get(item)
+		if (itemSpan === undefined) throw new Error('expected a blank-continuation span')
+		expect(continuationMarkdown.slice(itemSpan.start, itemSpan.end)).toBe(continuationMarkdown)
+	})
+
+	it('records table and cell-inline spans through escaped pipes', () => {
+		const markdown = '| head |\n| --- |\n| a\\|b |'
+		const [document, spans] = parseProvenance(markdown)
+		const table = assertTableNode(document.children[0])
+		const header = table.header[0]?.[0]
+		const cell = table.rows[0]?.[0]?.[0]
+		const tableSpan = spans.get(table)
+		const headerSpan = header === undefined ? undefined : spans.get(header)
+		const cellSpan = cell === undefined ? undefined : spans.get(cell)
+		if (tableSpan === undefined || headerSpan === undefined || cellSpan === undefined)
+			throw new Error('expected table spans')
+		expect(markdown.slice(tableSpan.start, tableSpan.end)).toBe(markdown)
+		expect(markdown.slice(headerSpan.start, headerSpan.end)).toBe('head')
+		expect(markdown.slice(cellSpan.start, cellSpan.end)).toBe('a\\|b')
+	})
+
+	it('records fenced-code and thematic-break spans', () => {
+		const markdown = '```ts\ncode\n```\n---'
+		const [document, spans] = parseProvenance(markdown)
+		const fence = assertCodeBlockNode(document.children[0])
+		const rule = document.children[1]
+		const fenceSpan = spans.get(fence)
+		const ruleSpan = rule === undefined ? undefined : spans.get(rule)
+		if (fenceSpan === undefined || ruleSpan === undefined)
+			throw new Error('expected leaf block spans')
+		expect(markdown.slice(fenceSpan.start, fenceSpan.end)).toBe('```ts\ncode\n```')
+		expect(markdown.slice(ruleSpan.start, ruleSpan.end)).toBe('---')
+	})
+
+	it('runs an unclosed fence span through the original input end', () => {
+		const markdown = '```ts\r\ncode\r\n'
+		const [document, spans] = parseProvenance(markdown)
+		const fence = assertCodeBlockNode(document.children[0])
+		const span = spans.get(fence)
+		if (span === undefined) throw new Error('expected an unclosed-fence span')
+		expect(markdown.slice(span.start, span.end)).toBe(markdown)
+	})
+
+	it('records emphasis, code-span, link, image, and descendant text spans', () => {
+		const markdown = '**bold** `code` [link](target) ![alt](image)'
+		const [document, spans] = parseProvenance(markdown)
+		const paragraph = assertParagraphNode(document.children[0])
+		const emphasis = assertEmphasisNode(paragraph.children[0])
+		const code = assertCodeSpanNode(paragraph.children[2])
+		const link = assertLinkNode(paragraph.children[4])
+		const image = paragraph.children[6]
+		if (image?.element !== 'image') throw new Error('expected an image node')
+		const emphasisSpan = spans.get(emphasis)
+		const codeSpan = spans.get(code)
+		const linkSpan = spans.get(link)
+		const imageSpan = spans.get(image)
+		const bold = emphasis.children[0]
+		const label = link.children[0]
+		const alt = image.children[0]
+		const boldSpan = bold === undefined ? undefined : spans.get(bold)
+		const labelSpan = label === undefined ? undefined : spans.get(label)
+		const altSpan = alt === undefined ? undefined : spans.get(alt)
+		if (
+			emphasisSpan === undefined ||
+			codeSpan === undefined ||
+			linkSpan === undefined ||
+			imageSpan === undefined ||
+			boldSpan === undefined ||
+			labelSpan === undefined ||
+			altSpan === undefined
+		)
+			throw new Error('expected inline spans')
+		expect(markdown.slice(emphasisSpan.start, emphasisSpan.end)).toBe('**bold**')
+		expect(markdown.slice(codeSpan.start, codeSpan.end)).toBe('`code`')
+		expect(markdown.slice(linkSpan.start, linkSpan.end)).toBe('[link](target)')
+		expect(markdown.slice(imageSpan.start, imageSpan.end)).toBe('![alt](image)')
+		expect(markdown.slice(boldSpan.start, boldSpan.end)).toBe('bold')
+		expect(markdown.slice(labelSpan.start, labelSpan.end)).toBe('link')
+		expect(markdown.slice(altSpan.start, altSpan.end)).toBe('alt')
+	})
+
+	it('assigns the whole trailing-space run and CRLF terminator to a hard break', () => {
+		const markdown = 'start   \r\nend'
+		const [document, spans] = parseProvenance(markdown)
+		const paragraph = assertParagraphNode(document.children[0])
+		const lineBreak = paragraph.children[1]
+		if (lineBreak?.element !== 'break') throw new Error('expected a hard break')
+		const span = spans.get(lineBreak)
+		if (span === undefined) throw new Error('expected a hard-break span')
+		expect(markdown.slice(span.start, span.end)).toBe('   \r\n')
+	})
+
+	it('keeps every composite node value byte-identical to the pre-threading parse', () => {
+		const markdown = [
+			'# Head',
+			'',
+			'Plain \\*literal\\* **bold** `code` [link](target) ![alt](image)  ',
+			'next',
+			'',
+			'> quote',
+			'',
+			'- item',
+			'  continuation',
+			'',
+			'| head |',
+			'| --- |',
+			'| cell |',
+			'',
+			'```ts',
+			'code',
+			'```',
+			'',
+			'---',
+		].join('\n')
+		const [document, spans] = parseProvenance(markdown)
+		expect(JSON.stringify(document)).toBe(
+			'{"element":"document","children":[{"element":"heading","level":1,"children":[{"element":"text","value":"Head"}]},{"element":"paragraph","children":[{"element":"text","value":"Plain *literal* "},{"element":"emphasis","strong":true,"children":[{"element":"text","value":"bold"}]},{"element":"text","value":" "},{"element":"codeSpan","value":"code"},{"element":"text","value":" "},{"element":"link","href":"target","children":[{"element":"text","value":"link"}]},{"element":"text","value":" "},{"element":"image","src":"image","children":[{"element":"text","value":"alt"}]},{"element":"break"},{"element":"text","value":"next"}]},{"element":"blockquote","children":[{"element":"paragraph","children":[{"element":"text","value":"quote"}]}]},{"element":"list","ordered":false,"start":1,"items":[{"element":"listItem","children":[{"element":"paragraph","children":[{"element":"text","value":"item\\ncontinuation"}]}]}]},{"element":"table","header":[[{"element":"text","value":"head"}]],"rows":[[[{"element":"text","value":"cell"}]]],"align":[null]},{"element":"codeBlock","lang":"ts","code":"code"},{"element":"thematicBreak"}]}',
+		)
+		for (const node of walkNodes(document)) expect(spans.has(node)).toBe(true)
 	})
 })

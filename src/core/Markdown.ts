@@ -5,9 +5,10 @@ import type {
 	MarkdownInterface,
 	MarkdownNode,
 	MarkdownRewriteHandler,
+	MarkdownSpan,
 } from './types.js'
 import { foldNode, rewriteDocument, walkNodes } from './helpers.js'
-import { parseDocument } from './parsers.js'
+import { parseProvenance } from './parsers.js'
 
 /**
  * A stateful, parsed markdown document - wraps a typed {@link MarkdownDocument} AST
@@ -15,12 +16,22 @@ import { parseDocument } from './parsers.js'
  * streaming operations {@link MarkdownInterface} declares.
  *
  * @remarks
- * - **Construction.** Given a `string`, the constructor runs {@link parseDocument} (the
- *   block phase then the inline phase) to build the AST. Given a {@link MarkdownDocument},
- *   the document is adopted AS-IS and is NOT re-validated - a caller adopting an
- *   untrusted value should gate it with `isMarkdownDocument` first.
+ * - **Construction.** Given a `string`, the constructor runs {@link parseProvenance} (the
+ *   block phase then the inline phase) once, keeping the AST and a COPY of the span map
+ *   that parse recorded. Given a {@link MarkdownDocument}, the document is adopted AS-IS
+ *   and is NOT re-validated - gate an untrusted value with `isMarkdownDocument` first.
+ * - **Provenance.** {@link span} reads the region of the ORIGINAL constructor string a
+ *   node came from, and it is handle-relative: a string-constructed handle exposes the
+ *   regions of the nodes it parsed, an adopted document exposes none, and a node from
+ *   another handle reports `undefined` here whatever that handle reports. Each call
+ *   returns a fresh value. A node with no single source region - a joined text run, a
+ *   synthesized paragraph, an output built from separate sources - reports `undefined`.
+ *   {@link map} carries provenance across the rewrite: an unchanged node keeps its
+ *   region, a one-source replacement takes the region of the node it replaced, and a
+ *   rebuilt parent takes its original's.
  * - **Immutable.** {@link map} never mutates the stored AST - it returns a NEW `Markdown`
- *   instance; the document root invariant (`element: 'document'`) always holds.
+ *   instance; the document root invariant (`element: 'document'`) always holds. An
+ *   identity rewrite still returns a new handle, over the same document tree.
  * - **Traversal order.** {@link walk} and the `find` / `filter` / `reduce` queries built
  *   on it walk the AST depth-first, pre-order, root-inclusive (via {@link walkNodes});
  *   `stream` is shallow - only the document's direct block children.
@@ -39,14 +50,44 @@ import { parseDocument } from './parsers.js'
  */
 export class Markdown implements MarkdownInterface {
 	readonly #document: MarkdownDocument
+	readonly #spans: Map<MarkdownNode, MarkdownSpan>
 
 	constructor(input: string | MarkdownDocument) {
-		this.#document = typeof input === 'string' ? parseDocument(input) : input
+		if (typeof input === 'string') {
+			const [document, spans] = parseProvenance(input)
+			this.#document = document
+			this.#spans = new Map(spans)
+		} else {
+			this.#document = input
+			this.#spans = new Map()
+		}
 	}
 
 	/** The stored {@link MarkdownDocument} AST root. */
 	get document(): MarkdownDocument {
 		return this.#document
+	}
+
+	/**
+	 * Reads the region of the original markdown string a node of this handle's tree came
+	 * from.
+	 *
+	 * @param node - The node whose provenance to read
+	 * @returns A fresh {@link MarkdownSpan}, or `undefined` when the node has no single
+	 * source region here
+	 *
+	 * @example
+	 * ```ts
+	 * const source = '# Title\n\npara'
+	 * const markdown = new Markdown(source)
+	 * const heading = markdown.find(isHeadingNode)
+	 * const span = heading && markdown.span(heading)
+	 * span && source.slice(span.start, span.end) // '# Title'
+	 * ```
+	 */
+	span(node: MarkdownNode): MarkdownSpan | undefined {
+		const span = this.#spans.get(node)
+		return span === undefined ? undefined : { start: span.start, end: span.end }
 	}
 
 	/**
@@ -89,9 +130,18 @@ export class Markdown implements MarkdownInterface {
 		return out
 	}
 
-	/** Rewrites the AST bottom-up (copy-on-write) and returns a new {@link Markdown}. */
+	/**
+	 * Rewrites the AST bottom-up (copy-on-write) and returns a new {@link Markdown},
+	 * carrying each output node's provenance across the rewrite. A rewrite that returns
+	 * its node unchanged shares that subtree instead of copying it, so an identity
+	 * rewrite copies no node and still returns a new handle.
+	 *
+	 * @param rewrite - The bottom-up node rewrite
+	 * @returns A new handle over the rewritten document
+	 */
 	map(rewrite: MarkdownRewriteHandler): MarkdownInterface {
-		return new Markdown(rewriteDocument(this.#document, rewrite))
+		const [document, derivations] = rewriteDocument(this.#document, rewrite)
+		return this.#derive(document, derivations)
 	}
 
 	/** Folds the AST depth-first, pre-order into an accumulator. */
@@ -146,5 +196,28 @@ export class Markdown implements MarkdownInterface {
 				}
 			},
 		})
+	}
+
+	// Creates the operation's new handle and resolves each output against its own prior
+	// span before its direct input's prior span. The source handle already resolved every
+	// earlier rewrite, so following the input's separate output entry from this operation
+	// would conflate two roles held by one identity.
+	#derive(
+		document: MarkdownDocument,
+		derivations: ReadonlyMap<MarkdownNode, MarkdownNode | undefined>,
+	): Markdown {
+		const derived = new Markdown(document)
+		for (const node of walkNodes(document)) {
+			const own = this.#spans.get(node)
+			if (own !== undefined) {
+				derived.#spans.set(node, own)
+				continue
+			}
+			const source = derivations.get(node)
+			if (source === undefined) continue
+			const span = this.#spans.get(source)
+			if (span !== undefined) derived.#spans.set(node, span)
+		}
+		return derived
 	}
 }

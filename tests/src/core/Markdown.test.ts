@@ -5,6 +5,7 @@ import type {
 	MarkdownHandlers,
 	MarkdownNode,
 	ParagraphNode,
+	TextNode,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import { collectStream } from '@orkestrel/test'
@@ -46,6 +47,60 @@ describe('Markdown — document getter', () => {
 		const second = markdown.document
 		expect(first).toBe(second)
 		expect(first.element).toBe('document')
+	})
+})
+
+describe('Markdown — span', () => {
+	it('reports the region of the original input each parsed node came from', () => {
+		const source = '# Title\n\npara'
+		const markdown = new Markdown(source)
+		const heading = markdown.find(isHeadingNode)
+		if (heading === undefined) throw new Error('expected a heading')
+		const span = markdown.span(heading)
+		if (span === undefined) throw new Error('expected heading provenance')
+		expect(source.slice(span.start, span.end)).toBe('# Title')
+		expect(markdown.span(markdown.document)).toEqual({ start: 0, end: source.length })
+	})
+
+	it('returns a fresh value per call, so a mutated return never reaches the next', () => {
+		const markdown = new Markdown('# Title')
+		const first = markdown.span(markdown.document)
+		const second = markdown.span(markdown.document)
+		if (first === undefined || second === undefined) throw new Error('expected provenance')
+		expect(first).not.toBe(second)
+		expect(first).toEqual(second)
+		Object.assign(first, { start: 999 })
+		expect(markdown.span(markdown.document)).toEqual({ start: 0, end: 7 })
+	})
+
+	it('reports undefined for a foreign node and for every node of an adopted document', () => {
+		const markdown = new Markdown('# Title')
+		const foreign = new Markdown('# Other')
+		expect(markdown.span(foreign.document)).toBeUndefined()
+		const document: MarkdownDocument = {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
+		}
+		const adopted = new Markdown(document)
+		expect([...adopted.walk()].map((node) => adopted.span(node))).toEqual([
+			undefined,
+			undefined,
+			undefined,
+		])
+	})
+
+	it('keeps two handles over the same text on independent maps', () => {
+		const source = '# Title'
+		const first = new Markdown(source)
+		const second = new Markdown(source)
+		const firstHeading = first.find(isHeadingNode)
+		const secondHeading = second.find(isHeadingNode)
+		if (firstHeading === undefined || secondHeading === undefined)
+			throw new Error('expected a heading in each handle')
+		expect(firstHeading).not.toBe(secondHeading)
+		expect(first.span(secondHeading)).toBeUndefined()
+		expect(second.span(firstHeading)).toBeUndefined()
+		expect(first.span(firstHeading)).toEqual(second.span(secondHeading))
 	})
 })
 
@@ -110,11 +165,11 @@ describe('Markdown — map', () => {
 		return isTextNode(node) ? { element: 'text', value: node.value.toUpperCase() } : node
 	}
 
-	it('an identity rewrite returns a NEW Markdown instance with a deep-equal document', () => {
+	it('an identity rewrite returns a NEW Markdown instance reusing the document tree', () => {
 		const markdown = new Markdown('# Title\n\npara')
 		const rewritten = markdown.map((node) => node)
 		expect(rewritten).not.toBe(markdown)
-		expect(rewritten.document).toEqual(markdown.document)
+		expect(rewritten.document).toBe(markdown.document)
 	})
 
 	it('never mutates the original instance (copy-on-write)', () => {
@@ -158,6 +213,84 @@ describe('Markdown — map', () => {
 		const chained = markdown.map(upper).map(shout)
 		const text = chained.filter(isTextNode)[0]
 		expect(text?.value).toBe('HI!')
+	})
+})
+
+describe('Markdown — map provenance', () => {
+	it('carries every region through an identity rewrite', () => {
+		const markdown = new Markdown('# Title\n\npara')
+		const rewritten = markdown.map((node) => node)
+		expect([...rewritten.walk()].map((node) => rewritten.span(node))).toEqual(
+			[...markdown.walk()].map((node) => markdown.span(node)),
+		)
+	})
+
+	it('gives a one-source replacement its source region and a rebuilt ancestor its original one', () => {
+		const markdown = new Markdown('# Title\n\npara')
+		const rewritten = markdown.map((node) =>
+			isTextNode(node) && node.value === 'para' ? { element: 'text', value: 'PARA' } : node,
+		)
+		const replaced = rewritten.find((node) => isTextNode(node) && node.value === 'PARA')
+		if (replaced === undefined) throw new Error('expected the replacement text node')
+		expect(rewritten.span(replaced)).toEqual({ start: 9, end: 13 })
+		expect(rewritten.span(rewritten.document)).toEqual({ start: 0, end: 13 })
+		const heading = rewritten.find(isHeadingNode)
+		if (heading === undefined) throw new Error('expected the untouched heading')
+		expect(rewritten.span(heading)).toEqual({ start: 0, end: 7 })
+	})
+
+	it('leaves an output node assembled from separate sources without a region', () => {
+		const shared: TextNode = { element: 'text', value: 'z' }
+		const markdown = new Markdown('one\n\ntwo')
+		const merged = markdown.map((node) => (isTextNode(node) ? shared : node))
+		expect(merged.filter(isTextNode)).toEqual([shared, shared])
+		expect(merged.span(shared)).toBeUndefined()
+	})
+
+	it('resolves a moved original to its own region and its replacement to the region it vacated', () => {
+		const markdown = new Markdown('# Title\n\npara')
+		const [headingText, bodyText] = markdown.filter(isTextNode)
+		if (headingText === undefined || bodyText === undefined)
+			throw new Error('expected two text nodes')
+		expect(markdown.span(headingText)).toEqual({ start: 2, end: 7 })
+		expect(markdown.span(bodyText)).toEqual({ start: 9, end: 13 })
+		const replacement: TextNode = { element: 'text', value: 'REPLACED' }
+		const swapped = markdown.map((node) =>
+			node === headingText ? replacement : node === bodyText ? headingText : node,
+		)
+		expect(swapped.span(replacement)).toEqual({ start: 2, end: 7 })
+		expect(swapped.span(headingText)).toEqual({ start: 2, end: 7 })
+	})
+
+	it('does not cross an input identity into its separate output derivation', () => {
+		const markdown = new Markdown('a\n\nb\n\nc')
+		const [first, second, third] = markdown.document.children
+		if (
+			first?.element !== 'paragraph' ||
+			second?.element !== 'paragraph' ||
+			third?.element !== 'paragraph'
+		)
+			throw new Error('expected three paragraphs')
+		const shared: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'shared' }],
+		}
+		const merged = markdown.map((node) => (node === first || node === second ? shared : node))
+		expect(merged.span(shared)).toBeUndefined()
+
+		const replacement: ParagraphNode = {
+			element: 'paragraph',
+			children: [{ element: 'text', value: 'replacement' }],
+		}
+		const chained = merged.map((node) =>
+			node === shared ? replacement : node === third ? shared : node,
+		)
+
+		expect(chained.document.children[0]).toBe(replacement)
+		expect(chained.document.children[1]).toBe(replacement)
+		expect(chained.document.children[2]).toBe(shared)
+		expect(chained.span(replacement)).toBeUndefined()
+		expect(chained.span(shared)).toEqual({ start: 6, end: 7 })
 	})
 })
 
