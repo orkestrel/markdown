@@ -8,9 +8,15 @@ import type {
 } from '@orkestrel/html'
 import type {
 	BlockNode,
+	CodeSpanMatch,
+	EmphasisBounds,
 	EmphasisNode,
+	FenceMatch,
+	HeadingMatch,
 	InlineNode,
+	LinkBounds,
 	LinkNode,
+	ListCollection,
 	ListItemNode,
 	ListItemMatch,
 	ListNode,
@@ -25,49 +31,42 @@ import type {
 	MarkdownSource,
 	MarkdownSpan,
 	TableAlign,
+	TableCollection,
 	TableNode,
 } from './types.js'
-import { MAX_DEPTH } from './constants.js'
-import { createProjection } from './factories.js'
-import {
-	isBlankLine,
-	isBlockNode,
-	isEscapable,
-	isInlineNode,
-	isQuote,
-	isTableStart,
-	isThematicBreak,
-	isWhitespace,
-} from './validators.js'
+import { EMPTY_PROJECTION, MAX_DEPTH } from './constants.js'
+import { isBlockNode, isInlineNode } from './validators.js'
 import { parseBlocks } from './parsers.js'
 import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '@orkestrel/contract'
 import {
-	HTML,
-	SAFE_ATTRIBUTES,
 	SAFE_URL_SCHEMES,
 	TABLE_ALIGNMENTS,
 	UNSAFE_ELEMENTS,
 	attributeOf,
 	foldNode as foldHTMLNode,
-	renderHTML as renderHTMLDocument,
 	renderText,
 	sanitizeURL,
 } from '@orkestrel/html'
 
 //  Markdown parsing + rendering leaves (pure and total)
 //
-// The pure leaf primitives {@link parseDocument} composes: the line / block
-// scanners (headings, fences, list items, table rows, quotes, thematic breaks), the
-// `collect*` construct scanners (GFM tables and lists), the inline `scan*` engine
-// (emphasis / links / code with backslash escapes), and the HTML AST projection the
-// renderer composes with @orkestrel/html. Every function is PURE, TOTAL, and
-// referentially transparent - malformed input degrades to text, never throws (AGENTS
-// §14) - so each is unit-tested in isolation. The `parse*` ENTRY POINTS that thread
-// these together (the block / inline phase entries) live in parsers.ts (AGENTS §5): a
-// helper is a functional-core leaf, a parser is the phase it names. A construct scanner
-// calls back into its phase entry, so helpers.ts and parsers.ts are mutually recursive
-// by design. Inline scanning is index-based (no backtracking regex) so it is
-// linear-time - no ReDoS on adversarial input.
+// The pure leaf primitives {@link parseDocument} composes: the line / character
+// structural predicates (blank lines, quotes, fence closers, thematic breaks, table
+// starts, escapable and whitespace characters), the line / block scanners (headings,
+// fences, list items, table rows), the `collect*` construct scanners (GFM tables and
+// lists), the inline `scan*` engine (emphasis / links / code with backslash escapes),
+// and the HTML AST projection the renderer composes with @orkestrel/html. A predicate
+// over a raw `string` is a leaf rather than a `Guard<T>`, so it lives here and not in
+// validators.ts. Every function is PURE, TOTAL, and referentially transparent -
+// malformed input degrades to text, never throws - so each is unit-tested in isolation.
+// The `parse*` ENTRY POINTS that thread these together (the block / inline phase
+// entries) live in parsers.ts: a helper is a functional-core leaf, a parser is the
+// phase it names. A construct scanner calls back into its phase entry, so helpers.ts
+// and parsers.ts are mutually recursive by design. Inline scanning is index-based (no
+// backtracking regex) so it is linear-time - no ReDoS on adversarial input.
+//
+// This file imports no implementation class: the class-driving renderer that composes
+// {@link markdownToHTML} with `@orkestrel/html`'s sanitizer lives in compilers.ts.
 
 //  Text + line utilities
 
@@ -312,6 +311,173 @@ export function countIndent(line: string): number {
 	return count
 }
 
+//  Line + character structural predicates
+//
+// Boolean predicates over a raw `string` (or a character of one) that the block and
+// inline phases test lines with. None narrows a type, so none is a `Guard<T>` and none
+// belongs in validators.ts; `isFenceClose` and `isTableStart` take two arguments, which
+// no guard signature admits.
+
+/**
+ * Whether `character` is an inline whitespace character (space / tab / newline) - the
+ * emphasis flanking rule's space test.
+ *
+ * @param character - The character to test
+ * @returns `true` when it is inline whitespace
+ *
+ * @example
+ * ```ts
+ * isWhitespace(' ') // true
+ * isWhitespace('a') // false
+ * ```
+ */
+export function isWhitespace(character: string): boolean {
+	return character === ' ' || character === '\t' || character === '\n'
+}
+
+/**
+ * Whether `character` is escapable by a leading backslash - the ASCII punctuation
+ * markdown gives meaning to (so `\*` becomes `*` but `\.` stays `\.`).
+ *
+ * @param character - The single character after a backslash
+ * @returns `true` when a backslash before it is an escape
+ *
+ * @example
+ * ```ts
+ * isEscapable('*') // true
+ * isEscapable('a') // false
+ * ```
+ */
+export function isEscapable(character: string): boolean {
+	return /[\\`*_{}[\]()#+\-.!>~|]/.test(character)
+}
+
+/**
+ * Whether `line` is blank - empty, or containing only whitespace - the markdown
+ * definition of a blank line that block parsing uses to separate paragraphs, skip
+ * gaps, and end list continuations.
+ *
+ * @param line - The candidate line
+ * @returns `true` when the line is blank
+ *
+ * @example
+ * ```ts
+ * isBlankLine('   ') // true
+ * ```
+ */
+export function isBlankLine(line: string): boolean {
+	return isEmptyString(line.trim())
+}
+
+/**
+ * Whether `line` is a blockquote line (`>` optionally indented up to three spaces) -
+ * its content is de-quoted by {@link stripQuote}.
+ *
+ * @param line - The candidate line
+ * @returns `true` when the line begins a blockquote
+ *
+ * @example
+ * ```ts
+ * isQuote('> quoted') // true
+ * ```
+ */
+export function isQuote(line: string): boolean {
+	return /^\s{0,3}>/.test(line)
+}
+
+/**
+ * Whether `line` closes a fence opened by `marker` - the same fence character, a run
+ * at least as long, and nothing else but surrounding whitespace.
+ *
+ * @param line - The candidate closing line
+ * @param marker - The opening fence's marker run (from {@link extractFence})
+ * @returns `true` when `line` closes the fence
+ *
+ * @example
+ * ```ts
+ * isFenceClose('```', '```') // true
+ * ```
+ */
+export function isFenceClose(line: string, marker: string): boolean {
+	const character = marker[0] === '~' ? '~' : '`'
+	let index = 0
+	while (index < line.length && isFenceWhitespace(line[index])) index++
+	let run = 0
+	while (index < line.length && line[index] === character) {
+		run++
+		index++
+	}
+	if (run < marker.length) return false
+	while (index < line.length && isFenceWhitespace(line[index])) index++
+	return index === line.length
+}
+
+/**
+ * Whether `character` is a regex-`\s`-equivalent whitespace character - the
+ * character class {@link isFenceClose}'s scan treats as surrounding padding.
+ *
+ * @param character - The single character to test, or `undefined` past the end of a line
+ * @returns `true` when it is whitespace
+ *
+ * @example
+ * ```ts
+ * isFenceWhitespace(' ')         // true
+ * isFenceWhitespace(undefined)   // false
+ * ```
+ */
+export function isFenceWhitespace(character: string | undefined): boolean {
+	return (
+		character === ' ' ||
+		character === '\t' ||
+		character === '\n' ||
+		character === '\r' ||
+		character === '\f' ||
+		character === '\v'
+	)
+}
+
+/**
+ * Whether `line` is a thematic break (horizontal rule) - three or more of the SAME
+ * marker `-`, `*`, or `_` (optionally space-separated) and nothing else (`---`,
+ * `***`, `___`, `- - -`).
+ *
+ * @param line - The candidate line
+ * @returns `true` when the line is a thematic break
+ *
+ * @example
+ * ```ts
+ * isThematicBreak('---') // true
+ * ```
+ */
+export function isThematicBreak(line: string): boolean {
+	const stripped = line.trim().replace(/\s+/g, '')
+	if (stripped.length < 3) return false
+	const marker = stripped[0]
+	if (marker !== '-' && marker !== '*' && marker !== '_') return false
+	return [...stripped].every((character) => character === marker)
+}
+
+/**
+ * Whether the pair (`header`, `delimiter`) opens a GFM table - `delimiter` is a row of
+ * `|`-separated cells each matching `:?-+:?`, the GFM rule that a table requires a
+ * header row IMMEDIATELY followed by a delimiter row.
+ *
+ * @param header - The candidate header line
+ * @param delimiter - The line after it (the candidate delimiter)
+ * @returns `true` when the two lines open a table
+ *
+ * @example
+ * ```ts
+ * isTableStart('| a |', '| - |') // true
+ * ```
+ */
+export function isTableStart(header: string, delimiter: string | undefined): boolean {
+	if (delimiter === undefined || !header.includes('|')) return false
+	const cells = splitTableRow(delimiter)
+	if (cells.length === 0) return false
+	return cells.every((cell) => /^:?-+:?$/.test(cell.trim()))
+}
+
 //  Block-level detection
 
 /**
@@ -328,9 +494,7 @@ export function countIndent(line: string): number {
  * extractHeading('## Title') // { level: 2, text: 'Title', offset: 3 }
  * ```
  */
-export function extractHeading(
-	line: string,
-): { readonly level: number; readonly text: string; readonly offset: number } | undefined {
+export function extractHeading(line: string): HeadingMatch | undefined {
 	const trimmed = line.trimStart()
 	const match = /^(#{1,6})(?:\s+(.*))?$/.exec(trimmed)
 	if (!match || match[1] === undefined) return undefined
@@ -363,9 +527,7 @@ export function extractHeading(
  * extractFence('```ts') // { marker: '```', lang: 'ts' }
  * ```
  */
-export function extractFence(
-	line: string,
-): { readonly marker: string; readonly lang: string | undefined } | undefined {
+export function extractFence(line: string): FenceMatch | undefined {
 	const match = /^\s*(`{3,}|~{3,})\s*(.*)$/.exec(line)
 	if (!match || match[1] === undefined) return undefined
 	const info = (match[2] ?? '').trim()
@@ -634,11 +796,7 @@ export function coalesceText(
  * scanCode('`code`', 0, 6) // { value: 'code', end: 6 }
  * ```
  */
-export function scanCode(
-	source: string,
-	start: number,
-	to: number,
-): { readonly value: string; readonly end: number } | undefined {
+export function scanCode(source: string, start: number, to: number): CodeSpanMatch | undefined {
 	let run = 0
 	while (start + run < to && source[start + run] === '`') run += 1
 	const open = '`'.repeat(run)
@@ -679,11 +837,7 @@ export function scanCode(
  * locateLink('[text](url)', 0, 11) // { close: 5, end: 11 }
  * ```
  */
-export function locateLink(
-	source: string,
-	start: number,
-	to: number,
-): { readonly close: number; readonly end: number } | undefined {
+export function locateLink(source: string, start: number, to: number): LinkBounds | undefined {
 	let bracketDepth = 0
 	let close = -1
 	for (let index = start; index < to; index += 1) {
@@ -779,14 +933,7 @@ export function locateEmphasis(
 	source: string,
 	start: number,
 	to: number,
-):
-	| {
-			readonly strong: boolean
-			readonly open: number
-			readonly close: number
-			readonly end: number
-	  }
-	| undefined {
+): EmphasisBounds | undefined {
 	const marker = source[start] ?? ''
 	let run = 0
 	while (start + run < to && source[start + run] === marker && run < 2) run += 1
@@ -882,10 +1029,11 @@ export function scanEmphasis(
  * @param from - The inclusive start of the scan window
  * @param to - The exclusive end of the scan window
  * @param depth - The current inline-recursion depth (defaults to 0 at the entry point);
- *   incremented by one on every recursive descent through {@link scanLink} /
- *   {@link scanEmphasis}. At {@link MAX_DEPTH} the window is never scanned for markup -
- *   it emits as a single literal text node - so pathological nesting (`[[[[…`,
- *   `****…`) cannot exhaust the call stack.
+ *   incremented by one on every recursive descent {@link scanInlineSource} makes into
+ *   itself for a link's text, an image's alternative content, or an emphasis run's
+ *   children. At {@link MAX_DEPTH} the window is never scanned for markup - it emits as
+ *   a single literal text node - so pathological nesting (`[[[[…`, `****…`) cannot
+ *   exhaust the call stack.
  * @returns The parsed inline nodes (NOT yet coalesced)
  *
  * @example
@@ -919,7 +1067,9 @@ export function scanInline(
  * @param from - The inclusive start of the scan window
  * @param to - The exclusive end of the scan window
  * @param spans - The operation-owned node span recorder
- * @param depth - The current inline-recursion depth
+ * @param depth - The current inline-recursion depth, incremented by one on every
+ *   recursive descent this function makes into itself for a link's text, an image's
+ *   alternative content, or an emphasis run's children
  * @returns The parsed inline nodes before adjacent text coalescing
  *
  * @example
@@ -1076,7 +1226,7 @@ export function collectTable(
 	lines: readonly MarkdownSource[],
 	start: number,
 	spans = new Map<MarkdownNode, MarkdownSpan>(),
-): { readonly node: TableNode; readonly next: number } {
+): TableCollection {
 	const headerCells = splitTableSources(lines[start] ?? { text: '', segments: [] })
 	const columns = headerCells.length
 	const header = headerCells.map((cell) => {
@@ -1131,7 +1281,7 @@ export function collectList(
 	depth: number,
 	spans = new Map<MarkdownNode, MarkdownSpan>(),
 	end?: number,
-): { readonly node: ListNode; readonly next: number } {
+): ListCollection {
 	const text = lines.map((line) => line.text)
 	const first = extractListItem(text[start] ?? '')
 	const ordered = first?.ordered ?? false
@@ -1559,31 +1709,6 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 }
 
 /**
- * Render a {@link MarkdownNode} to sanitized canonical HTML.
- *
- * @remarks
- * Markdown widens `@orkestrel/html`'s attribute floor by exactly `src`, because image
- * syntax is meaningless without its source. `src` is still a URL attribute, so the
- * floor refuses `javascript:`, `data:`, `vbscript:`, and `file:` values. A stricter
- * consumer can compose {@link markdownToHTML} with `@orkestrel/html`'s `HTML` class
- * directly.
- *
- * @param node - The markdown document or bare node to render
- * @returns Sanitized canonical HTML
- *
- * @example
- * ```ts
- * renderHTML({ element: 'paragraph', children: [{ element: 'text', value: 'a & b' }] })
- * // '<p>a &amp; b</p>'
- * ```
- */
-export function renderHTML(node: MarkdownNode): string {
-	return renderHTMLDocument(
-		new HTML(markdownToHTML(node)).sanitize({ attributes: [...SAFE_ATTRIBUTES, 'src'] }).document,
-	)
-}
-
-/**
  * Render a {@link MarkdownNode} to its CANONICAL markdown source - the inverse
  * projection of `renderHTML`, and the serializer a `parse(renderMarkdown(doc))`
  * round-trip is built on. Canonical forms: `*` / `**` emphasis at even emphasis
@@ -1593,8 +1718,8 @@ export function renderHTML(node: MarkdownNode): string {
  * `> `-prefixed blockquote lines, GFM tables (1-space-padded cells, `\|`-escaped
  * pipes, an alignment delimiter row), `[text](href)` links, `![alt](src)` images,
  * and two-space hard breaks. A `text` node's literal content is backslash-escaped
- * wherever it would otherwise re-parse as markup (AGENTS §14 parse↔render
- * soundness).
+ * wherever it would otherwise re-parse as markup, so parsing the rendered source
+ * returns the node it was rendered from.
  *
  * @remarks
  * Total: never throws. At {@link MAX_DEPTH} a value-bearing node degrades to its
@@ -1957,7 +2082,40 @@ export function renderMarkdown(node: MarkdownNode): string {
 // map HTML to markdown ({@link projectHTMLLeaf}, {@link projectHTMLNode}), and the one
 // entry point that folds them ({@link htmlToMarkdown}). HTML is richer than
 // markdown, so the projection is lossy by construction; what it must never be is
-// WRONG, which is what the round-trip anchor law pins down.
+// WRONG, which is what the round-trip anchor law pins down. {@link createProjection}
+// builds those values: it constructs a plain record under an invariant rather than an
+// entity, so it is a leaf here and not a factory.
+
+/**
+ * Builds an HTML-to-markdown projection with absent fields defaulted from
+ * {@link EMPTY_PROJECTION} and the block/inline exclusivity invariant enforced.
+ *
+ * @remarks
+ * A block-bearing projection cannot also expose inline content. Callers may provide
+ * both views, but `inlines` is flushed whenever `blocks` is non-empty.
+ *
+ * @param parts - The projection fields to provide
+ * @returns A complete invariant-preserving projection
+ *
+ * @example
+ * ```ts
+ * createProjection({
+ *   blocks: [{ element: 'thematicBreak' }],
+ *   inlines: [{ element: 'text', value: 'discarded' }],
+ * })
+ * // { blocks: [{ element: 'thematicBreak' }], inlines: [], text: '', cells: [], rows: [] }
+ * ```
+ */
+export function createProjection(parts: Partial<MarkdownProjection> = {}): MarkdownProjection {
+	const blocks = parts.blocks ?? EMPTY_PROJECTION.blocks
+	return {
+		blocks,
+		inlines: blocks.length === 0 ? (parts.inlines ?? EMPTY_PROJECTION.inlines) : [],
+		text: parts.text ?? EMPTY_PROJECTION.text,
+		cells: parts.cells ?? EMPTY_PROJECTION.cells,
+		rows: parts.rows ?? EMPTY_PROJECTION.rows,
+	}
+}
 
 /**
  * Trim the whitespace at the two ends of an inline run - the leading whitespace of a
@@ -2666,7 +2824,7 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
 }
 
 /**
- * Fold a {@link MarkdownNode} into a `T` via a total catamorphism - children are
+ * Fold a {@link MarkdownNode} into a `T` through a total catamorphism - children are
  * folded first (post-order), then the node's own {@link MarkdownHandler} is invoked
  * with the already-folded children.
  *

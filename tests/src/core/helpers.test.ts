@@ -12,10 +12,12 @@ import type {
 	TableNode,
 } from '@src/core'
 import {
+	EMPTY_PROJECTION,
 	MAX_DEPTH,
 	coalesceText,
 	collectList,
 	collectTable,
+	createProjection,
 	extractFence,
 	extractHeading,
 	extractListItem,
@@ -23,6 +25,14 @@ import {
 	foldNode,
 	htmlToMarkdown,
 	countIndent,
+	isBlankLine,
+	isEscapable,
+	isFenceClose,
+	isFenceWhitespace,
+	isQuote,
+	isTableStart,
+	isThematicBreak,
+	isWhitespace,
 	markdownToHTML,
 	joinSources,
 	locateEmphasis,
@@ -56,12 +66,7 @@ import {
 	unescapeText,
 	walkNodes,
 } from '@src/core'
-import {
-	HTML,
-	SAFE_ATTRIBUTES,
-	parseDocument as parseHTMLDocument,
-	renderHTML as renderHTMLDocument,
-} from '@orkestrel/html'
+import { parseDocument as parseHTMLDocument } from '@orkestrel/html'
 import {
 	MARKDOWN_FIXPOINT_CORPUS,
 	PROJECTION_CORPUS,
@@ -73,14 +78,15 @@ import {
 	inlineText,
 	projectHTML,
 } from '../../setup'
-import { describe, expect, expectTypeOf, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-// The markdown parser's pure helper surface (block extractors, inline scanners,
-// construct scanners, escaping / sanitization primitives) plus the AST-level surface (renderHTML,
-// renderMarkdown, walkNodes, foldNode, rewriteDocument, flattenText). Each is pure
-// and total; malformed input degrades instead of throwing. parsers.test.ts covers
-// the composed parse-behavior corpus. This suite mirrors every exported helpers.ts
-// symbol (AGENTS §16).
+// The markdown parser's pure helper surface (line and character predicates, block
+// extractors, inline scanners, construct scanners, escaping / sanitization primitives)
+// plus the AST-level surface (markdownToHTML, renderMarkdown, walkNodes, foldNode,
+// rewriteDocument, flattenText, createProjection). Each is pure and total; malformed
+// input degrades instead of throwing. parsers.test.ts covers the composed
+// parse-behavior corpus, and compilers.test.ts covers the class-driving renderHTML
+// pipeline. This suite mirrors every exported helpers.ts symbol.
 
 describe('splitLines', () => {
 	it('splits on \\n', () => {
@@ -338,6 +344,103 @@ describe('countIndent', () => {
 
 	it('returns 0 for an empty string', () => {
 		expect(countIndent('')).toBe(0)
+	})
+})
+
+describe('line predicates', () => {
+	it('recognizes inline whitespace characters', () => {
+		expect(isWhitespace(' ')).toBe(true)
+		expect(isWhitespace('\t')).toBe(true)
+		expect(isWhitespace('\n')).toBe(true)
+		expect(isWhitespace('x')).toBe(false)
+	})
+
+	it('recognizes blank lines (empty or whitespace-only)', () => {
+		expect(isBlankLine('')).toBe(true)
+		expect(isBlankLine('  ')).toBe(true)
+		expect(isBlankLine('\t')).toBe(true)
+		expect(isBlankLine(' \t ')).toBe(true)
+		expect(isBlankLine('a')).toBe(false)
+		expect(isBlankLine(' a ')).toBe(false)
+	})
+
+	it('recognizes markdown punctuation as escapable', () => {
+		expect(isEscapable('*')).toBe(true)
+		expect(isEscapable('[')).toBe(true)
+		expect(isEscapable('a')).toBe(false)
+	})
+
+	it('recognizes blockquote lines', () => {
+		expect(isQuote('> hi')).toBe(true)
+		expect(isQuote('   > hi')).toBe(true)
+		expect(isQuote('hi')).toBe(false)
+	})
+
+	it('recognizes fence-close whitespace characters, rejects everything else', () => {
+		expect(isFenceWhitespace(' ')).toBe(true)
+		expect(isFenceWhitespace('\t')).toBe(true)
+		expect(isFenceWhitespace('\n')).toBe(true)
+		expect(isFenceWhitespace('\r')).toBe(true)
+		expect(isFenceWhitespace('\f')).toBe(true)
+		expect(isFenceWhitespace('\v')).toBe(true)
+		expect(isFenceWhitespace('x')).toBe(false)
+		expect(isFenceWhitespace(undefined)).toBe(false)
+	})
+
+	it('matches a closing fence of at least the opener length', () => {
+		expect(isFenceClose('```', '```')).toBe(true)
+		expect(isFenceClose('````', '```')).toBe(true)
+		expect(isFenceClose('``', '```')).toBe(false)
+		expect(isFenceClose('~~~', '```')).toBe(false)
+	})
+
+	it('exercises the full isFenceClose semantics table (regex-free scan)', () => {
+		// exact-length close
+		expect(isFenceClose('```', '```')).toBe(true)
+		// longer close
+		expect(isFenceClose('````', '```')).toBe(true)
+		// shorter run fails
+		expect(isFenceClose('``', '```')).toBe(false)
+		// wrong char fails (tilde marker vs backtick close)
+		expect(isFenceClose('```', '~~~')).toBe(false)
+		expect(isFenceClose('~~', '~~~')).toBe(false)
+		// leading whitespace allowed
+		expect(isFenceClose('   ```', '```')).toBe(true)
+		// trailing whitespace allowed
+		expect(isFenceClose('```   ', '```')).toBe(true)
+		// leading + trailing whitespace allowed
+		expect(isFenceClose('  ```  ', '```')).toBe(true)
+		// interior text fails
+		expect(isFenceClose('``` js', '```')).toBe(false)
+		expect(isFenceClose('x```', '```')).toBe(false)
+		// empty line never closes
+		expect(isFenceClose('', '```')).toBe(false)
+		// tilde fence, tilde close
+		expect(isFenceClose('~~~~', '~~~')).toBe(true)
+	})
+
+	it('accepts 3+ thematic-break markers, spaced or not', () => {
+		expect(isThematicBreak('---')).toBe(true)
+		expect(isThematicBreak('***')).toBe(true)
+		expect(isThematicBreak('___')).toBe(true)
+		expect(isThematicBreak('- - -')).toBe(true)
+	})
+
+	it('rejects too-few or mixed thematic-break markers', () => {
+		expect(isThematicBreak('--')).toBe(false)
+		expect(isThematicBreak('-*-')).toBe(false)
+		expect(isThematicBreak('text')).toBe(false)
+	})
+
+	it('recognizes a header plus delimiter as a table start', () => {
+		expect(isTableStart('| a | b |', '| - | - |')).toBe(true)
+		expect(isTableStart('| a | b |', '| :- | -: |')).toBe(true)
+		expect(isTableStart('| a | b |', 'not a delimiter')).toBe(false)
+		expect(isTableStart('no pipe', '| - |')).toBe(false)
+	})
+
+	it('rejects a table start with no delimiter line at all', () => {
+		expect(isTableStart('| a | b |', undefined)).toBe(false)
 	})
 })
 
@@ -859,246 +962,6 @@ describe('markdownToHTML', () => {
 			category: 'document',
 			children: [{ category: 'text', value: 'bare' }],
 		})
-	})
-})
-
-describe('renderHTML — structure', () => {
-	it('renders headings, paragraphs, emphasis, code, and links to HTML', () => {
-		const html = renderHTML(parseDocument('# Hi\n\nA **bold** `x` [link](https://x.dev).'))
-		expect(html).toContain('<h1>Hi</h1>')
-		expect(html).toContain('<strong>bold</strong>')
-		expect(html).toContain('<code>x</code>')
-		expect(html).toContain('<a href="https://x.dev">link</a>')
-	})
-
-	it('renders a list to <ul>/<ol> with <li> items', () => {
-		expect(renderHTML(parseDocument('- a\n- b'))).toBe('<ul><li>a</li><li>b</li></ul>')
-		expect(renderHTML(parseDocument('2. a\n3. b'))).toBe('<ol start="2"><li>a</li><li>b</li></ol>')
-	})
-
-	it('renders a GFM table with thead/tbody and per-column alignment', () => {
-		const html = renderHTML(parseDocument('| a | b |\n| :- | -: |\n| 1 | 2 |'))
-		expect(html).toContain('<table>')
-		expect(html).toContain('<thead>')
-		expect(html).toContain('<tbody>')
-		expect(html).toContain('<th align="left">a</th>')
-		expect(html).toContain('<td align="right">2</td>')
-	})
-
-	it('renders a fenced code block as <pre><code class="language-…">', () => {
-		const html = renderHTML(parseDocument('```ts\nconst x = 1\n```'))
-		expect(html).toContain('<pre><code class="language-ts">const x = 1</code></pre>')
-	})
-
-	it('renders a thematic break as <hr> and a blockquote as <blockquote>', () => {
-		expect(renderHTML(parseDocument('---'))).toBe('<hr>')
-		expect(renderHTML(parseDocument('> hi'))).toBe('<blockquote><p>hi</p></blockquote>')
-	})
-
-	it('renders an inline node tree to an escaped HTML fragment', () => {
-		const fragment = parseDocument('a **b** `<c>`')
-			.children.flatMap((block) => (block.element === 'paragraph' ? block.children : []))
-			.map((node) => renderHTML(node))
-			.join('')
-		expect(fragment).toBe('a <strong>b</strong> <code>&lt;c&gt;</code>')
-	})
-
-	it('renders a document node in canonical compact form', () => {
-		const html = renderHTML({
-			element: 'document',
-			children: [
-				{ element: 'thematicBreak' },
-				{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] },
-			],
-		})
-		expect(html).toBe('<hr><p>x</p>')
-	})
-
-	it('renders exact HTML for a small composite inline snapshot', () => {
-		expect(renderHTML(parseDocument('# Hi\n\n_em_ and `code`.'))).toBe(
-			'<h1>Hi</h1><p><em>em</em> and <code>code</code>.</p>',
-		)
-	})
-})
-
-describe('renderHTML — escaping & sanitization (no XSS)', () => {
-	it('HTML-escapes < > & in text while leaving quotes and apostrophes literal', () => {
-		expect(renderHTML(parseDocument(`a <script>alert("x" & 'y')</script> tag`))).toBe(
-			`<p>a &lt;script&gt;alert("x" &amp; 'y')&lt;/script&gt; tag</p>`,
-		)
-	})
-
-	it('HTML-escapes the body of a code block and inline code', () => {
-		expect(renderHTML(parseDocument('```\n<b>&</b>\n```'))).toContain('&lt;b&gt;&amp;&lt;/b&gt;')
-		expect(renderHTML(parseDocument('`<i>`'))).toContain('<code>&lt;i&gt;</code>')
-	})
-})
-
-describe('renderHTML — @orkestrel/html URL-floor composition', () => {
-	it('refuses a tab-spliced javascript scheme', () => {
-		expect(renderHTML(parseDocument('[x](java\tscript:alert(1))'))).toBe('<p><a>x</a></p>')
-	})
-
-	it('preserves a mixed-case allowed HTTPS scheme', () => {
-		expect(renderHTML(parseDocument('[x](HtTpS://ok.dev)'))).toBe(
-			'<p><a href="HtTpS://ok.dev">x</a></p>',
-		)
-	})
-
-	it('refuses a protocol-relative double slash', () => {
-		expect(renderHTML(parseDocument('[x](//evil.dev)'))).toBe('<p><a>x</a></p>')
-	})
-
-	it('retains a single leading backslash', () => {
-		expect(renderHTML(parseDocument('[x](\\evil.dev)'))).toBe('<p><a href="\\evil.dev">x</a></p>')
-	})
-
-	it('retains an anchor', () => {
-		expect(renderHTML(parseDocument('[x](#anchor)'))).toBe('<p><a href="#anchor">x</a></p>')
-	})
-
-	it('refuses an unlisted scheme through the allowlist composition', () => {
-		expect(renderHTML(parseDocument('[x](ftp://host)'))).toBe('<p><a>x</a></p>')
-	})
-
-	it('refuses a decimal-entity-obfuscated javascript scheme after decoding', () => {
-		expect(renderHTML(parseDocument('[x](&#106;avascript:x)'))).toBe('<p><a>x</a></p>')
-	})
-
-	it('normalizes an entity-obfuscated allowed scheme', () => {
-		expect(renderHTML(parseDocument('[x](https&colon;&sol;&sol;ok.dev)'))).toBe(
-			'<p><a href="https://ok.dev">x</a></p>',
-		)
-	})
-
-	it('encodes an ampersand in a retained query exactly once', () => {
-		expect(renderHTML(parseDocument('[x](?a=1&b=2)'))).toBe('<p><a href="?a=1&amp;b=2">x</a></p>')
-	})
-
-	it('exposes no sanitizer options and hard-refuses hostile link and image schemes', () => {
-		expectTypeOf(renderHTML).parameters.toEqualTypeOf<[node: MarkdownNode]>()
-		expect(renderHTML.length).toBe(1)
-		expect(renderHTML(parseDocument('[x](javascript:unit) ![alt](data:unit)'))).toBe(
-			'<p><a>x</a> <img alt="alt"></p>',
-		)
-	})
-
-	it('sanitizes every hostile destination in a hand-built markdown document', () => {
-		const hostile: MarkdownDocument = {
-			element: 'document',
-			children: [
-				{
-					element: 'paragraph',
-					children: [
-						{
-							element: 'link',
-							href: 'javascript:alert(1)',
-							children: [{ element: 'text', value: 'link' }],
-						},
-						{ element: 'text', value: ' ' },
-						{
-							element: 'image',
-							src: 'da\u0000ta:text/html,alert(1)',
-							children: [{ element: 'text', value: 'image' }],
-						},
-						{ element: 'text', value: ' ' },
-						{
-							element: 'link',
-							href: '&#106;avascript:alert(2)',
-							children: [{ element: 'text', value: 'entity' }],
-						},
-					],
-				},
-			],
-		}
-
-		expect(renderHTML(hostile)).toBe('<p><a>link</a> <img alt="image"> <a>entity</a></p>')
-	})
-})
-
-describe('renderHTML — composed elements', () => {
-	it('keeps and sanitizes a safe image source', () => {
-		expect(renderHTML(parseDocument('![a **bold**](https://x.dev/a?x=1&y=2)'))).toBe(
-			'<p><img src="https://x.dev/a?x=1&amp;y=2" alt="a bold"></p>',
-		)
-	})
-
-	it('refuses a hostile image source while preserving plain-text alt content', () => {
-		expect(renderHTML(parseDocument('![a **bold**](javascript:alert(1))'))).toBe(
-			'<p><img alt="a bold"></p>',
-		)
-	})
-
-	it('renders a hard break as a void br element', () => {
-		expect(renderHTML(parseDocument('a  \nb'))).toBe('<p>a<br>b</p>')
-	})
-
-	it('renders table alignment on header and body cells and omits it for a null column', () => {
-		expect(renderHTML(parseDocument('| a | b | c |\n| :--- | ---: | --- |\n| 1 | 2 | 3 |'))).toBe(
-			'<table><thead><tr><th align="left">a</th><th align="right">b</th><th>c</th></tr></thead><tbody><tr><td align="left">1</td><td align="right">2</td><td>3</td></tr></tbody></table>',
-		)
-	})
-})
-
-describe('renderHTML — MAX_DEPTH recursion cap + degrade arms', () => {
-	it('projects exactly 64 elements and degrades once before html sanitization', () => {
-		const leaf: ParagraphNode = {
-			element: 'paragraph',
-			children: [{ element: 'text', value: 'leaf' }],
-		}
-		let node: BlockquoteNode | ParagraphNode = leaf
-		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
-		const html = renderHTML(node)
-		expect(html).toBe('<blockquote>'.repeat(MAX_DEPTH) + '</blockquote>'.repeat(MAX_DEPTH))
-		const sanitized = new HTML(markdownToHTML(node)).sanitize({
-			attributes: [...SAFE_ATTRIBUTES, 'src'],
-		})
-		expect(sanitized.sanitize({ attributes: [...SAFE_ATTRIBUTES, 'src'] }).document).toEqual(
-			sanitized.document,
-		)
-		expect(renderHTMLDocument(sanitized.document)).toBe(html)
-	})
-
-	it('renders a fabricated node with an unknown element as an empty string (total default arm)', () => {
-		// A minimal, deliberately-loose type predicate (no `as`) that lets a
-		// structurally-invalid node reach `renderHTML` directly, bypassing the strict
-		// `isMarkdownNode` guard — exercising the switch's default arm. Narrowing happens
-		// through the helper's return type (never a conditional `expect`).
-		function isFabricatedNode(value: unknown): value is MarkdownDocument {
-			return typeof value === 'object' && value !== null
-		}
-		function narrow<T>(value: unknown, guard: (candidate: unknown) => candidate is T): T {
-			if (!guard(value)) throw new Error('fixture did not match the expected fabricated shape')
-			return value
-		}
-		const fabricated = narrow({ element: 'bogus' }, isFabricatedNode)
-		expect(renderHTML(fabricated)).toBe('')
-	})
-
-	it('renders a fabricated TableNode with an out-of-set align without injecting a style attribute', () => {
-		function isFabricatedTable(value: unknown): value is TableNode {
-			return typeof value === 'object' && value !== null
-		}
-		function narrow<T>(value: unknown, guard: (candidate: unknown) => candidate is T): T {
-			if (!guard(value)) throw new Error('fixture did not match the expected fabricated shape')
-			return value
-		}
-		const fabricated = narrow(
-			{
-				element: 'table',
-				header: [[{ element: 'text', value: 'a' }]],
-				rows: [],
-				align: ['"onmouseover=alert(1) style="text-align:center'],
-			},
-			isFabricatedTable,
-		)
-		const html = renderHTML(fabricated)
-		expect(html).not.toContain('style=')
-		expect(html).not.toContain('onmouseover')
-	})
-
-	it('does not throw rendering a deeply nested parsed emphasis/link chain', () => {
-		expect(() => renderHTML(firstBlock(buildDeepEmphasisInput(10_000)))).not.toThrow()
 	})
 })
 
@@ -2184,6 +2047,34 @@ describe('flattenText', () => {
 // adversarial inputs the fold must survive, and the round-trip anchor law
 // `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals `htmlToMarkdown(x)`
 // over `PROJECTION_CORPUS`.
+
+describe('createProjection', () => {
+	it('defaults every absent field from the frozen empty projection', () => {
+		expect(Object.isFrozen(EMPTY_PROJECTION)).toBe(true)
+		expect(createProjection({ text: 'raw' })).toEqual({
+			blocks: [],
+			inlines: [],
+			text: 'raw',
+			cells: [],
+			rows: [],
+		})
+	})
+
+	it('flushes inline content whenever block content is present', () => {
+		expect(
+			createProjection({
+				blocks: [{ element: 'thematicBreak' }],
+				inlines: [{ element: 'text', value: 'discarded' }],
+			}),
+		).toEqual({
+			blocks: [{ element: 'thematicBreak' }],
+			inlines: [],
+			text: '',
+			cells: [],
+			rows: [],
+		})
+	})
+})
 
 describe('trimInlines', () => {
 	it('trims the leading whitespace of the first text node and the trailing of the last', () => {

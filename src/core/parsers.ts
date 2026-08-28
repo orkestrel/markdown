@@ -14,6 +14,11 @@ import {
 	extractFence,
 	extractHeading,
 	extractListItem,
+	isBlankLine,
+	isFenceClose,
+	isQuote,
+	isTableStart,
+	isThematicBreak,
 	joinSources,
 	normalizeParagraphLine,
 	projectSpan,
@@ -24,7 +29,6 @@ import {
 	startsBlock,
 	stripQuote,
 } from './helpers.js'
-import { isBlankLine, isFenceClose, isQuote, isTableStart, isThematicBreak } from './validators.js'
 import { MAX_DEPTH } from './constants.js'
 import { isNonEmptyArray } from '@orkestrel/contract'
 
@@ -190,11 +194,16 @@ export function parseBlocks(
 }
 
 /**
- * Parses a markdown string into a typed {@link MarkdownDocument} AST via the
+ * Parses a markdown string into a typed {@link MarkdownDocument} AST through the
  * block phase.
  *
  * @param markdown - The markdown source to parse.
  * @returns The parsed document.
+ *
+ * @example
+ * ```ts
+ * parseDocument('# Hi') // { element: 'document', children: [{ element: 'heading', ... }] }
+ * ```
  */
 export function parseDocument(markdown: string): MarkdownDocument {
 	const [document] = parseProvenance(markdown)
@@ -206,6 +215,12 @@ export function parseDocument(markdown: string): MarkdownDocument {
  *
  * @param markdown - The markdown source to parse.
  * @returns The parsed document and its node-identity span map.
+ *
+ * @example
+ * ```ts
+ * const [document, spans] = parseProvenance('# Hi')
+ * spans.get(document) // { start: 0, end: 4 }
+ * ```
  */
 export function parseProvenance(markdown: string): MarkdownParseResult {
 	const spans = new Map<MarkdownNode, MarkdownSpan>()
@@ -223,6 +238,11 @@ export function parseProvenance(markdown: string): MarkdownParseResult {
  *
  * @param text - The inline markdown text to parse.
  * @returns The parsed inline nodes.
+ *
+ * @example
+ * ```ts
+ * parseInline('a *b*') // [{ element: 'text', value: 'a ' }, { element: 'emphasis', ... }]
+ * ```
  */
 export function parseInline(text: string): readonly InlineNode[] {
 	return coalesceText(scanInline(text, 0, text.length))

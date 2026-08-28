@@ -7,7 +7,7 @@ import {
 	stringShape,
 } from '@orkestrel/contract'
 
-// AGENTS section 14 / 4.6.1: shapers are `ContractShape` VALUES, not functions
+// Shapers are `ContractShape` VALUES, not functions
 // or types - a JSON-Schema blueprint the compilers (factories.ts) turn into a
 // guard / parser / schema / generator in lockstep. Only the NON-recursive
 // parts of the markdown AST (types.ts) can be expressed here: a shape tree has
@@ -15,7 +15,7 @@ import {
 // `BlockNode` / `InlineNode` / `MarkdownNode` (EmphasisNode, LinkNode, ImageNode,
 // HeadingNode, ParagraphNode, ListItemNode, ListNode, TableNode,
 // BlockquoteNode, MarkdownDocument) is skipped here and stays guard-only
-// (validators.ts) via `lazyOf`.
+// (validators.ts) through `lazyOf`.
 
 /**
  * The shape of a {@link TextNode} - a plain-text leaf inline run.

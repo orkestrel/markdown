@@ -36,7 +36,7 @@ import { parseProvenance } from './parsers.js'
  *   instance; the document root invariant (`element: 'document'`) always holds. An
  *   identity rewrite still returns a new handle, over the same document tree.
  * - **Traversal order.** {@link walk} and the `find` / `filter` / `reduce` queries built
- *   on it walk the AST depth-first, pre-order, root-inclusive (via {@link walkNodes});
+ *   on it walk the AST depth-first, pre-order, root-inclusive (through {@link walkNodes});
  *   `stream` is shallow - only the document's direct block children.
  *
  * @example
@@ -175,7 +175,7 @@ export class Markdown implements MarkdownInterface {
 	 * }
 	 *
 	 * // Node / Deno / Firefox support async iteration of ReadableStream natively;
-	 * // other environments should use the reader loop above instead.
+	 * // other environments use the reader loop shown earlier.
 	 * for await (const block of markdown.stream()) {
 	 *   console.log(block)
 	 * }

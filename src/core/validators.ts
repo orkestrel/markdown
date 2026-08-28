@@ -21,7 +21,6 @@ import type {
 import {
 	arrayOf,
 	isBoolean,
-	isEmptyString,
 	isNumber,
 	isString,
 	literalOf,
@@ -30,183 +29,35 @@ import {
 	recordOf,
 	unionOf,
 } from '@orkestrel/contract'
-import { splitTableRow } from './helpers.js'
 
-// AGENTS section 14: guards are total. This file owns two predicate families:
-// line / string structural predicates that test raw strings during parsing
-// (isWhitespace, isEscapable, isQuote, isFenceClose, isThematicBreak,
-// isTableStart), and node guards that narrow a MarkdownNode to one parsed
-// block / inline variant by its element tag.
-
-/**
- * Whether `character` is an inline whitespace character (space / tab / newline) - the
- * emphasis flanking rule's space test.
- *
- * @param character - The character to test
- * @returns `true` when it is inline whitespace
- *
- * @example
- * ```ts
- * isWhitespace(' ') // true
- * isWhitespace('a') // false
- * ```
- */
-export function isWhitespace(character: string): boolean {
-	return character === ' ' || character === '\t' || character === '\n'
-}
-
-/**
- * Whether `character` is escapable by a leading backslash - the ASCII punctuation
- * markdown gives meaning to (so `\*` becomes `*` but `\.` stays `\.`).
- *
- * @param character - The single character after a backslash
- * @returns `true` when a backslash before it is an escape
- *
- * @example
- * ```ts
- * isEscapable('*') // true
- * isEscapable('a') // false
- * ```
- */
-export function isEscapable(character: string): boolean {
-	return /[\\`*_{}[\]()#+\-.!>~|]/.test(character)
-}
-
-/**
- * Whether `line` is blank - empty, or containing only whitespace - the markdown
- * definition of a blank line that block parsing uses to separate paragraphs, skip
- * gaps, and end list continuations.
- *
- * @param line - The candidate line
- * @returns `true` when the line is blank
- *
- * @example
- * ```ts
- * isBlankLine('   ') // true
- * ```
- */
-export function isBlankLine(line: string): boolean {
-	return isEmptyString(line.trim())
-}
-
-/**
- * Whether `line` is a blockquote line (`>` optionally indented up to three spaces) -
- * its content is de-quoted by {@link stripQuote}.
- *
- * @param line - The candidate line
- * @returns `true` when the line begins a blockquote
- *
- * @example
- * ```ts
- * isQuote('> quoted') // true
- * ```
- */
-export function isQuote(line: string): boolean {
-	return /^\s{0,3}>/.test(line)
-}
-
-/**
- * Whether `line` closes a fence opened by `marker` - the same fence character, a run
- * at least as long, and nothing else but surrounding whitespace.
- *
- * @param line - The candidate closing line
- * @param marker - The opening fence's marker run (from {@link extractFence})
- * @returns `true` when `line` closes the fence
- *
- * @example
- * ```ts
- * isFenceClose('```', '```') // true
- * ```
- */
-export function isFenceClose(line: string, marker: string): boolean {
-	const character = marker[0] === '~' ? '~' : '`'
-	let index = 0
-	while (index < line.length && isFenceWhitespace(line[index])) index++
-	let run = 0
-	while (index < line.length && line[index] === character) {
-		run++
-		index++
-	}
-	if (run < marker.length) return false
-	while (index < line.length && isFenceWhitespace(line[index])) index++
-	return index === line.length
-}
-
-/**
- * Whether `character` is a regex-`\s`-equivalent whitespace character - the
- * character class {@link isFenceClose}'s scan treats as surrounding padding.
- *
- * @param character - The single character to test, or `undefined` past the end of a line
- * @returns `true` when it is whitespace
- *
- * @example
- * ```ts
- * isFenceWhitespace(' ')         // true
- * isFenceWhitespace(undefined)   // false
- * ```
- */
-export function isFenceWhitespace(character: string | undefined): boolean {
-	return (
-		character === ' ' ||
-		character === '\t' ||
-		character === '\n' ||
-		character === '\r' ||
-		character === '\f' ||
-		character === '\v'
-	)
-}
-
-/**
- * Whether `line` is a thematic break (horizontal rule) - three or more of the SAME
- * marker `-`, `*`, or `_` (optionally space-separated) and nothing else (`---`,
- * `***`, `___`, `- - -`).
- *
- * @param line - The candidate line
- * @returns `true` when the line is a thematic break
- *
- * @example
- * ```ts
- * isThematicBreak('---') // true
- * ```
- */
-export function isThematicBreak(line: string): boolean {
-	const stripped = line.trim().replace(/\s+/g, '')
-	if (stripped.length < 3) return false
-	const marker = stripped[0]
-	if (marker !== '-' && marker !== '*' && marker !== '_') return false
-	return [...stripped].every((character) => character === marker)
-}
-
-/**
- * Whether the pair (`header`, `delimiter`) opens a GFM table - `delimiter` is a row of
- * `|`-separated cells each matching `:?-+:?`, the GFM rule that a table requires a
- * header row IMMEDIATELY followed by a delimiter row.
- *
- * @param header - The candidate header line
- * @param delimiter - The line after it (the candidate delimiter)
- * @returns `true` when the two lines open a table
- *
- * @example
- * ```ts
- * isTableStart('| a |', '| - |') // true
- * ```
- */
-export function isTableStart(header: string, delimiter: string | undefined): boolean {
-	if (delimiter === undefined || !header.includes('|')) return false
-	const cells = splitTableRow(delimiter)
-	if (cells.length === 0) return false
-	return cells.every((cell) => /^:?-+:?$/.test(cell.trim()))
-}
+// Guards are total. This file owns the type narrowers alone: node guards that
+// narrow a MarkdownNode to one parsed block / inline variant by its element tag,
+// and the from-unknown guards that validate an arbitrary value against the full
+// AST shape. The line / character structural predicates the parser tests raw
+// strings with narrow nothing, so they are pure leaves and live in helpers.ts.
 
 // === Block guards
 
-/** Determine whether a node is a heading block. */
+/**
+ * Determine whether a node is a heading block.
+ *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link HeadingNode}; false otherwise
+ *
+ * @example
+ * ```ts
+ * isHeadingNode({ element: 'heading', level: 1, children: [] }) // true
+ * ```
+ */
 export function isHeadingNode(node: MarkdownNode): node is HeadingNode {
 	return node.element === 'heading'
 }
 
 /**
  * Determine whether a node is a paragraph block.
+ *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link ParagraphNode}; false otherwise
  *
  * @example
  * ```ts
@@ -220,6 +71,9 @@ export function isParagraphNode(node: MarkdownNode): node is ParagraphNode {
 /**
  * Determine whether a node is a list block.
  *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link ListNode}; false otherwise
+ *
  * @example
  * ```ts
  * isListNode({ element: 'list', ordered: false, start: 1, items: [] }) // true
@@ -229,13 +83,26 @@ export function isListNode(node: MarkdownNode): node is ListNode {
 	return node.element === 'list'
 }
 
-/** Determine whether a node is a GFM table block. */
+/**
+ * Determine whether a node is a GFM table block.
+ *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link TableNode}; false otherwise
+ *
+ * @example
+ * ```ts
+ * isTableNode({ element: 'table', header: [], rows: [], align: [] }) // true
+ * ```
+ */
 export function isTableNode(node: MarkdownNode): node is TableNode {
 	return node.element === 'table'
 }
 
 /**
  * Determine whether a node is a fenced code block.
+ *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link CodeBlockNode}; false otherwise
  *
  * @example
  * ```ts
@@ -249,6 +116,9 @@ export function isCodeBlockNode(node: MarkdownNode): node is CodeBlockNode {
 /**
  * Determine whether a node is a blockquote block.
  *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link BlockquoteNode}; false otherwise
+ *
  * @example
  * ```ts
  * isBlockquoteNode({ element: 'blockquote', children: [] }) // true
@@ -260,6 +130,9 @@ export function isBlockquoteNode(node: MarkdownNode): node is BlockquoteNode {
 
 /**
  * Determine whether a node is a thematic break (horizontal rule) block.
+ *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link ThematicBreakNode}; false otherwise
  *
  * @example
  * ```ts
@@ -275,6 +148,9 @@ export function isThematicBreakNode(node: MarkdownNode): node is ThematicBreakNo
 /**
  * Determine whether a node is a plain text run.
  *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link TextNode}; false otherwise
+ *
  * @example
  * ```ts
  * isTextNode({ element: 'text', value: 'hi' }) // true
@@ -286,6 +162,9 @@ export function isTextNode(node: MarkdownNode): node is TextNode {
 
 /**
  * Determine whether a node is an emphasis run (`*em*` / `**strong**`).
+ *
+ * @param node - The AST node to test
+ * @returns True if the node is an {@link EmphasisNode}; false otherwise
  *
  * @example
  * ```ts
@@ -303,6 +182,9 @@ export function isEmphasisNode(node: MarkdownNode): node is EmphasisNode {
  * Narrows to {@link CodeSpanNode} - the node whose `element` discriminant is
  * `'codeSpan'`.
  *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link CodeSpanNode}; false otherwise
+ *
  * @example
  * ```ts
  * isCodeSpanNode({ element: 'codeSpan', value: 'x' }) // true
@@ -315,6 +197,9 @@ export function isCodeSpanNode(node: MarkdownNode): node is CodeSpanNode {
 /**
  * Determine whether a node is a GFM hard line break.
  *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link LineBreakNode}; false otherwise
+ *
  * @example
  * ```ts
  * isLineBreakNode({ element: 'break' }) // true
@@ -324,13 +209,26 @@ export function isLineBreakNode(node: MarkdownNode): node is LineBreakNode {
 	return node.element === 'break'
 }
 
-/** Determine whether a node is a link. */
+/**
+ * Determine whether a node is a link.
+ *
+ * @param node - The AST node to test
+ * @returns True if the node is a {@link LinkNode}; false otherwise
+ *
+ * @example
+ * ```ts
+ * isLinkNode({ element: 'link', href: 'https://example.dev', children: [] }) // true
+ * ```
+ */
 export function isLinkNode(node: MarkdownNode): node is LinkNode {
 	return node.element === 'link'
 }
 
 /**
  * Determine whether a node is an image.
+ *
+ * @param node - The AST node to test
+ * @returns True if the node is an {@link ImageNode}; false otherwise
  *
  * @example
  * ```ts
@@ -352,7 +250,7 @@ export function isImageNode(node: MarkdownNode): node is ImageNode {
 // list items, blockquote children) resolves through `lazyOf`, closing over the
 // exported guard names themselves - legal because `lazyOf`'s thunk resolves per
 // call, strictly after module init has assigned every export. @orkestrel/contract
-// guarantees guard totality (AGENTS §14): `lazyOf`, `unionOf`, `recordOf`, and
+// guarantees guard totality: `lazyOf`, `unionOf`, `recordOf`, and
 // every built-in guard are throw-contained, so a hostile getter, a structural
 // cycle, or pathologically deep input returns `false` rather than throwing -
 // no additional `attempt` wrapping is needed here.
@@ -364,7 +262,7 @@ export function isImageNode(node: MarkdownNode): node is ImageNode {
  * @remarks
  * Total: never throws, even on cyclic or pathologically deep input - every
  * combinator involved (`unionOf`, `recordOf`, `arrayOf`, `lazyOf`) is
- * throw-contained per the `@orkestrel/contract` guard contract (AGENTS §14).
+ * throw-contained per the `@orkestrel/contract` guard contract.
  *
  * @param value - The value to test
  * @returns `true` when `value` is a well-formed {@link InlineNode}
@@ -406,7 +304,7 @@ export const isInlineNode: Guard<InlineNode> = unionOf(
  * @remarks
  * Total: never throws, even on cyclic or pathologically deep input - every
  * combinator involved (`unionOf`, `recordOf`, `arrayOf`, `lazyOf`) is
- * throw-contained per the `@orkestrel/contract` guard contract (AGENTS §14).
+ * throw-contained per the `@orkestrel/contract` guard contract.
  * A list item's shape is inlined here (and in {@link isMarkdownNode}) rather
  * than named separately - it is used at exactly these two sites.
  *
@@ -451,7 +349,7 @@ export const isBlockNode: Guard<BlockNode> = unionOf(
  * @remarks
  * Total: never throws, even on cyclic or pathologically deep input - every
  * combinator involved (`unionOf`, `recordOf`, `arrayOf`, `lazyOf`) is
- * throw-contained per the `@orkestrel/contract` guard contract (AGENTS §14).
+ * throw-contained per the `@orkestrel/contract` guard contract.
  * A list item's shape is inlined here (and in {@link isBlockNode}) rather than
  * named separately - it is used at exactly these two sites.
  *
@@ -481,7 +379,7 @@ export const isMarkdownNode: Guard<MarkdownNode> = unionOf(
  * @remarks
  * Total: never throws, even on cyclic or pathologically deep input - every
  * combinator involved (`recordOf`, `arrayOf`) is throw-contained per the
- * `@orkestrel/contract` guard contract (AGENTS §14).
+ * `@orkestrel/contract` guard contract.
  *
  * @param value - The value to test
  * @returns `true` when `value` is a well-formed {@link MarkdownDocument}

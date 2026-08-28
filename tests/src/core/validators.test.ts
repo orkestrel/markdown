@@ -1,20 +1,17 @@
-// Unit tests for the parser validators. Line predicates test raw strings during
-// parsing; node guards narrow parsed AST nodes by their `element` discriminant;
-// the four from-unknown guards (isInlineNode / isBlockNode / isMarkdownNode /
-// isMarkdownDocument) validate arbitrary `unknown` input against the full AST
-// shape. Every guard is total and returns false for non-matches (AGENTS section 14).
+// Unit tests for the parser validators. Node guards narrow parsed AST nodes by their
+// `element` discriminant; the from-unknown guards (isInlineNode / isBlockNode /
+// isMarkdownNode / isMarkdownDocument) validate arbitrary `unknown` input against the
+// full AST shape. Every guard is total and returns false for non-matches. The line and
+// character structural predicates narrow nothing, so they live in helpers.ts and are
+// proved in helpers.test.ts.
 
 import type { MarkdownNode } from '@src/core'
 import {
-	isBlankLine,
 	isBlockNode,
 	isBlockquoteNode,
 	isCodeBlockNode,
 	isCodeSpanNode,
 	isEmphasisNode,
-	isEscapable,
-	isFenceClose,
-	isFenceWhitespace,
 	isHeadingNode,
 	isImageNode,
 	isInlineNode,
@@ -24,13 +21,9 @@ import {
 	isMarkdownDocument,
 	isMarkdownNode,
 	isParagraphNode,
-	isQuote,
 	isTableNode,
-	isTableStart,
 	isTextNode,
-	isThematicBreak,
 	isThematicBreakNode,
-	isWhitespace,
 	parseDocument,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
@@ -69,103 +62,6 @@ const samples: readonly Sample[] = [
 	{ name: 'link', node: assertInlineNode('[t](https://example.com)'), guard: isLinkNode },
 	{ name: 'image', node: assertInlineNode('![alt](image.png)'), guard: isImageNode },
 ]
-
-describe('line predicates', () => {
-	it('recognizes inline whitespace characters', () => {
-		expect(isWhitespace(' ')).toBe(true)
-		expect(isWhitespace('\t')).toBe(true)
-		expect(isWhitespace('\n')).toBe(true)
-		expect(isWhitespace('x')).toBe(false)
-	})
-
-	it('recognizes blank lines (empty or whitespace-only)', () => {
-		expect(isBlankLine('')).toBe(true)
-		expect(isBlankLine('  ')).toBe(true)
-		expect(isBlankLine('\t')).toBe(true)
-		expect(isBlankLine(' \t ')).toBe(true)
-		expect(isBlankLine('a')).toBe(false)
-		expect(isBlankLine(' a ')).toBe(false)
-	})
-
-	it('recognizes markdown punctuation as escapable', () => {
-		expect(isEscapable('*')).toBe(true)
-		expect(isEscapable('[')).toBe(true)
-		expect(isEscapable('a')).toBe(false)
-	})
-
-	it('recognizes blockquote lines', () => {
-		expect(isQuote('> hi')).toBe(true)
-		expect(isQuote('   > hi')).toBe(true)
-		expect(isQuote('hi')).toBe(false)
-	})
-
-	it('recognizes fence-close whitespace characters, rejects everything else', () => {
-		expect(isFenceWhitespace(' ')).toBe(true)
-		expect(isFenceWhitespace('\t')).toBe(true)
-		expect(isFenceWhitespace('\n')).toBe(true)
-		expect(isFenceWhitespace('\r')).toBe(true)
-		expect(isFenceWhitespace('\f')).toBe(true)
-		expect(isFenceWhitespace('\v')).toBe(true)
-		expect(isFenceWhitespace('x')).toBe(false)
-		expect(isFenceWhitespace(undefined)).toBe(false)
-	})
-
-	it('matches a closing fence of at least the opener length', () => {
-		expect(isFenceClose('```', '```')).toBe(true)
-		expect(isFenceClose('````', '```')).toBe(true)
-		expect(isFenceClose('``', '```')).toBe(false)
-		expect(isFenceClose('~~~', '```')).toBe(false)
-	})
-
-	it('exercises the full isFenceClose semantics table (regex-free scan)', () => {
-		// exact-length close
-		expect(isFenceClose('```', '```')).toBe(true)
-		// longer close
-		expect(isFenceClose('````', '```')).toBe(true)
-		// shorter run fails
-		expect(isFenceClose('``', '```')).toBe(false)
-		// wrong char fails (tilde marker vs backtick close)
-		expect(isFenceClose('```', '~~~')).toBe(false)
-		expect(isFenceClose('~~', '~~~')).toBe(false)
-		// leading whitespace allowed
-		expect(isFenceClose('   ```', '```')).toBe(true)
-		// trailing whitespace allowed
-		expect(isFenceClose('```   ', '```')).toBe(true)
-		// leading + trailing whitespace allowed
-		expect(isFenceClose('  ```  ', '```')).toBe(true)
-		// interior text fails
-		expect(isFenceClose('``` js', '```')).toBe(false)
-		expect(isFenceClose('x```', '```')).toBe(false)
-		// empty line never closes
-		expect(isFenceClose('', '```')).toBe(false)
-		// tilde fence, tilde close
-		expect(isFenceClose('~~~~', '~~~')).toBe(true)
-	})
-
-	it('accepts 3+ thematic-break markers, spaced or not', () => {
-		expect(isThematicBreak('---')).toBe(true)
-		expect(isThematicBreak('***')).toBe(true)
-		expect(isThematicBreak('___')).toBe(true)
-		expect(isThematicBreak('- - -')).toBe(true)
-	})
-
-	it('rejects too-few or mixed thematic-break markers', () => {
-		expect(isThematicBreak('--')).toBe(false)
-		expect(isThematicBreak('-*-')).toBe(false)
-		expect(isThematicBreak('text')).toBe(false)
-	})
-
-	it('recognizes a header plus delimiter as a table start', () => {
-		expect(isTableStart('| a | b |', '| - | - |')).toBe(true)
-		expect(isTableStart('| a | b |', '| :- | -: |')).toBe(true)
-		expect(isTableStart('| a | b |', 'not a delimiter')).toBe(false)
-		expect(isTableStart('no pipe', '| - |')).toBe(false)
-	})
-
-	it('rejects a table start with no delimiter line at all', () => {
-		expect(isTableStart('| a | b |', undefined)).toBe(false)
-	})
-})
 
 describe('parser AST validators', () => {
 	for (const sample of samples) {

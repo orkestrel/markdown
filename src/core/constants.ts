@@ -2,9 +2,9 @@ import type { MarkdownProjection } from './types.js'
 
 /**
  * The maximum recursion depth the parse pipeline (`parseDocument` and its
- * `parsers.ts` helpers) and the `helpers.ts` traversal / projection functions
- * (`markdownToHTML`, `renderHTML`, `renderMarkdown`, `walkNodes`, `foldNode`,
- * `rewriteDocument`) honor before degrading. It bounds blockquote nesting, inline
+ * `parsers.ts` helpers), the `helpers.ts` traversal / projection functions
+ * (`markdownToHTML`, `renderMarkdown`, `walkNodes`, `foldNode`, `rewriteDocument`),
+ * and the `compilers.ts` renderer (`renderHTML`) honor before degrading. It bounds blockquote nesting, inline
  * nesting (emphasis / links), and traversal / projection recursion so pathological
  * or hostile input cannot exhaust the call stack. {@link htmlToMarkdown} is the
  * inherited exception: its fold and depth cap belong to `@orkestrel/html`.

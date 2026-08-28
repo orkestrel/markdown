@@ -1,10 +1,8 @@
 import {
-	EMPTY_PROJECTION,
 	createCodeBlockContract,
 	createCodeSpanContract,
 	createLineBreakContract,
 	createMarkdown,
-	createProjection,
 	createTextContract,
 	createThematicBreakContract,
 	parseDocument,
@@ -21,34 +19,6 @@ import {
 	firstBlock,
 	TEST_SEED,
 } from '../../setup.js'
-
-describe('createProjection', () => {
-	it('defaults every absent field from the frozen empty projection', () => {
-		expect(Object.isFrozen(EMPTY_PROJECTION)).toBe(true)
-		expect(createProjection({ text: 'raw' })).toEqual({
-			blocks: [],
-			inlines: [],
-			text: 'raw',
-			cells: [],
-			rows: [],
-		})
-	})
-
-	it('flushes inline content whenever block content is present', () => {
-		expect(
-			createProjection({
-				blocks: [{ element: 'thematicBreak' }],
-				inlines: [{ element: 'text', value: 'discarded' }],
-			}),
-		).toEqual({
-			blocks: [{ element: 'thematicBreak' }],
-			inlines: [],
-			text: '',
-			cells: [],
-			rows: [],
-		})
-	})
-})
 
 // This file covers createMarkdown (returns a working MarkdownInterface)
 // plus the four node-contract factories — createTextContract, createCodeSpanContract,
@@ -102,7 +72,7 @@ describe('createMarkdown', () => {
 })
 
 // Each createXContract factory compiles its shape into a working
-// ContractInterface (AGENTS §14). Full shape behavior (guard/schema/parse/
+// ContractInterface. Full shape behavior (guard/schema/parse/
 // generate parity) lives in shapers.test.ts — here we assert the factory
 // hands back a usable, independent contract, and that a REAL parser-produced
 // leaf node is accepted by its own contract's guard (structural, not a

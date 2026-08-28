@@ -35,7 +35,7 @@ import {
 // and a MAX_DEPTH recursion cap degrades pathologically deep input to a single literal
 // node rather than exhausting the call stack. Render/HTML behavior lives in
 // helpers.test.ts (renderHTML). The AST narrowers and deep-input builders are
-// centralized in tests/setup.ts (AGENTS §16).
+// centralized in tests/setup.ts.
 
 describe('parseDocument — headings', () => {
 	it('parses each ATX level (# … ######) to the right heading level', () => {

@@ -2,7 +2,7 @@
 //
 // A {@link MarkdownInterface} parses a markdown document into a typed AST - a
 // discriminated union of node values keyed by their `element` (the axis that
-// varies, AGENTS §4.4: never `kind` / `type`). The AST is the primary contract
+// varies: never `kind` / `type`). The AST is the primary contract
 // (render-agnostic, exhaustively testable); three separate projections carry it out
 // to sanitized HTML, out to canonical markdown, and in from an HTML AST. Block nodes
 // carry document structure;
@@ -33,6 +33,89 @@ export interface ListItemMatch {
 	readonly indent: number
 	/** The full marker width (indent + bullet/ordinal + the following space) - the continuation indent. */
 	readonly marker: number
+}
+
+/**
+ * The parsed parts of a single ATX heading line - the value the block phase's heading
+ * detector returns for a `#` … `######` line.
+ */
+export interface HeadingMatch {
+	/** The heading's level, 1 to 6. */
+	readonly level: number
+	/** The heading's raw inline text, with an optional closing `#` run stripped. */
+	readonly text: string
+	/** The offset of {@link HeadingMatch.text} inside the original line. */
+	readonly offset: number
+}
+
+/**
+ * The parsed parts of a fenced-code opening line - the value the block phase's fence
+ * detector returns for a ```` ``` ```` or `~~~` opener.
+ */
+export interface FenceMatch {
+	/** The exact fence run; a closer must repeat the same character at least as long. */
+	readonly marker: string
+	/** The first word of the info string, or `undefined` when the fence declares none. */
+	readonly lang: string | undefined
+}
+
+/**
+ * The located extent of one inline code span - the value the inline phase's code
+ * scanner returns for a matched backtick run.
+ */
+export interface CodeSpanMatch {
+	/** The span's literal text, with one padding space stripped from each end. */
+	readonly value: string
+	/** The index one past the span's closing backtick run, exclusive. */
+	readonly end: number
+}
+
+/**
+ * The located syntax bounds of one `[text](href)` link - the value the inline phase's
+ * link locator returns for a balanced label followed by a destination.
+ */
+export interface LinkBounds {
+	/** The index of the label's closing `]`. */
+	readonly close: number
+	/** The index one past the destination's closing `)`, exclusive. */
+	readonly end: number
+}
+
+/**
+ * The located content and syntax bounds of one emphasis run - the value the inline
+ * phase's emphasis locator returns for a matched marker run.
+ */
+export interface EmphasisBounds {
+	/** `true` for a doubled marker (`**strong**`), `false` for a single one (`*em*`). */
+	readonly strong: boolean
+	/** The index of the run's first content character. */
+	readonly open: number
+	/** The index of the closing marker run's first character. */
+	readonly close: number
+	/** The index one past the closing marker run, exclusive. */
+	readonly end: number
+}
+
+/**
+ * The result of collecting one GFM table - the node the construct scanner built and
+ * where the block phase resumes.
+ */
+export interface TableCollection {
+	/** The collected table. */
+	readonly node: TableNode
+	/** The index of the first line after the table. */
+	readonly next: number
+}
+
+/**
+ * The result of collecting one list - the node the construct scanner built and where
+ * the block phase resumes.
+ */
+export interface ListCollection {
+	/** The collected list. */
+	readonly node: ListNode
+	/** The index of the first line after the list. */
+	readonly next: number
 }
 
 /**
@@ -474,7 +557,7 @@ export type MarkdownDerivation<T> = readonly [
  * - **`stream`.** Returns a web-standard {@link ReadableStream} over the top-level
  *   blocks - a fresh, pull-based source per call: exactly one block is enqueued per
  *   `pull`, so a slow consumer's backpressure is respected and no work happens ahead
- *   of demand. Cancellable via the returned stream's own `cancel()`, async-iterable
+ *   of demand. Cancellable through the returned stream's own `cancel()`, async-iterable
  *   wherever the platform supports it (Node, Deno, and browsers that ship the
  *   proposal), and pipeable through any {@link TransformStream} / {@link WritableStream}.
  * - **The surface.** `document` (the AST root), `walk` (the deep traversal), `find` /
