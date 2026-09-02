@@ -77,7 +77,7 @@ and block content inside a table cell flattens to one line.
 ## Guide
 
 For the full surface — the AST shape, the two-phase parse, the sanitization policy, the projection
-seam, and the contract-backed leaf shapes — see [`guides/src/markdown.md`](guides/src/markdown.md).
+seam, and the contract-backed leaf shapes — see [`guides/markdown.md`](guides/markdown.md).
 
 ## Package
 
