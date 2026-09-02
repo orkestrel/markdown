@@ -29,10 +29,10 @@ import {
 	isEscapable,
 	isFenceClose,
 	isFenceWhitespace,
+	isFlankingWhitespace,
 	isQuote,
 	isTableStart,
 	isThematicBreak,
-	isWhitespace,
 	markdownToHTML,
 	joinSources,
 	locateEmphasis,
@@ -348,11 +348,11 @@ describe('countIndent', () => {
 })
 
 describe('line predicates', () => {
-	it('recognizes inline whitespace characters', () => {
-		expect(isWhitespace(' ')).toBe(true)
-		expect(isWhitespace('\t')).toBe(true)
-		expect(isWhitespace('\n')).toBe(true)
-		expect(isWhitespace('x')).toBe(false)
+	it('recognizes the whitespace characters the emphasis flanking rule tests for', () => {
+		expect(isFlankingWhitespace(' ')).toBe(true)
+		expect(isFlankingWhitespace('\t')).toBe(true)
+		expect(isFlankingWhitespace('\n')).toBe(true)
+		expect(isFlankingWhitespace('x')).toBe(false)
 	})
 
 	it('recognizes blank lines (empty or whitespace-only)', () => {

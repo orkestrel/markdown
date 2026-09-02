@@ -34,7 +34,7 @@ import {
 // discriminated node. Pure + total: malformed markdown degrades to text, never throws,
 // and a MAX_DEPTH recursion cap degrades pathologically deep input to a single literal
 // node rather than exhausting the call stack. Render/HTML behavior lives in
-// helpers.test.ts (renderHTML). The AST narrowers and deep-input builders are
+// compilers.test.ts (renderHTML). The AST narrowers and deep-input builders are
 // centralized in tests/setup.ts.
 
 describe('parseDocument — headings', () => {

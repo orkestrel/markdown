@@ -319,19 +319,19 @@ export function countIndent(line: string): number {
 // no guard signature admits.
 
 /**
- * Whether `character` is an inline whitespace character (space / tab / newline) - the
- * emphasis flanking rule's space test.
+ * Checks whether `character` is whitespace under the emphasis flanking rule - a space, a
+ * tab, or a newline.
  *
  * @param character - The character to test
- * @returns `true` when it is inline whitespace
+ * @returns `true` when the flanking rule counts it as whitespace
  *
  * @example
  * ```ts
- * isWhitespace(' ') // true
- * isWhitespace('a') // false
+ * isFlankingWhitespace(' ') // true
+ * isFlankingWhitespace('a') // false
  * ```
  */
-export function isWhitespace(character: string): boolean {
+export function isFlankingWhitespace(character: string): boolean {
 	return character === ' ' || character === '\t' || character === '\n'
 }
 
@@ -939,7 +939,7 @@ export function locateEmphasis(
 	while (start + run < to && source[start + run] === marker && run < 2) run += 1
 	const strong = run === 2
 	const openEnd = start + run
-	if (openEnd >= to || isWhitespace(source[openEnd] ?? '')) return undefined
+	if (openEnd >= to || isFlankingWhitespace(source[openEnd] ?? '')) return undefined
 	let index = openEnd
 	while (index < to) {
 		const character = source[index] ?? ''
@@ -962,7 +962,7 @@ export function locateEmphasis(
 		if (character === marker) {
 			let closeRun = 0
 			while (index + closeRun < to && source[index + closeRun] === marker) closeRun += 1
-			if (closeRun >= run && !isWhitespace(source[index - 1] ?? '')) {
+			if (closeRun >= run && !isFlankingWhitespace(source[index - 1] ?? '')) {
 				return {
 					strong,
 					open: openEnd,
