@@ -1,7 +1,7 @@
 import type { MarkdownProjection } from './types.js'
 
 /**
- * The maximum recursion depth the parse pipeline (`parseDocument` and its
+ * Caps the recursion depth the parse pipeline (`parseDocument` and its
  * `parsers.ts` helpers), the `helpers.ts` traversal / projection functions
  * (`markdownToHTML`, `renderMarkdown`, `walkNodes`, `foldNode`, `rewriteDocument`),
  * and the `compilers.ts` renderer (`renderHTML`) honor before degrading. It bounds blockquote nesting, inline
@@ -12,7 +12,7 @@ import type { MarkdownProjection } from './types.js'
 export const MAX_DEPTH = 64
 
 /**
- * The frozen empty HTML-to-markdown projection from which projection factories
+ * Holds the frozen empty HTML-to-markdown projection from which projection factories
  * default every absent field.
  *
  * @example

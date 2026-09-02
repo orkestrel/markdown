@@ -39,7 +39,7 @@ import {
 // === Block guards
 
 /**
- * Determine whether a node is a heading block.
+ * Determines whether a node is a heading block.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link HeadingNode}; false otherwise
@@ -54,7 +54,7 @@ export function isHeadingNode(node: MarkdownNode): node is HeadingNode {
 }
 
 /**
- * Determine whether a node is a paragraph block.
+ * Determines whether a node is a paragraph block.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link ParagraphNode}; false otherwise
@@ -69,7 +69,7 @@ export function isParagraphNode(node: MarkdownNode): node is ParagraphNode {
 }
 
 /**
- * Determine whether a node is a list block.
+ * Determines whether a node is a list block.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link ListNode}; false otherwise
@@ -84,7 +84,7 @@ export function isListNode(node: MarkdownNode): node is ListNode {
 }
 
 /**
- * Determine whether a node is a GFM table block.
+ * Determines whether a node is a GFM table block.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link TableNode}; false otherwise
@@ -99,7 +99,7 @@ export function isTableNode(node: MarkdownNode): node is TableNode {
 }
 
 /**
- * Determine whether a node is a fenced code block.
+ * Determines whether a node is a fenced code block.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link CodeBlockNode}; false otherwise
@@ -114,7 +114,7 @@ export function isCodeBlockNode(node: MarkdownNode): node is CodeBlockNode {
 }
 
 /**
- * Determine whether a node is a blockquote block.
+ * Determines whether a node is a blockquote block.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link BlockquoteNode}; false otherwise
@@ -129,7 +129,7 @@ export function isBlockquoteNode(node: MarkdownNode): node is BlockquoteNode {
 }
 
 /**
- * Determine whether a node is a thematic break (horizontal rule) block.
+ * Determines whether a node is a thematic break (horizontal rule) block.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link ThematicBreakNode}; false otherwise
@@ -146,7 +146,7 @@ export function isThematicBreakNode(node: MarkdownNode): node is ThematicBreakNo
 // === Inline guards
 
 /**
- * Determine whether a node is a plain text run.
+ * Determines whether a node is a plain text run.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link TextNode}; false otherwise
@@ -161,7 +161,7 @@ export function isTextNode(node: MarkdownNode): node is TextNode {
 }
 
 /**
- * Determine whether a node is an emphasis run (`*em*` / `**strong**`).
+ * Determines whether a node is an emphasis run (`*em*` / `**strong**`).
  *
  * @param node - The AST node to test
  * @returns True if the node is an {@link EmphasisNode}; false otherwise
@@ -176,7 +176,7 @@ export function isEmphasisNode(node: MarkdownNode): node is EmphasisNode {
 }
 
 /**
- * Determine whether a node is an inline code span.
+ * Determines whether a node is an inline code span.
  *
  * @remarks
  * Narrows to {@link CodeSpanNode} - the node whose `element` discriminant is
@@ -195,7 +195,7 @@ export function isCodeSpanNode(node: MarkdownNode): node is CodeSpanNode {
 }
 
 /**
- * Determine whether a node is a GFM hard line break.
+ * Determines whether a node is a GFM hard line break.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link LineBreakNode}; false otherwise
@@ -210,7 +210,7 @@ export function isLineBreakNode(node: MarkdownNode): node is LineBreakNode {
 }
 
 /**
- * Determine whether a node is a link.
+ * Determines whether a node is a link.
  *
  * @param node - The AST node to test
  * @returns True if the node is a {@link LinkNode}; false otherwise
@@ -225,7 +225,7 @@ export function isLinkNode(node: MarkdownNode): node is LinkNode {
 }
 
 /**
- * Determine whether a node is an image.
+ * Determines whether a node is an image.
  *
  * @param node - The AST node to test
  * @returns True if the node is an {@link ImageNode}; false otherwise
@@ -256,7 +256,7 @@ export function isImageNode(node: MarkdownNode): node is ImageNode {
 // no additional `attempt` wrapping is needed here.
 
 /**
- * Determine whether an arbitrary value is a valid {@link InlineNode} - a text
+ * Determines whether an arbitrary value is a valid {@link InlineNode} - a text
  * run, emphasis, code span, hard break, link, or image, recursively validated.
  *
  * @remarks
@@ -265,7 +265,7 @@ export function isImageNode(node: MarkdownNode): node is ImageNode {
  * throw-contained per the `@orkestrel/contract` guard contract.
  *
  * @param value - The value to test
- * @returns `true` when `value` is a well-formed {@link InlineNode}
+ * @returns True if `value` is a well-formed {@link InlineNode}; false otherwise
  *
  * @example
  * ```ts
@@ -297,7 +297,7 @@ export const isInlineNode: Guard<InlineNode> = unionOf(
 )
 
 /**
- * Determine whether an arbitrary value is a valid {@link BlockNode} - a
+ * Determines whether an arbitrary value is a valid {@link BlockNode} - a
  * heading, paragraph, list, table, code block, blockquote, or thematic break,
  * recursively validated.
  *
@@ -309,7 +309,7 @@ export const isInlineNode: Guard<InlineNode> = unionOf(
  * than named separately - it is used at exactly these two sites.
  *
  * @param value - The value to test
- * @returns `true` when `value` is a well-formed {@link BlockNode}
+ * @returns True if `value` is a well-formed {@link BlockNode}; false otherwise
  *
  * @example
  * ```ts
@@ -342,7 +342,7 @@ export const isBlockNode: Guard<BlockNode> = unionOf(
 )
 
 /**
- * Determine whether an arbitrary value is a valid {@link MarkdownNode} - the
+ * Determines whether an arbitrary value is a valid {@link MarkdownNode} - the
  * {@link MarkdownDocument} root, a {@link BlockNode}, a {@link ListItemNode}, or
  * an {@link InlineNode}, recursively validated.
  *
@@ -354,7 +354,7 @@ export const isBlockNode: Guard<BlockNode> = unionOf(
  * named separately - it is used at exactly these two sites.
  *
  * @param value - The value to test
- * @returns `true` when `value` is a well-formed {@link MarkdownNode}
+ * @returns True if `value` is a well-formed {@link MarkdownNode}; false otherwise
  *
  * @example
  * ```ts
@@ -372,7 +372,7 @@ export const isMarkdownNode: Guard<MarkdownNode> = unionOf(
 )
 
 /**
- * Determine whether an arbitrary value is a valid {@link MarkdownDocument} -
+ * Determines whether an arbitrary value is a valid {@link MarkdownDocument} -
  * the parsed-AST root {@link parseDocument} returns, recursively
  * validated.
  *
@@ -382,7 +382,7 @@ export const isMarkdownNode: Guard<MarkdownNode> = unionOf(
  * `@orkestrel/contract` guard contract.
  *
  * @param value - The value to test
- * @returns `true` when `value` is a well-formed {@link MarkdownDocument}
+ * @returns True if `value` is a well-formed {@link MarkdownDocument}; false otherwise
  *
  * @example
  * ```ts

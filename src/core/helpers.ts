@@ -291,7 +291,7 @@ export function normalizeParagraphLine(source: MarkdownSource, breaks: boolean):
 }
 
 /**
- * The count of leading space / tab characters on `line` (a tab counts as one) - the
+ * Counts the leading space / tab characters on `line` (a tab counts as one) - the
  * indent that decides whether a list item's continuation belongs to the item.
  *
  * @param line - The line to measure
@@ -323,7 +323,7 @@ export function countIndent(line: string): number {
  * tab, or a newline.
  *
  * @param character - The character to test
- * @returns `true` when the flanking rule counts it as whitespace
+ * @returns True if the flanking rule counts it as whitespace; false otherwise
  *
  * @example
  * ```ts
@@ -336,11 +336,11 @@ export function isFlankingWhitespace(character: string): boolean {
 }
 
 /**
- * Whether `character` is escapable by a leading backslash - the ASCII punctuation
+ * Checks whether `character` is escapable by a leading backslash - the ASCII punctuation
  * markdown gives meaning to (so `\*` becomes `*` but `\.` stays `\.`).
  *
  * @param character - The single character after a backslash
- * @returns `true` when a backslash before it is an escape
+ * @returns True if a backslash before it is an escape; false otherwise
  *
  * @example
  * ```ts
@@ -353,12 +353,12 @@ export function isEscapable(character: string): boolean {
 }
 
 /**
- * Whether `line` is blank - empty, or containing only whitespace - the markdown
+ * Checks whether `line` is blank - empty, or containing only whitespace - the markdown
  * definition of a blank line that block parsing uses to separate paragraphs, skip
  * gaps, and end list continuations.
  *
  * @param line - The candidate line
- * @returns `true` when the line is blank
+ * @returns True if the line is blank; false otherwise
  *
  * @example
  * ```ts
@@ -370,11 +370,11 @@ export function isBlankLine(line: string): boolean {
 }
 
 /**
- * Whether `line` is a blockquote line (`>` optionally indented up to three spaces) -
+ * Checks whether `line` is a blockquote line (`>` optionally indented up to three spaces) -
  * its content is de-quoted by {@link stripQuote}.
  *
  * @param line - The candidate line
- * @returns `true` when the line begins a blockquote
+ * @returns True if the line begins a blockquote; false otherwise
  *
  * @example
  * ```ts
@@ -386,12 +386,12 @@ export function isQuote(line: string): boolean {
 }
 
 /**
- * Whether `line` closes a fence opened by `marker` - the same fence character, a run
+ * Checks whether `line` closes a fence opened by `marker` - the same fence character, a run
  * at least as long, and nothing else but surrounding whitespace.
  *
  * @param line - The candidate closing line
  * @param marker - The opening fence's marker run (from {@link extractFence})
- * @returns `true` when `line` closes the fence
+ * @returns True if `line` closes the fence; false otherwise
  *
  * @example
  * ```ts
@@ -413,11 +413,11 @@ export function isFenceClose(line: string, marker: string): boolean {
 }
 
 /**
- * Whether `character` is a regex-`\s`-equivalent whitespace character - the
+ * Checks whether `character` is a regex-`\s`-equivalent whitespace character - the
  * character class {@link isFenceClose}'s scan treats as surrounding padding.
  *
  * @param character - The single character to test, or `undefined` past the end of a line
- * @returns `true` when it is whitespace
+ * @returns True if it is whitespace; false otherwise
  *
  * @example
  * ```ts
@@ -437,12 +437,12 @@ export function isFenceWhitespace(character: string | undefined): boolean {
 }
 
 /**
- * Whether `line` is a thematic break (horizontal rule) - three or more of the SAME
+ * Checks whether `line` is a thematic break (horizontal rule) - three or more of the SAME
  * marker `-`, `*`, or `_` (optionally space-separated) and nothing else (`---`,
  * `***`, `___`, `- - -`).
  *
  * @param line - The candidate line
- * @returns `true` when the line is a thematic break
+ * @returns True if the line is a thematic break; false otherwise
  *
  * @example
  * ```ts
@@ -458,13 +458,13 @@ export function isThematicBreak(line: string): boolean {
 }
 
 /**
- * Whether the pair (`header`, `delimiter`) opens a GFM table - `delimiter` is a row of
+ * Checks whether the pair (`header`, `delimiter`) opens a GFM table - `delimiter` is a row of
  * `|`-separated cells each matching `:?-+:?`, the GFM rule that a table requires a
  * header row IMMEDIATELY followed by a delimiter row.
  *
  * @param header - The candidate header line
  * @param delimiter - The line after it (the candidate delimiter)
- * @returns `true` when the two lines open a table
+ * @returns True if the two lines open a table; false otherwise
  *
  * @example
  * ```ts
@@ -514,7 +514,7 @@ export function extractHeading(line: string): HeadingMatch | undefined {
 }
 
 /**
- * Extract a fenced-code opening line (```` ``` ```` or `~~~`, optionally with an info
+ * Extracts a fenced-code opening line (```` ``` ```` or `~~~`, optionally with an info
  * string) into its `{ marker, lang }`, or `undefined` when `line` is not a fence
  * opener. `marker` is the exact fence run (the closer must match the same character +
  * at least the same length); `lang` is the first word of the info string.
@@ -538,7 +538,7 @@ export function extractFence(line: string): FenceMatch | undefined {
 }
 
 /**
- * Extract a list-item line (`-` / `*` / `+` bullet, or `1.` / `1)` ordinal, followed by
+ * Extracts a list-item line (`-` / `*` / `+` bullet, or `1.` / `1)` ordinal, followed by
  * a space) into its {@link ListItemMatch}, or `undefined` when `line` is not a list
  * item. `content` is the text after the marker; `marker` is the full marker-plus-space
  * width (for measuring a continuation's indent).
@@ -593,7 +593,7 @@ export function stripQuote(source: MarkdownSource): MarkdownSource {
 }
 
 /**
- * Split one GFM table row into its cell strings - outer pipes are optional, an escaped
+ * Splits one GFM table row into its cell strings - outer pipes are optional, an escaped
  * pipe (`\|`) inside a cell is NOT a separator (it becomes a literal `|`), and the
  * empty leading / trailing cell produced by an outer `|` is dropped. Derives the string
  * form from {@link splitTableSources}, which owns the escaped-pipe splitting rule.
@@ -659,7 +659,7 @@ export function splitTableSources(row: MarkdownSource): readonly MarkdownSource[
 }
 
 /**
- * Derive the per-column {@link TableAlign} list from a GFM delimiter row - `:---`
+ * Derives the per-column {@link TableAlign} list from a GFM delimiter row - `:---`
  * left, `---:` right, `:---:` center, and `---` as the explicit no-alignment
  * marker represented by `null`.
  *
@@ -686,7 +686,7 @@ export function delimiterToAlignments(delimiter: string): ReadonlyArray<TableAli
 //  Block phase
 
 /**
- * Whether the line at `index` starts a NEW block kind (heading / fence / thematic
+ * Checks whether the line at `index` starts a NEW block kind (heading / fence / thematic
  * break / blockquote / list / table) - the paragraph collector stops at such a line
  * so a block following a paragraph without a blank line still parses (a trusted-input
  * caller writing a `##` heading directly under a paragraph, with no intervening blank
@@ -694,7 +694,7 @@ export function delimiterToAlignments(delimiter: string): ReadonlyArray<TableAli
  *
  * @param lines - The document's lines
  * @param index - The line index to test
- * @returns `true` when the line begins a different block
+ * @returns True if the line begins a different block; false otherwise
  *
  * @example
  * ```ts
@@ -716,7 +716,7 @@ export function startsBlock(lines: readonly string[], index: number): boolean {
 //  Inline phase
 
 /**
- * Resolve backslash escapes in a raw string to their literal characters - used for a
+ * Resolves backslash escapes in a raw string to their literal characters - used for a
  * link `href` (which is not otherwise inline-parsed) and any plain text run.
  *
  * @param text - The raw text possibly carrying `\x` escapes
@@ -742,7 +742,7 @@ export function unescapeText(text: string): string {
 }
 
 /**
- * Merge adjacent text nodes into one - the inline scanner emits a text node per
+ * Merges adjacent text nodes into one - the inline scanner emits a text node per
  * unrecognized character, so coalescing keeps the AST clean and assertion-friendly.
  *
  * @param nodes - The inline nodes (possibly with adjacent text runs)
@@ -781,7 +781,7 @@ export function coalesceText(
 }
 
 /**
- * Scan an inline code span at `start` (a `` ` ``-run … a matching `` ` ``-run of the
+ * Scans an inline code span at `start` (a `` ` ``-run … a matching `` ` ``-run of the
  * SAME length, the CommonMark rule that lets a span contain backticks). Returns the
  * span's literal text + end index, or `undefined` when no matching closer exists (it
  * then degrades to literal backticks).
@@ -1019,7 +1019,7 @@ export function scanEmphasis(
 }
 
 /**
- * Scan the window `[from, to)` of `source` into inline nodes - the single recursive
+ * Scans the window `[from, to)` of `source` into inline nodes - the single recursive
  * engine the inline phase runs on (emphasis, link text, and image alternative
  * content recurse through it). Linear:
  * each character is consumed once; a failed construct emits its opening character as
@@ -1409,7 +1409,7 @@ export function collectList(
 //  Rendering (Markdown AST → HTML AST → sanitized HTML string)
 
 /**
- * Project a {@link MarkdownNode} into an unsanitized {@link HTMLDocument}.
+ * Projects a {@link MarkdownNode} into an unsanitized {@link HTMLDocument}.
  *
  * @remarks
  * The projection is pure and iterative. Text and attribute values remain literal for
@@ -1709,7 +1709,7 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 }
 
 /**
- * Render a {@link MarkdownNode} to its CANONICAL markdown source - the inverse
+ * Renders a {@link MarkdownNode} to its CANONICAL markdown source - the inverse
  * projection of `renderHTML`, and the serializer a `parse(renderMarkdown(doc))`
  * round-trip is built on. Canonical forms: `*` / `**` emphasis at even emphasis
  * nesting depths and `_` / `__` at odd depths, `- ` bullets, `N. ` sequential
@@ -2118,7 +2118,7 @@ export function createProjection(parts: Partial<MarkdownProjection> = {}): Markd
 }
 
 /**
- * Trim the whitespace at the two ends of an inline run - the leading whitespace of a
+ * Trims the whitespace at the two ends of an inline run - the leading whitespace of a
  * leading text node and the trailing whitespace of a trailing one - dropping either
  * node when nothing survives.
  *
@@ -2154,7 +2154,7 @@ export function trimInlines(nodes: readonly InlineNode[]): readonly InlineNode[]
 }
 
 /**
- * Reduce an inline run to the shape markdown can actually write back: adjacent text
+ * Reduces an inline run to the shape markdown can actually write back: adjacent text
  * coalesced, empty text dropped, and every hard break either kept as a real line
  * ending or spent as a space.
  *
@@ -2214,7 +2214,7 @@ export function normalizeInlines(
 }
 
 /**
- * Combine the projections of one node's children into the projection of that node -
+ * Combines the projections of one node's children into the projection of that node -
  * the single place inline runs become paragraphs, so no ancestor has to decide it
  * twice.
  *
@@ -2289,7 +2289,7 @@ export function mergeProjections(children: readonly MarkdownProjection[]): Markd
 }
 
 /**
- * Read a projection as BLOCK content - the view a document, a blockquote, and a list
+ * Reads a projection as BLOCK content - the view a document, a blockquote, and a list
  * item each need.
  *
  * @remarks
@@ -2327,7 +2327,7 @@ export function projectionToBlocks(projection: MarkdownProjection): readonly Blo
 }
 
 /**
- * Read a projection as INLINE content - the view a link, an emphasis, and a table cell
+ * Reads a projection as INLINE content - the view a link, an emphasis, and a table cell
  * each need.
  *
  * @remarks
@@ -2362,7 +2362,7 @@ export function projectionToInlines(projection: MarkdownProjection): readonly In
 }
 
 /**
- * Project one HTML leaf - a text node, a comment, or a doctype - to its
+ * Projects one HTML leaf - a text node, a comment, or a doctype - to its
  * {@link MarkdownProjection}.
  *
  * @remarks
@@ -2392,7 +2392,7 @@ export function projectHTMLLeaf(
 }
 
 /**
- * Project one HTML container - the document root or an element - from its children's
+ * Projects one HTML container - the document root or an element - from its children's
  * already-computed projections. THE element mapping, and the only place that decides
  * what an HTML tag becomes in markdown.
  *
@@ -2706,7 +2706,7 @@ export function projectHTMLNode(
 }
 
 /**
- * Project an `@orkestrel/html` {@link HTMLNode} into a {@link MarkdownDocument} - the
+ * Projects an `@orkestrel/html` {@link HTMLNode} into a {@link MarkdownDocument} - the
  * HTML→markdown direction, and the inverse of {@link markdownToHTML}.
  *
  * @remarks
@@ -2765,7 +2765,7 @@ export function htmlToMarkdown(node: HTMLNode): MarkdownDocument {
 }
 
 /**
- * Depth-first, pre-order, root-inclusive traversal of a {@link MarkdownNode} - yields
+ * Walks a {@link MarkdownNode} depth-first, pre-order, root-inclusive - yields
  * the node itself, then recurses into its children (block children, list items,
  * image/link inline children, table header/row cells' inline nodes) in walk order.
  *
@@ -2824,7 +2824,7 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
 }
 
 /**
- * Fold a {@link MarkdownNode} into a `T` through a total catamorphism - children are
+ * Folds a {@link MarkdownNode} into a `T` through a total catamorphism - children are
  * folded first (post-order), then the node's own {@link MarkdownHandler} is invoked
  * with the already-folded children.
  *
@@ -2996,7 +2996,7 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, d
 }
 
 /**
- * Rewrite a {@link MarkdownDocument} bottom-up (copy-on-write) - each node's children
+ * Rewrites a {@link MarkdownDocument} bottom-up (copy-on-write) - each node's children
  * are rewritten first (post-order), then `rewrite` is applied to the node itself; the
  * document ROOT is never passed to `rewrite` (the `element: 'document'` invariant
  * always holds). A table's inline cells and a list's items ARE rewritten.
@@ -3257,7 +3257,7 @@ export function rewriteDocument(
 }
 
 /**
- * Concatenate the `value` / `code` content of every descendant text / code-span /
+ * Concatenates the `value` / `code` content of every descendant text / code-span /
  * code-block node under `node`, including image alternative content, in walk order -
  * the plain-text projection of an AST (search indexing, word counts, a text-only
  * preview).

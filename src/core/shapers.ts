@@ -18,7 +18,7 @@ import {
 // (validators.ts) through `lazyOf`.
 
 /**
- * The shape of a {@link TextNode} - a plain-text leaf inline run.
+ * Describes the shape of a {@link TextNode} - a plain-text leaf inline run.
  *
  * @example
  * ```ts
@@ -35,7 +35,7 @@ export const textShape = objectShape({
 })
 
 /**
- * The shape of a {@link CodeSpanNode} - an inline code span (`` `code` ``).
+ * Describes the shape of a {@link CodeSpanNode} - an inline code span (`` `code` ``).
  *
  * @example
  * ```ts
@@ -52,7 +52,7 @@ export const codeSpanShape = objectShape({
 })
 
 /**
- * The shape of a {@link LineBreakNode} - a GFM hard line-break leaf.
+ * Describes the shape of a {@link LineBreakNode} - a GFM hard line-break leaf.
  *
  * @example
  * ```ts
@@ -68,7 +68,7 @@ export const lineBreakShape = objectShape({
 })
 
 /**
- * The shape of a {@link CodeBlockNode} - a fenced code block. `lang` is
+ * Describes the shape of a {@link CodeBlockNode} - a fenced code block. `lang` is
  * optional (absent when the opening fence carries no info-string).
  *
  * @example
@@ -88,7 +88,7 @@ export const codeBlockShape = objectShape({
 })
 
 /**
- * The shape of a {@link ThematicBreakNode} - a horizontal rule. Carries no
+ * Describes the shape of a {@link ThematicBreakNode} - a horizontal rule. Carries no
  * fields beyond its `element` discriminant.
  *
  * @example
@@ -105,7 +105,7 @@ export const thematicBreakShape = objectShape({
 })
 
 /**
- * The shape of a {@link TableAlign} - the per-column GFM table alignment
+ * Describes the shape of a {@link TableAlign} - the per-column GFM table alignment
  * literal.
  *
  * @example
@@ -122,7 +122,7 @@ export const thematicBreakShape = objectShape({
 export const tableAlignShape = literalShape(['left', 'right', 'center'])
 
 /**
- * The shape of {@link ListItemMatch} - the parsed parts of a single list-item
+ * Describes the shape of {@link ListItemMatch} - the parsed parts of a single list-item
  * line the block phase's list detector returns. Fully non-recursive (no
  * nested node fields), so every field shapes directly.
  *

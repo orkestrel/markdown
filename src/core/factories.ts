@@ -19,7 +19,7 @@ import {
 } from './shapers.js'
 
 /**
- * Create a stateful markdown handle from a markdown string or an already-parsed
+ * Creates a stateful markdown handle from a markdown string or an already-parsed
  * {@link MarkdownDocument} - a typed AST plus the query, rewrite, and fold operations
  * {@link MarkdownInterface} exposes.
  *
@@ -49,7 +49,7 @@ export function createMarkdown(input: string | MarkdownDocument): MarkdownInterf
 }
 
 /**
- * Compile the {@link textShape} into a {@link ContractInterface} for
+ * Compiles the {@link textShape} into a {@link ContractInterface} for
  * {@link TextNode} - a guard, coercing parser, JSON Schema, and seeded
  * generator from one shape declaration.
  *
@@ -68,7 +68,7 @@ export function createTextContract(): ContractInterface<TextNode> {
 }
 
 /**
- * Compile the {@link codeSpanShape} into a {@link ContractInterface} for
+ * Compiles the {@link codeSpanShape} into a {@link ContractInterface} for
  * {@link CodeSpanNode} - a guard, coercing parser, JSON Schema, and seeded
  * generator from one shape declaration.
  *
@@ -87,7 +87,7 @@ export function createCodeSpanContract(): ContractInterface<CodeSpanNode> {
 }
 
 /**
- * Compile the {@link lineBreakShape} into a {@link ContractInterface} for
+ * Compiles the {@link lineBreakShape} into a {@link ContractInterface} for
  * {@link LineBreakNode}.
  *
  * @returns A `LineBreakNode` contract bundling `schema` / `is` / `parse` / `generate`
@@ -104,7 +104,7 @@ export function createLineBreakContract(): ContractInterface<LineBreakNode> {
 }
 
 /**
- * Compile the {@link codeBlockShape} into a {@link ContractInterface} for
+ * Compiles the {@link codeBlockShape} into a {@link ContractInterface} for
  * {@link CodeBlockNode} - a guard, coercing parser, JSON Schema, and seeded
  * generator from one shape declaration.
  *
@@ -123,7 +123,7 @@ export function createCodeBlockContract(): ContractInterface<CodeBlockNode> {
 }
 
 /**
- * Compile the {@link thematicBreakShape} into a {@link ContractInterface} for
+ * Compiles the {@link thematicBreakShape} into a {@link ContractInterface} for
  * {@link ThematicBreakNode} - a guard, coercing parser, JSON Schema, and
  * seeded generator from one shape declaration.
  *

@@ -11,7 +11,7 @@ import { foldNode, rewriteDocument, walkNodes } from './helpers.js'
 import { parseProvenance } from './parsers.js'
 
 /**
- * A stateful, parsed markdown document - wraps a typed {@link MarkdownDocument} AST
+ * Wraps a typed {@link MarkdownDocument} AST as a stateful, parsed markdown document
  * with the query (`find` / `filter` / `reduce` / iteration), rewrite (`map`), fold, and
  * streaming operations {@link MarkdownInterface} declares.
  *
@@ -66,7 +66,7 @@ export class Markdown implements MarkdownInterface {
 		}
 	}
 
-	/** The stored {@link MarkdownDocument} AST root. */
+	/** Holds the stored {@link MarkdownDocument} AST root. */
 	get document(): MarkdownDocument {
 		return this.#document
 	}
@@ -94,7 +94,7 @@ export class Markdown implements MarkdownInterface {
 	}
 
 	/**
-	 * THE deep traversal - a lazy, depth-first, pre-order, root-inclusive generator
+	 * Returns THE deep traversal - a lazy, depth-first, pre-order, root-inclusive generator
 	 * over every {@link MarkdownNode} in the document. `find` / `filter` / `reduce`
 	 * all iterate this single traversal.
 	 *
@@ -160,7 +160,7 @@ export class Markdown implements MarkdownInterface {
 	}
 
 	/**
-	 * A web-standard {@link ReadableStream} over the document's top-level block nodes
+	 * Returns a web-standard {@link ReadableStream} over the document's top-level block nodes
 	 * (shallow, source order) - a fresh, pull-based source per call: one block is
 	 * enqueued per `pull`, so a slow reader's backpressure is respected. Cancellable,
 	 * async-iterable wherever the platform supports it (Node, Deno), and pipeable
