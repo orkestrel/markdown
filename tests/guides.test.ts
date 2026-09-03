@@ -688,4 +688,32 @@ describe('flagship fences', () => {
 		)
 		expect(guideText).toContain('text.is(fixture) // true')
 	})
+
+	it('renders markdown-sourced hostile content the sanitizer paragraphs claim', () => {
+		const source = [
+			'<script>alert(1)</script>',
+			'',
+			'[link](javascript:alert(1))',
+			'',
+			'![alt](javascript:alert(1))',
+			'',
+			'![alt](https://x.dev/pic.png)',
+		].join('\n')
+
+		const html = renderHTML(parseDocument(source))
+
+		expect(html).toBe(
+			'<p>&lt;script&gt;alert(1)&lt;/script&gt;</p><p><a>link</a></p><p><img alt="alt"></p><p><img src="https://x.dev/pic.png" alt="alt"></p>',
+		)
+	})
+
+	it('carries the sanitizer fence lines the transcription copies', () => {
+		expect(guideText).toContain("'<script>alert(1)</script>',")
+		expect(guideText).toContain("'[link](javascript:alert(1))',")
+		expect(guideText).toContain("'![alt](javascript:alert(1))',")
+		expect(guideText).toContain("'![alt](https://x.dev/pic.png)',")
+		expect(guideText).toContain(
+			'// \'<p>&lt;script&gt;alert(1)&lt;/script&gt;</p><p><a>link</a></p><p><img alt="alt"></p><p><img src="https://x.dev/pic.png" alt="alt"></p>\'',
+		)
+	})
 })

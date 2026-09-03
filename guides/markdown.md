@@ -427,9 +427,30 @@ There is one URL floor here, and markdown does not own it. `@orkestrel/html` own
 markdownToHTML(node) → new HTML(document).sanitize({ attributes: [...SAFE_ATTRIBUTES, 'src'] }) → renderHTML(document)
 ```
 
-Only the middle step judges anything. `markdownToHTML` is deliberately inert: it leaves text literal and destinations unsanitized so that the projection stays a pure AST-to-AST mapping and a caller who wants a different policy can supply one. Everything that makes the output safe comes from html's floor, which no option can lower: an `UNSAFE_ELEMENTS` subtree (`script`, `style`, `template`, `svg`, forms, metadata) is removed WHOLE rather than unwrapped, so its body can never resurface as markup; every `on*` handler attribute and `style` / `srcdoc` / namespaced attribute is removed; a URL attribute is entity-decoded to a bounded fixpoint and stripped of ASCII whitespace and control characters BEFORE its scheme is checked, and `javascript:`, `data:`, `vbscript:`, `file:`, and the protocol-relative forms (`//`, `\\`, `/\`) are refused whatever the allowlist says. This is defence-in-depth: `renderHTML` accepts any `MarkdownNode`, including one a caller constructed by hand, rewrote through `map`, or accepted from elsewhere, so it can never assume its input came from `parseDocument` on trusted markdown.
+Only the middle step judges anything. `markdownToHTML` is deliberately inert: it leaves text literal and destinations unsanitized so that the projection stays a pure AST-to-AST mapping and a caller who wants a different policy can supply one. `markdownToHTML` projects only markdown's own node shapes — headings, paragraphs, links, images, emphasis, code, tables, and the rest — and never an `UNSAFE_ELEMENTS` tag such as `script`, the case the fence below exercises: raw HTML written in markdown source has no node shape of its own, so the parser leaves it as literal text and it reaches the output escaped rather than as an element. html's `UNSAFE_ELEMENTS` removal therefore has nothing to remove in this pipeline; what actually judges the projection's output is html's attribute floor, whose full refusal list — the always-stripped attributes and the hard-banned schemes — is [`guides/html.md`](./html.md)'s to state. The fence below shows one member of that floor: a `javascript:` destination stripped from a link's `href` and from an image's `src` while the element and its remaining content survive. This still runs unconditionally: `renderHTML` accepts any `MarkdownNode`, including one a caller constructed by hand, rewrote through `map`, or accepted from elsewhere, so it can never assume its input came from `parseDocument` on trusted markdown, and a hand-built node whose destination or attribute is hostile is still caught at this floor.
 
 **The one widening: `src`.** html's `SAFE_ATTRIBUTES` deliberately omits resource `src`, because a sanitized page that keeps its `alt` text and loses its download is the safer default for a general HTML sanitizer. Markdown cannot accept that default — `![alt](src)` is syntax whose entire content is a destination — so `renderHTML` widens the attribute allowlist by exactly `src`, and by nothing else. The widening is narrow by construction: `src` is a member of html's `URL_ATTRIBUTES`, so every widened value still goes through `sanitizeURL`, and the hard refusals are not part of the allowlist axis at all and cannot be widened by anyone. A refused image keeps its element and its alt text and loses only the destination.
+
+```ts
+import { parseDocument, renderHTML } from '@orkestrel/markdown'
+
+const source = [
+	'<script>alert(1)</script>',
+	'',
+	'[link](javascript:alert(1))',
+	'',
+	'![alt](javascript:alert(1))',
+	'',
+	'![alt](https://x.dev/pic.png)',
+].join('\n')
+
+const html = renderHTML(parseDocument(source))
+// '<p>&lt;script&gt;alert(1)&lt;/script&gt;</p><p><a>link</a></p><p><img alt="alt"></p><p><img src="https://x.dev/pic.png" alt="alt"></p>'
+// — the script line has no element shape of its own and renders as escaped text, so no
+// script tag ever reaches the output for html's UNSAFE_ELEMENTS floor to remove; the
+// javascript: link keeps its text and drops its href; the javascript: image keeps its
+// element and its alt and drops only its src; the https: image keeps its src.
+```
 
 **What the composed output looks like.** Four differences are worth stating plainly, because they are visible in any byte-level comparison against a hand-rolled markdown renderer:
 
