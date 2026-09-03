@@ -97,6 +97,28 @@ export interface EmphasisBounds {
 }
 
 /**
+ * Represents the scanned result of one `[text](href)` link - the node the inline phase's link
+ * scanner built from {@link LinkBounds} and where the scan resumes.
+ */
+export interface LinkScan {
+	/** Holds the scanned link, its text already scanned into inline children. */
+	readonly node: LinkNode
+	/** Holds the index one past the destination's closing `)`, exclusive. */
+	readonly end: number
+}
+
+/**
+ * Represents the scanned result of one emphasis run - the node the inline phase's emphasis
+ * scanner built from {@link EmphasisBounds} and where the scan resumes.
+ */
+export interface EmphasisScan {
+	/** Holds the scanned emphasis run, its content already scanned into inline children. */
+	readonly node: EmphasisNode
+	/** Holds the index one past the closing marker run, exclusive. */
+	readonly end: number
+}
+
+/**
  * Represents the result of collecting one GFM table - the node the construct scanner built and
  * where the block phase resumes.
  */
@@ -441,7 +463,7 @@ export interface MarkdownProjection {
 /**
  * Represents a fold handler for one AST element - receives the node and its children
  * ALREADY folded to `T`, and produces the node's own `T`. The building block of a
- * {@link MarkdownHandlers} catamorphism table.
+ * {@link MarkdownHandlerMap} catamorphism table.
  */
 export type MarkdownHandler<TNode, T> = (node: TNode, children: readonly T[]) => T
 
@@ -450,7 +472,7 @@ export type MarkdownHandler<TNode, T> = (node: TNode, children: readonly T[]) =>
  * {@link MarkdownHandler} per AST element, keyed by its `element` discriminant. Every
  * key is required: a fold is total over the AST, so there is no element it can skip.
  */
-export interface MarkdownHandlers<T> {
+export interface MarkdownHandlerMap<T> {
 	/** Folds a {@link MarkdownDocument} root from its already-folded block children. */
 	readonly document: MarkdownHandler<MarkdownDocument, T>
 	/** Folds a {@link HeadingNode} from its already-folded inline children. */
@@ -610,8 +632,8 @@ export interface MarkdownInterface {
 	map(rewrite: MarkdownRewriteHandler): MarkdownInterface
 	/** Folds the AST depth-first, pre-order into an accumulator. */
 	reduce<T>(callback: (accumulator: T, node: MarkdownNode) => T, initial: T): T
-	/** Runs a total catamorphism over the document using a {@link MarkdownHandlers} table. */
-	fold<T>(handlers: MarkdownHandlers<T>): T
+	/** Runs a total catamorphism over the document using a {@link MarkdownHandlerMap} table. */
+	fold<T>(handlers: MarkdownHandlerMap<T>): T
 	/**
 	 * Returns a web-standard {@link ReadableStream} over the document's top-level block nodes
 	 * (shallow, source order) - a lazy, pull-based, backpressure-respecting source. A

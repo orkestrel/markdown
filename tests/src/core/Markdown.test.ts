@@ -2,7 +2,7 @@ import type {
 	BlockNode,
 	BlockquoteNode,
 	MarkdownDocument,
-	MarkdownHandlers,
+	MarkdownHandlerMap,
 	MarkdownNode,
 	ParagraphNode,
 	TextNode,
@@ -373,7 +373,7 @@ describe('Markdown — reduce', () => {
 })
 
 describe('Markdown — fold', () => {
-	const countHandlers: MarkdownHandlers<number> = {
+	const countHandlers: MarkdownHandlerMap<number> = {
 		document: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
 		heading: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
 		paragraph: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
@@ -402,7 +402,7 @@ describe('Markdown — fold', () => {
 
 	it('a table handler receives folded cells as a flat readonly array (header then row cells, in walk order)', () => {
 		const markdown = new Markdown('| a | b |\n| - | - |\n| 1 | 2 |')
-		const cellHandlers: MarkdownHandlers<string> = {
+		const cellHandlers: MarkdownHandlerMap<string> = {
 			document: (_node, children) => children.join(''),
 			heading: (_node, children) => children.join(''),
 			paragraph: (_node, children) => children.join(''),
@@ -424,7 +424,7 @@ describe('Markdown — fold', () => {
 
 	it('folds children before the parent — a fold table can reconstruct a rendered form', () => {
 		const markdown = new Markdown('# Hi')
-		const htmlLikeHandlers: MarkdownHandlers<string> = {
+		const htmlLikeHandlers: MarkdownHandlerMap<string> = {
 			document: (_node, children) => children.join('\n'),
 			heading: (node, children) => `<h${node.level}>${children.join('')}</h${node.level}>`,
 			paragraph: (_node, children) => `<p>${children.join('')}</p>`,
@@ -447,7 +447,7 @@ describe('Markdown — fold', () => {
 	it('does not throw over a ~70-deep valid blockquote chain, and the MAX_DEPTH cap hands the innermost handler empty children', () => {
 		const markdown = new Markdown(buildDeepQuoteInput(70, 'leaf'))
 		const seenEmptyChildren: boolean[] = []
-		const cappedHandlers: MarkdownHandlers<number> = {
+		const cappedHandlers: MarkdownHandlerMap<number> = {
 			document: (_node, children) => children.length,
 			heading: (_node, children) => children.length,
 			paragraph: (_node, children) => children.length,

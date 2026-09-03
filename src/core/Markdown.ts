@@ -1,7 +1,7 @@
 import type {
 	BlockNode,
 	MarkdownDocument,
-	MarkdownHandlers,
+	MarkdownHandlerMap,
 	MarkdownInterface,
 	MarkdownNode,
 	MarkdownRewriteHandler,
@@ -154,8 +154,8 @@ export class Markdown implements MarkdownInterface {
 		return accumulator
 	}
 
-	/** Runs a total catamorphism over the document using a {@link MarkdownHandlers} table. */
-	fold<T>(handlers: MarkdownHandlers<T>): T {
+	/** Runs a total catamorphism over the document using a {@link MarkdownHandlerMap} table. */
+	fold<T>(handlers: MarkdownHandlerMap<T>): T {
 		return foldNode(this.#document, handlers, 0)
 	}
 

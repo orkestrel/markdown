@@ -1,6 +1,6 @@
 # Guides
 
-A dual-axis index into this repository's guides — by concept, and by directory (AGENTS §22).
+A dual-axis index into this repository's guides — by concept, and by directory.
 
 ## By concept
 
@@ -10,15 +10,14 @@ A dual-axis index into this repository's guides — by concept, and by directory
 
 ## By directory
 
-| Directory    | Guide                                                                                                                            |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `src/core`   | [`markdown.md`](markdown.md)                                                                                                     |
-| `guides/src` | Dependency mirrors: [`contract.md`](contract.md), [`guide.md`](guide.md), [`html.md`](html.md), and [`scaffold.md`](scaffold.md) |
+| Directory  | Guide                        |
+| ---------- | ---------------------------- |
+| `src/core` | [`markdown.md`](markdown.md) |
 
 ## Dependency reference
 
 [`html.md`](html.md) is a byte-identical mirror of the guide for
-`@orkestrel/html` — one of this package's two runtime dependencies. It documents
+`@orkestrel/html` — a runtime dependency of this package. It documents
 **that package's** HTML AST, total parser, canonical serializer, sanitize floor,
 and `foldNode`, not anything sourced in this repo; it is kept here so a reader of
 the two conversion directions can inspect the foundation they compose without
@@ -48,4 +47,4 @@ set.
 
 ## See also
 
-- [`AGENTS.md`](../AGENTS.md) — the rules; §22 documentation-as-contracts.
+- [`AGENTS.md`](../AGENTS.md) — the repository rules, including the documentation contract every guide here is held to.

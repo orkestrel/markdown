@@ -10,12 +10,12 @@ import type {
 	BlockNode,
 	CodeSpanMatch,
 	EmphasisBounds,
-	EmphasisNode,
+	EmphasisScan,
 	FenceMatch,
 	HeadingMatch,
 	InlineNode,
 	LinkBounds,
-	LinkNode,
+	LinkScan,
 	ListCollection,
 	ListItemNode,
 	ListItemMatch,
@@ -23,7 +23,7 @@ import type {
 	MarkdownCell,
 	MarkdownDerivation,
 	MarkdownDocument,
-	MarkdownHandlers,
+	MarkdownHandlerMap,
 	MarkdownNode,
 	MarkdownProjection,
 	MarkdownRewriteHandler,
@@ -43,6 +43,7 @@ import {
 	TABLE_ALIGNMENTS,
 	UNSAFE_ELEMENTS,
 	attributeOf,
+	collapseSpace,
 	foldNode as foldHTMLNode,
 	renderText,
 	sanitizeURL,
@@ -903,7 +904,7 @@ export function scanLink(
 	start: number,
 	to: number,
 	depth = 0,
-): { readonly node: LinkNode; readonly end: number } | undefined {
+): LinkScan | undefined {
 	const located = locateLink(source, start, to)
 	if (located === undefined) return undefined
 	const href = unescapeText(source.slice(located.close + 2, located.end - 1).trim())
@@ -1005,7 +1006,7 @@ export function scanEmphasis(
 	start: number,
 	to: number,
 	depth = 0,
-): { readonly node: EmphasisNode; readonly end: number } | undefined {
+): EmphasisScan | undefined {
 	const located = locateEmphasis(source, start, to)
 	if (located === undefined) return undefined
 	return {
@@ -2167,8 +2168,8 @@ export function trimInlines(nodes: readonly InlineNode[]): readonly InlineNode[]
  * becomes the space it stood for.
  *
  * @param nodes - The inline run to normalize
- * @param breaks - Whether the target context can carry a hard break at all; `false` for
- *   a heading or a table cell, where every break becomes a space
+ * @param breaks - If `true`, keeps each hard break as a real line ending; if `false`, spends
+ *   every break as the space it stood for, as a heading or a table cell requires
  * @returns The normalized run
  *
  * @example
@@ -2353,11 +2354,7 @@ export function projectionToInlines(projection: MarkdownProjection): readonly In
 	) {
 		return coalesceText(projection.inlines)
 	}
-	const value = projectionToBlocks(projection)
-		.map(flattenText)
-		.join(' ')
-		.replace(/\s+/g, ' ')
-		.trim()
+	const value = collapseSpace(projectionToBlocks(projection).map(flattenText).join(' '))
 	return isEmptyString(value) ? [] : [{ element: 'text', value }]
 }
 
@@ -2545,7 +2542,7 @@ export function projectHTMLNode(
 				text: merged.text,
 			})
 		case 'img': {
-			const alt = (attributeOf(node, 'alt') ?? '').replace(/\s+/g, ' ').trim()
+			const alt = collapseSpace(attributeOf(node, 'alt') ?? '')
 			return createProjection({
 				inlines: [
 					{
@@ -2841,20 +2838,20 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
  * with an empty children list instead of recursing further.
  *
  * @param node - The AST node to fold
- * @param handlers - The total {@link MarkdownHandlers} table, one handler per element
+ * @param handlers - The total {@link MarkdownHandlerMap} table, one handler per element
  * @param depth - The starting recursion depth (pass `0` at the entry point)
  * @returns The folded `T`
  *
  * @example
  * ```ts
- * const countHandlers: MarkdownHandlers<number> = {
+ * const countHandlers: MarkdownHandlerMap<number> = {
  *   document: (_, children) => children.reduce((a, b) => a + b, 1),
  *   // ...one handler per element, each summing its folded children
  * }
  * foldNode(document, countHandlers, 0) // total node count
  * ```
  */
-export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlers<T>, depth: number): T {
+export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlerMap<T>, depth: number): T {
 	const stack: Array<{
 		readonly node: MarkdownNode
 		readonly depth: number

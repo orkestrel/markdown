@@ -621,9 +621,9 @@ describe('parseDocument — total / malformed input never throws', () => {
 	})
 
 	it('parses a long emphasis-marker run quickly (linear-time, no ReDoS)', () => {
-		const start = Date.now()
+		const start = performance.now()
 		parseDocument('a'.repeat(20_000) + '*'.repeat(20_000))
-		expect(Date.now() - start).toBeLessThan(1000)
+		expect(performance.now() - start).toBeLessThan(1000)
 	})
 
 	it('parses a pathologically deep blockquote (10,000 levels) without throwing', () => {

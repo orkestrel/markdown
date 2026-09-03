@@ -4,7 +4,7 @@ import type {
 	BlockquoteNode,
 	InlineNode,
 	MarkdownDocument,
-	MarkdownHandlers,
+	MarkdownHandlerMap,
 	MarkdownNode,
 	ParagraphNode,
 	MarkdownSource,
@@ -1553,7 +1553,7 @@ describe('walkNodes', () => {
 })
 
 describe('foldNode', () => {
-	const countHandlers: MarkdownHandlers<number> = {
+	const countHandlers: MarkdownHandlerMap<number> = {
 		document: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
 		heading: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
 		paragraph: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
@@ -1593,7 +1593,7 @@ describe('foldNode', () => {
 
 	it('folds children-first (post-order) — a text-collecting fold sees leaves before their parent', () => {
 		const order: string[] = []
-		const handlers: MarkdownHandlers<string> = {
+		const handlers: MarkdownHandlerMap<string> = {
 			document: (node) => {
 				order.push(node.element)
 				return node.element
@@ -1671,7 +1671,7 @@ describe('foldNode', () => {
 			rows: [[[{ element: 'text', value: 'r1c1' }], [{ element: 'text', value: 'r1c2' }]]],
 			align: [null, null],
 		}
-		const textHandlers: MarkdownHandlers<string> = {
+		const textHandlers: MarkdownHandlerMap<string> = {
 			document: (_, children) => children.join(''),
 			heading: (_, children) => children.join(''),
 			paragraph: (_, children) => children.join(''),
@@ -2255,6 +2255,16 @@ describe('projectionToInlines', () => {
 			projectionToInlines(buildProjection({ blocks: [{ element: 'thematicBreak' }] })),
 		).toEqual([])
 	})
+
+	it('collapses every whitespace run of the flattened text and drops its edge whitespace', () => {
+		expect(
+			projectionToInlines(
+				buildProjection({
+					blocks: [{ element: 'paragraph', children: [{ element: 'text', value: ' a \n\t b ' }] }],
+				}),
+			),
+		).toEqual([{ element: 'text', value: 'a b' }])
+	})
 })
 
 describe('projectHTMLLeaf', () => {
@@ -2307,6 +2317,23 @@ describe('projectHTMLNode', () => {
 				child,
 			]),
 		).toEqual(child)
+	})
+
+	it('collapses every whitespace run of an image alternative text and drops its edge whitespace', () => {
+		expect(
+			projectHTMLNode(
+				{
+					category: 'element',
+					name: 'img',
+					attributes: [
+						{ name: 'src', value: 'x.png' },
+						{ name: 'alt', value: ' a \n\t b ' },
+					],
+					children: [],
+				},
+				[],
+			).inlines,
+		).toEqual([{ element: 'image', src: 'x.png', children: [{ element: 'text', value: 'a b' }] }])
 	})
 })
 

@@ -1,6 +1,6 @@
 // Base test setup — environment-agnostic helpers loaded first by every
 // Vitest project (`setupFiles[0]`). Keep this file free of `node:*` and of
-// `document` / `window` / Vue: DOM/Vue helpers live in `setupBrowser.ts`.
+// `document` / `window` / Vue.
 
 import type {
 	BlockNode,
@@ -50,8 +50,8 @@ export const TEST_SEED = 42
 // ── Markdown AST assertions ────────────────────────────────────────────────────
 // Assert a parsed node IS a given element kind — throwing if not — and return it
 // narrowed, so a test reads the typed node (`assertHeading(block).level`,
-// `assertLink(node).href`) without an `as` or an `if`-guarded `expect` (both
-// AGENTS-forbidden; §1 / §16). Thin assert-and-narrow wrappers over `@src/core`'s
+// `assertLink(node).href`) without an `as` or an `if`-guarded `expect` narrowing
+// with a non-null assertion. Thin assert-and-narrow wrappers over `@src/core`'s
 // `is*` guards — one `assert{Element}` per guard — environment-agnostic, so they
 // sit here beside the other base helpers, shared across the Markdown and
 // AST-validator unit tests.
