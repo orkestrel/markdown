@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/markdown",
-	"version": "0.0.12",
+	"version": "0.0.13",
 	"description": "A types-first markdown layer over @orkestrel/html — typed AST, both conversion directions, and sanitized HTML by default.",
 	"keywords": [
 		"ast",
@@ -72,15 +72,15 @@
 		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.15",
-		"@orkestrel/html": "^0.0.7"
+		"@orkestrel/contract": "^0.0.16",
+		"@orkestrel/html": "^0.0.8"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.59.0",
-		"@orkestrel/guide": "^0.0.15",
+		"@orkestrel/guide": "^0.0.16",
 		"@orkestrel/probe": "^0.0.11",
-		"@orkestrel/scaffold": "^0.0.60",
-		"@orkestrel/test": "^0.0.12",
+		"@orkestrel/scaffold": "^0.0.61",
+		"@orkestrel/test": "^0.0.13",
 		"@types/node": "^26.4.0",
 		"oxfmt": "^0.65.0",
 		"oxlint": "^1.80.0",
