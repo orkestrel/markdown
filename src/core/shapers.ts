@@ -7,9 +7,9 @@ import {
 	stringShape,
 } from '@orkestrel/contract'
 
-// Shapers are `ContractShape` VALUES, not functions
-// or types - a JSON-Schema blueprint the compilers (factories.ts) turn into a
-// guard / parser / schema / generator in lockstep. Only the NON-recursive
+// Shapers are `ContractShape` values, not functions
+// or types — a JSON-Schema blueprint the compilers (factories.ts) turn into a
+// guard / parser / schema / generator in lockstep. Only the non-recursive
 // parts of the markdown AST (types.ts) can be expressed here: a shape tree has
 // no lazy/self-referential node, so any type whose fields recurse into
 // `BlockNode` / `InlineNode` / `MarkdownNode` (EmphasisNode, LinkNode, ImageNode,
@@ -18,7 +18,7 @@ import {
 // (validators.ts) through `lazyOf`.
 
 /**
- * Describes the shape of a {@link TextNode} - a plain-text leaf inline run.
+ * Describes the shape of a {@link TextNode} — a plain-text leaf inline run.
  *
  * @example
  * ```ts
@@ -35,7 +35,7 @@ export const textShape = objectShape({
 })
 
 /**
- * Describes the shape of a {@link CodeSpanNode} - an inline code span (`` `code` ``).
+ * Describes the shape of a {@link CodeSpanNode} — an inline code span (`` `code` ``).
  *
  * @example
  * ```ts
@@ -52,7 +52,7 @@ export const codeSpanShape = objectShape({
 })
 
 /**
- * Describes the shape of a {@link LineBreakNode} - a GFM hard line-break leaf.
+ * Describes the shape of a {@link LineBreakNode} — a GFM hard line-break leaf.
  *
  * @example
  * ```ts
@@ -68,7 +68,7 @@ export const lineBreakShape = objectShape({
 })
 
 /**
- * Describes the shape of a {@link CodeBlockNode} - a fenced code block. `lang` is
+ * Describes the shape of a {@link CodeBlockNode} — a fenced code block. `lang` is
  * optional (absent when the opening fence carries no info-string).
  *
  * @example
@@ -88,7 +88,7 @@ export const codeBlockShape = objectShape({
 })
 
 /**
- * Describes the shape of a {@link ThematicBreakNode} - a horizontal rule. Carries no
+ * Describes the shape of a {@link ThematicBreakNode} — a horizontal rule. Carries no
  * fields beyond its `element` discriminant.
  *
  * @example
@@ -105,7 +105,7 @@ export const thematicBreakShape = objectShape({
 })
 
 /**
- * Describes the shape of a {@link TableAlign} - the per-column GFM table alignment
+ * Describes the shape of a {@link TableAlign} — the per-column GFM table alignment
  * literal. Absence is no member of it, so the shape refuses the `null` a bare `---`
  * delimiter takes in a `TableNode`'s `align` list.
  *
@@ -123,7 +123,7 @@ export const thematicBreakShape = objectShape({
 export const tableAlignShape = literalShape(['left', 'right', 'center'])
 
 /**
- * Describes the shape of {@link ListItemMatch} - the parsed parts of a single list-item
+ * Describes the shape of {@link ListItemMatch} — the parsed parts of a single list-item
  * line the block phase's list detector returns. Fully non-recursive (no
  * nested node fields), so every field shapes directly.
  *

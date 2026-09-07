@@ -20,7 +20,7 @@ import {
 
 /**
  * Creates a stateful markdown handle from a markdown string or an already-parsed
- * {@link MarkdownDocument} - a typed AST plus the query, rewrite, and fold operations
+ * {@link MarkdownDocument} — a typed AST plus the query, rewrite, and fold operations
  * {@link MarkdownInterface} exposes.
  *
  * @remarks
@@ -28,9 +28,9 @@ import {
  * fenced code / blockquotes / thematic breaks) then an inline phase (emphasis /
  * inline code / links / images / hard breaks) to build a render-agnostic
  * {@link MarkdownDocument}. Given a
- * {@link MarkdownDocument}, adopts it AS-IS without re-validation - gate an untrusted
+ * {@link MarkdownDocument}, adopts it as-is without re-validation — gate an untrusted
  * value with `isMarkdownDocument` first. Pure + total parse (malformed markdown
- * degrades to text, never throws) and zero-dependency - a hand-written scanner, no
+ * degrades to text, never throws) and zero-dependency — a hand-written scanner, no
  * regex-only structural parse, linear-time (no ReDoS).
  *
  * @param input - A markdown string to parse, or an already-parsed {@link MarkdownDocument}
@@ -50,7 +50,7 @@ export function createMarkdown(input: string | MarkdownDocument): MarkdownInterf
 
 /**
  * Compiles the {@link textShape} into a {@link ContractInterface} for
- * {@link TextNode} - a guard, coercing parser, JSON Schema, and seeded
+ * {@link TextNode} — a guard, coercing parser, JSON Schema, and seeded
  * generator from one shape declaration.
  *
  * @returns A `TextNode` contract bundling `schema` / `is` / `parse` / `generate`
@@ -69,7 +69,7 @@ export function createTextContract(): ContractInterface<TextNode> {
 
 /**
  * Compiles the {@link codeSpanShape} into a {@link ContractInterface} for
- * {@link CodeSpanNode} - a guard, coercing parser, JSON Schema, and seeded
+ * {@link CodeSpanNode} — a guard, coercing parser, JSON Schema, and seeded
  * generator from one shape declaration.
  *
  * @returns A `CodeSpanNode` contract bundling `schema` / `is` / `parse` / `generate`
@@ -105,7 +105,7 @@ export function createLineBreakContract(): ContractInterface<LineBreakNode> {
 
 /**
  * Compiles the {@link codeBlockShape} into a {@link ContractInterface} for
- * {@link CodeBlockNode} - a guard, coercing parser, JSON Schema, and seeded
+ * {@link CodeBlockNode} — a guard, coercing parser, JSON Schema, and seeded
  * generator from one shape declaration.
  *
  * @returns A `CodeBlockNode` contract bundling `schema` / `is` / `parse` / `generate`
@@ -124,7 +124,7 @@ export function createCodeBlockContract(): ContractInterface<CodeBlockNode> {
 
 /**
  * Compiles the {@link thematicBreakShape} into a {@link ContractInterface} for
- * {@link ThematicBreakNode} - a guard, coercing parser, JSON Schema, and
+ * {@link ThematicBreakNode} — a guard, coercing parser, JSON Schema, and
  * seeded generator from one shape declaration.
  *
  * @returns A `ThematicBreakNode` contract bundling `schema` / `is` / `parse` / `generate`

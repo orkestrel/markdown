@@ -17,14 +17,14 @@ import { parseProvenance } from './parsers.js'
  *
  * @remarks
  * - **Construction.** Given a `string`, the constructor runs {@link parseProvenance} (the
- *   block phase then the inline phase) once, keeping the AST and a COPY of the span map
- *   that parse recorded. Given a {@link MarkdownDocument}, the document is adopted AS-IS
- *   and is NOT re-validated - gate an untrusted value with `isMarkdownDocument` first.
- * - **Provenance.** {@link span} reads the region of the ORIGINAL constructor string a
+ *   block phase then the inline phase) once, keeping the AST and a copy of the span map
+ *   that parse recorded. Given a {@link MarkdownDocument}, the document is adopted as-is
+ *   and is not re-validated — gate an untrusted value with `isMarkdownDocument` first.
+ * - **Provenance.** {@link span} reads the region of the original constructor string a
  *   node was produced from, and it is handle-relative: a string-constructed handle exposes
  *   the regions of the nodes it parsed, an adopted document exposes none, and a node from
  *   another handle reports `undefined` here whatever that handle reports. Each call
- *   returns a fresh value. A node reports the region THIS handle holds for its identity,
+ *   returns a fresh value. A node reports the region this handle holds for its identity,
  *   else the region of the direct input a rewrite named for it, else `undefined`: a text
  *   run the parse joined from adjacent scanner output reports the region enclosing its
  *   parts, and only a rewrite output that holds no region of its own and was assembled
@@ -32,12 +32,12 @@ import { parseProvenance } from './parsers.js'
  *   {@link map} carries provenance across the rewrite: an unchanged node keeps its
  *   region, a one-source replacement takes the region of the node it replaced, and a
  *   rebuilt parent takes its original's.
- * - **Immutable.** {@link map} never mutates the stored AST - it returns a NEW `Markdown`
+ * - **Immutable.** {@link map} never mutates the stored AST — it returns a new `Markdown`
  *   instance; the document root invariant (`element: 'document'`) always holds. An
  *   identity rewrite still returns a new handle, over the same document tree.
  * - **Traversal order.** {@link walk} and the `find` / `filter` / `reduce` queries built
  *   on it walk the AST depth-first, pre-order, root-inclusive (through {@link walkNodes});
- *   `stream` is shallow - only the document's direct block children.
+ *   `stream` is shallow — only the document's direct block children.
  *
  * @example Construct from a string and narrow with a guard
  * ```ts
@@ -93,7 +93,7 @@ export class Markdown implements MarkdownInterface {
 	}
 
 	/**
-	 * Returns THE deep traversal - a lazy, depth-first, pre-order, root-inclusive generator
+	 * Returns the deep traversal — a lazy, depth-first, pre-order, root-inclusive generator
 	 * over every {@link MarkdownNode} in the document. `find` / `filter` / `reduce`
 	 * all iterate this single traversal.
 	 *
@@ -160,7 +160,7 @@ export class Markdown implements MarkdownInterface {
 
 	/**
 	 * Returns a web-standard {@link ReadableStream} over the document's top-level block nodes
-	 * (shallow, source order) - a fresh, pull-based source per call: one block is
+	 * (shallow, source order) — a fresh, pull-based source per call: one block is
 	 * enqueued per `pull`, so a slow reader's backpressure is respected. Cancellable,
 	 * async-iterable wherever the platform supports it (Node, Deno), and pipeable
 	 * through any {@link TransformStream} / {@link WritableStream}.

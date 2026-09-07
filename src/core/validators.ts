@@ -179,7 +179,7 @@ export function isEmphasisNode(node: MarkdownNode): node is EmphasisNode {
  * Determines whether a node is an inline code span.
  *
  * @remarks
- * Narrows to {@link CodeSpanNode} - the node whose `element` discriminant is
+ * Narrows to {@link CodeSpanNode} — the node whose `element` discriminant is
  * `'codeSpan'`.
  *
  * @param node - The AST node to test
@@ -241,26 +241,26 @@ export function isImageNode(node: MarkdownNode): node is ImageNode {
 
 // === From-unknown AST guards
 //
-// The node guards above narrow an ALREADY-PARSED MarkdownNode by its `element`
+// The node guards above narrow an already-parsed MarkdownNode by its `element`
 // tag. The guards below instead validate an arbitrary `unknown` value (untrusted
-// input - a deserialized AST, a value crossing a process/RPC boundary) against
+// input — a deserialized AST, a value crossing a process/RPC boundary) against
 // the full node shape, field by field, composed from @orkestrel/contract
-// combinators. Each guard IS its own hoisted composed value (compiled once at
+// combinators. Each guard is its own hoisted composed value (compiled once at
 // module init, not per call); inline<->block recursion (emphasis/link/image children,
 // list items, blockquote children) resolves through `lazyOf`, closing over the
-// exported guard names themselves - legal because `lazyOf`'s thunk resolves per
+// exported guard names themselves — legal because `lazyOf`'s thunk resolves per
 // call, strictly after module init has assigned every export. @orkestrel/contract
 // guarantees guard totality: `lazyOf`, `unionOf`, `recordOf`, and
 // every built-in guard are throw-contained, so a hostile getter, a structural
-// cycle, or pathologically deep input returns `false` rather than throwing -
+// cycle, or pathologically deep input returns `false` rather than throwing —
 // no additional `attempt` wrapping is needed here.
 
 /**
- * Determines whether an arbitrary value is a valid {@link InlineNode} - a text
+ * Determines whether an arbitrary value is a valid {@link InlineNode} — a text
  * run, emphasis, code span, hard break, link, or image, recursively validated.
  *
  * @remarks
- * Total: never throws, even on cyclic or pathologically deep input - every
+ * Total: never throws, even on cyclic or pathologically deep input — every
  * combinator involved (`unionOf`, `recordOf`, `arrayOf`, `lazyOf`) is
  * throw-contained per the `@orkestrel/contract` guard contract.
  *
@@ -297,16 +297,16 @@ export const isInlineNode: Guard<InlineNode> = unionOf(
 )
 
 /**
- * Determines whether an arbitrary value is a valid {@link BlockNode} - a
+ * Determines whether an arbitrary value is a valid {@link BlockNode} — a
  * heading, paragraph, list, table, code block, blockquote, or thematic break,
  * recursively validated.
  *
  * @remarks
- * Total: never throws, even on cyclic or pathologically deep input - every
+ * Total: never throws, even on cyclic or pathologically deep input — every
  * combinator involved (`unionOf`, `recordOf`, `arrayOf`, `lazyOf`) is
  * throw-contained per the `@orkestrel/contract` guard contract.
  * A list item's shape is inlined here (and in {@link isMarkdownNode}) rather
- * than named separately - it is used at exactly these two sites.
+ * than named separately — it is used at exactly these two sites.
  *
  * @param value - The value to test
  * @returns True if `value` is a well-formed {@link BlockNode}; false otherwise
@@ -342,16 +342,16 @@ export const isBlockNode: Guard<BlockNode> = unionOf(
 )
 
 /**
- * Determines whether an arbitrary value is a valid {@link MarkdownNode} - the
+ * Determines whether an arbitrary value is a valid {@link MarkdownNode} — the
  * {@link MarkdownDocument} root, a {@link BlockNode}, a {@link ListItemNode}, or
  * an {@link InlineNode}, recursively validated.
  *
  * @remarks
- * Total: never throws, even on cyclic or pathologically deep input - every
+ * Total: never throws, even on cyclic or pathologically deep input — every
  * combinator involved (`unionOf`, `recordOf`, `arrayOf`, `lazyOf`) is
  * throw-contained per the `@orkestrel/contract` guard contract.
  * A list item's shape is inlined here (and in {@link isBlockNode}) rather than
- * named separately - it is used at exactly these two sites.
+ * named separately — it is used at exactly these two sites.
  *
  * @param value - The value to test
  * @returns True if `value` is a well-formed {@link MarkdownNode}; false otherwise
@@ -372,12 +372,12 @@ export const isMarkdownNode: Guard<MarkdownNode> = unionOf(
 )
 
 /**
- * Determines whether an arbitrary value is a valid {@link MarkdownDocument} -
+ * Determines whether an arbitrary value is a valid {@link MarkdownDocument} —
  * the parsed-AST root {@link parseDocument} returns, recursively
  * validated.
  *
  * @remarks
- * Total: never throws, even on cyclic or pathologically deep input - every
+ * Total: never throws, even on cyclic or pathologically deep input — every
  * combinator involved (`recordOf`, `arrayOf`) is throw-contained per the
  * `@orkestrel/contract` guard contract.
  *

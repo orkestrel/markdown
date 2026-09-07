@@ -58,13 +58,13 @@ import {
 // lists), the inline `scan*` engine (emphasis / links / code with backslash escapes),
 // and the HTML AST projection the renderer composes with @orkestrel/html. A predicate
 // over a raw `string` is a leaf rather than a `Guard<T>`, so it lives here and not in
-// validators.ts. Every function is PURE, TOTAL, and referentially transparent -
-// malformed input degrades to text, never throws - so each is unit-tested in isolation.
-// The `parse*` ENTRY POINTS that thread these together (the block / inline phase
+// validators.ts. Every function is pure, total, and referentially transparent —
+// malformed input degrades to text, never throws — so each is unit-tested in isolation.
+// The `parse*` entry points that thread these together (the block / inline phase
 // entries) live in parsers.ts: a helper is a functional-core leaf, a parser is the
 // phase it names. A construct scanner calls back into its phase entry, so helpers.ts
 // and parsers.ts are mutually recursive by design. Inline scanning is index-based (no
-// backtracking regex) so it is linear-time - no ReDoS on adversarial input.
+// backtracking regex) so it is linear-time — no ReDoS on adversarial input.
 //
 // This file imports no implementation class: the class-driving renderer that composes
 // {@link markdownToHTML} with `@orkestrel/html`'s sanitizer lives in compilers.ts.
@@ -292,7 +292,7 @@ export function normalizeParagraphLine(source: MarkdownSource, breaks: boolean):
 }
 
 /**
- * Counts the leading space / tab characters on `line` (a tab counts as one) - the
+ * Counts the leading space / tab characters on `line` (a tab counts as one) — the
  * indent that decides whether a list item's continuation belongs to the item.
  *
  * @param line - The line to measure
@@ -320,7 +320,7 @@ export function countIndent(line: string): number {
 // no guard signature admits.
 
 /**
- * Checks whether `character` is whitespace under the emphasis flanking rule - a space, a
+ * Checks whether `character` is whitespace under the emphasis flanking rule — a space, a
  * tab, or a newline.
  *
  * @param character - The character to test
@@ -337,7 +337,7 @@ export function isFlankingWhitespace(character: string): boolean {
 }
 
 /**
- * Checks whether `character` is escapable by a leading backslash - the ASCII punctuation
+ * Checks whether `character` is escapable by a leading backslash — the ASCII punctuation
  * markdown gives meaning to (so `\*` becomes `*` but `\.` stays `\.`).
  *
  * @param character - The single character after a backslash
@@ -354,7 +354,7 @@ export function isEscapable(character: string): boolean {
 }
 
 /**
- * Checks whether `line` is blank - empty, or containing only whitespace - the markdown
+ * Checks whether `line` is blank — empty, or containing only whitespace — the markdown
  * definition of a blank line that block parsing uses to separate paragraphs, skip
  * gaps, and end list continuations.
  *
@@ -371,7 +371,7 @@ export function isBlankLine(line: string): boolean {
 }
 
 /**
- * Checks whether `line` is a blockquote line (`>` optionally indented up to three spaces) -
+ * Checks whether `line` is a blockquote line (`>` optionally indented up to three spaces) —
  * its content is de-quoted by {@link stripQuote}.
  *
  * @param line - The candidate line
@@ -387,7 +387,7 @@ export function isQuote(line: string): boolean {
 }
 
 /**
- * Checks whether `line` closes a fence opened by `marker` - the same fence character, a run
+ * Checks whether `line` closes a fence opened by `marker` — the same fence character, a run
  * at least as long, and nothing else but surrounding whitespace.
  *
  * @param line - The candidate closing line
@@ -414,7 +414,7 @@ export function isFenceClose(line: string, marker: string): boolean {
 }
 
 /**
- * Checks whether `character` is a regex-`\s`-equivalent whitespace character - the
+ * Checks whether `character` is a regex-`\s`-equivalent whitespace character — the
  * character class {@link isFenceClose}'s scan treats as surrounding padding.
  *
  * @param character - The single character to test, or `undefined` past the end of a line
@@ -438,7 +438,7 @@ export function isFenceWhitespace(character: string | undefined): boolean {
 }
 
 /**
- * Checks whether `line` is a thematic break (horizontal rule) - three or more of the SAME
+ * Checks whether `line` is a thematic break (horizontal rule) — three or more of the same
  * marker `-`, `*`, or `_` (optionally space-separated) and nothing else (`---`,
  * `***`, `___`, `- - -`).
  *
@@ -459,9 +459,9 @@ export function isThematicBreak(line: string): boolean {
 }
 
 /**
- * Checks whether the pair (`header`, `delimiter`) opens a GFM table - `delimiter` is a row of
+ * Checks whether the pair (`header`, `delimiter`) opens a GFM table — `delimiter` is a row of
  * `|`-separated cells each matching `:?-+:?`, the GFM rule that a table requires a
- * header row IMMEDIATELY followed by a delimiter row.
+ * header row immediately followed by a delimiter row.
  *
  * @param header - The candidate header line
  * @param delimiter - The line after it (the candidate delimiter)
@@ -594,8 +594,8 @@ export function stripQuote(source: MarkdownSource): MarkdownSource {
 }
 
 /**
- * Splits one GFM table row into its cell strings - outer pipes are optional, a pipe
- * escaped by a leading backslash inside a cell is NOT a separator (it becomes a literal
+ * Splits one GFM table row into its cell strings — outer pipes are optional, a pipe
+ * escaped by a leading backslash inside a cell is not a separator (it becomes a literal
  * pipe character), and the empty leading / trailing cell an outer pipe produces is
  * dropped. Derives the string form from {@link splitTableSources}, which owns the
  * escaped-pipe splitting rule.
@@ -661,7 +661,7 @@ export function splitTableSources(row: MarkdownSource): readonly MarkdownSource[
 }
 
 /**
- * Derives the per-column {@link TableAlign} list from a GFM delimiter row - `:---`
+ * Derives the per-column {@link TableAlign} list from a GFM delimiter row — `:---`
  * left, `---:` right, `:---:` center, and `---` as the explicit no-alignment
  * marker represented by `null`.
  *
@@ -688,8 +688,8 @@ export function delimiterToAlignments(delimiter: string): ReadonlyArray<TableAli
 //  Block phase
 
 /**
- * Checks whether the line at `index` starts a NEW block kind (heading / fence / thematic
- * break / blockquote / list / table) - the paragraph collector stops at such a line
+ * Checks whether the line at `index` starts a new block kind (heading / fence / thematic
+ * break / blockquote / list / table) — the paragraph collector stops at such a line
  * so a block following a paragraph without a blank line still parses (a trusted-input
  * caller writing a `##` heading directly under a paragraph, with no intervening blank
  * line).
@@ -718,7 +718,7 @@ export function startsBlock(lines: readonly string[], index: number): boolean {
 //  Inline phase
 
 /**
- * Resolves backslash escapes in a raw string to their literal characters - used for a
+ * Resolves backslash escapes in a raw string to their literal characters — used for a
  * link `href` (which is not otherwise inline-parsed) and any plain text run.
  *
  * @param text - The raw text possibly carrying `\x` escapes
@@ -744,7 +744,7 @@ export function unescapeText(text: string): string {
 }
 
 /**
- * Merges adjacent text nodes into one - the inline scanner emits a text node per
+ * Merges adjacent text nodes into one — the inline scanner emits a text node per
  * unrecognized character, so coalescing keeps the AST clean and assertion-friendly.
  *
  * @param nodes - The inline nodes (possibly with adjacent text runs)
@@ -784,7 +784,7 @@ export function coalesceText(
 
 /**
  * Scans an inline code span at `start` (a `` ` ``-run … a matching `` ` ``-run of the
- * SAME length, the CommonMark rule that lets a span contain backticks). Returns the
+ * same length, the CommonMark rule that lets a span contain backticks). Returns the
  * span's literal text + end index, or `undefined` when no matching closer exists (it
  * then degrades to literal backticks).
  *
@@ -806,7 +806,7 @@ export function scanCode(source: string, start: number, to: number): CodeSpanMat
 	for (;;) {
 		const closeAt = source.indexOf(open, search)
 		if (closeAt === -1 || closeAt + run > to) return undefined
-		// The closer must be EXACTLY `run` backticks (not bordered by another backtick).
+		// The closer must be exactly `run` backticks (not bordered by another backtick).
 		if (source[closeAt - 1] !== '`' && source[closeAt + run] !== '`') {
 			let value = source.slice(start + run, closeAt)
 			if (
@@ -824,7 +824,7 @@ export function scanCode(source: string, start: number, to: number): CodeSpanMat
 }
 
 /**
- * Locates a link `[text](href)` at `start` - the text runs to a BALANCED `]`, then `(`
+ * Locates a link `[text](href)` at `start` — the text runs to a balanced `]`, then `(`
  * must immediately follow and the destination runs to the matching `)` (both respect
  * nested delimiters + escapes). Returns the label close and syntax end, or `undefined` when the shape
  * does not hold (it then degrades to a literal `[`).
@@ -880,7 +880,7 @@ export function locateLink(source: string, start: number, to: number): LinkBound
 }
 
 /**
- * Scans a link `[text](href)` at `start` - the text runs to a BALANCED `]`, then `(`
+ * Scans a link `[text](href)` at `start` — the text runs to a balanced `]`, then `(`
  * must immediately follow and the destination runs to the matching `)` (both respect
  * nested delimiters + escapes) through {@link locateLink}, and returns the parsed node
  * and end index. Returns `undefined` when the shape does not hold (it then degrades to
@@ -914,7 +914,7 @@ export function scanLink(
 }
 
 /**
- * Locates an emphasis run at `start` (`*` / `_`, doubled for strong) - finds the nearest
+ * Locates an emphasis run at `start` (`*` / `_`, doubled for strong) — finds the nearest
  * matching closing run of the same marker + width while skipping complete nested
  * runs from the other marker family, and requires non-space immediately inside both
  * delimiters (the CommonMark flanking simplification that blocks `* x *`). Returns
@@ -981,7 +981,7 @@ export function locateEmphasis(
 }
 
 /**
- * Scans an emphasis run at `start` (`*` / `_`, doubled for strong) - finds the nearest
+ * Scans an emphasis run at `start` (`*` / `_`, doubled for strong) — finds the nearest
  * matching closing run of the same marker + width while skipping complete nested runs
  * from the other marker family, and requires non-space immediately inside both
  * delimiters (the CommonMark flanking simplification that blocks `* x *`) through
@@ -1021,7 +1021,7 @@ export function scanEmphasis(
 }
 
 /**
- * Scans the window `[from, to)` of `source` into inline nodes - the single recursive
+ * Scans the window `[from, to)` of `source` into inline nodes — the single recursive
  * engine the inline phase runs on (emphasis, link text, and image alternative
  * content recurse through it). Linear:
  * each character is consumed once; a failed construct emits its opening character as
@@ -1033,10 +1033,10 @@ export function scanEmphasis(
  * @param depth - The current inline-recursion depth (defaults to 0 at the entry point);
  *   incremented by one on every recursive descent {@link scanInlineSource} makes into
  *   itself for a link's text, an image's alternative content, or an emphasis run's
- *   children. At {@link MAX_DEPTH} the window is never scanned for markup - it emits as
- *   a single literal text node - so pathological nesting (`[[[[…`, `****…`) cannot
+ *   children. At {@link MAX_DEPTH} the window is never scanned for markup — it emits as
+ *   a single literal text node — so pathological nesting (`[[[[…`, `****…`) cannot
  *   exhaust the call stack.
- * @returns The parsed inline nodes (NOT yet coalesced)
+ * @returns The parsed inline nodes (not yet coalesced)
  *
  * @example
  * ```ts
@@ -1711,7 +1711,7 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 }
 
 /**
- * Renders a {@link MarkdownNode} to its CANONICAL markdown source - the inverse
+ * Renders a {@link MarkdownNode} to its canonical markdown source — the inverse
  * projection of `renderHTML`. It is the serializer a `parse(renderMarkdown(doc))`
  * round-trip is built on. Canonical forms: `*` / `**` emphasis at even emphasis
  * nesting depths and `_` / `__` at odd depths, `- ` bullets, `N. ` sequential
@@ -2076,15 +2076,15 @@ export function renderMarkdown(node: MarkdownNode): string {
 //
 // The inverse of {@link markdownToHTML}, and the reason markdown owns both
 // directions: what an HTML subtree becomes is markdown-format knowledge, not HTML
-// knowledge. The engine is `@orkestrel/html`'s own `foldNode` catamorphism - it
-// already owns depth capping, cycle safety, and bottom-up folding - so this file
-// contributes the projection ONLY: five pure leaves over {@link MarkdownProjection}
+// knowledge. The engine is `@orkestrel/html`'s own `foldNode` catamorphism — it
+// already owns depth capping, cycle safety, and bottom-up folding — so this file
+// contributes only the projection: five pure leaves over {@link MarkdownProjection}
 // values ({@link trimInlines}, {@link normalizeInlines}, {@link mergeProjections},
 // {@link projectionToBlocks}, {@link projectionToInlines}), the two handlers that
 // map HTML to markdown ({@link projectHTMLLeaf}, {@link projectHTMLNode}), and the one
 // entry point that folds them ({@link htmlToMarkdown}). HTML is richer than
 // markdown, so the projection is lossy by construction; what it must never be is
-// WRONG, which is what the round-trip anchor law pins down. {@link createProjection}
+// wrong, which is what the round-trip anchor law pins down. {@link createProjection}
 // builds those values: it constructs a plain record under an invariant rather than an
 // entity, so it is a leaf here and not a factory.
 
@@ -2120,8 +2120,8 @@ export function createProjection(parts: Partial<MarkdownProjection> = {}): Markd
 }
 
 /**
- * Trims the whitespace at the two ends of an inline run - the leading whitespace of a
- * leading text node and the trailing whitespace of a trailing one - dropping either
+ * Trims the whitespace at the two ends of an inline run — the leading whitespace of a
+ * leading text node and the trailing whitespace of a trailing one — dropping either
  * node when nothing survives.
  *
  * @remarks
@@ -2161,11 +2161,11 @@ export function trimInlines(nodes: readonly InlineNode[]): readonly InlineNode[]
  * ending or spent as a space.
  *
  * @remarks
- * A hard break is `  \n` in markdown source, so it survives a re-parse only BETWEEN
+ * A hard break is `  \n` in markdown source, so it survives a re-parse only between
  * two lines of content and only with no whitespace touching it: a leading or trailing
  * break has no line to end, a run of breaks reads as one blank line (which would end
  * the paragraph), and a space beside one is eaten by the parser's line trimming. Where
- * a break cannot be written at all - a heading and a table cell are one line each - it
+ * a break cannot be written at all — a heading and a table cell are one line each — it
  * becomes the space it stood for.
  *
  * @param nodes - The inline run to normalize
@@ -2216,14 +2216,14 @@ export function normalizeInlines(
 }
 
 /**
- * Combines the projections of one node's children into the projection of that node -
+ * Combines the projections of one node's children into the projection of that node —
  * the single place inline runs become paragraphs, so no ancestor has to decide it
  * twice.
  *
  * @remarks
  * A child is either inline or block, never both, so merging preserves source order
  * exactly: an inline run is held pending until a block arrives, then written out as a
- * paragraph BEFORE it. That is what keeps `<div>lead<p>a</p></div>` two paragraphs in
+ * paragraph before it. That is what keeps `<div>lead<p>a</p></div>` two paragraphs in
  * the order they were written rather than two lists that lost their interleaving. A
  * pending run carrying no text is dropped rather than becoming a blank paragraph.
  * Direct cells become one row before a later row, while cells/rows before a block
@@ -2291,7 +2291,7 @@ export function mergeProjections(children: readonly MarkdownProjection[]): Markd
 }
 
 /**
- * Reads a projection as BLOCK content - the view a document, a blockquote, and a list
+ * Reads a projection as block content — the view a document, a blockquote, and a list
  * item each need.
  *
  * @remarks
@@ -2329,7 +2329,7 @@ export function projectionToBlocks(projection: MarkdownProjection): readonly Blo
 }
 
 /**
- * Reads a projection as INLINE content - the view a link, an emphasis, and a table cell
+ * Reads a projection as inline content — the view a link, an emphasis, and a table cell
  * each need.
  *
  * @remarks
@@ -2360,7 +2360,7 @@ export function projectionToInlines(projection: MarkdownProjection): readonly In
 }
 
 /**
- * Projects one HTML leaf - a text node, a comment, or a doctype - to its
+ * Projects one HTML leaf — a text node, a comment, or a doctype — to its
  * {@link MarkdownProjection}.
  *
  * @remarks
@@ -2390,8 +2390,8 @@ export function projectHTMLLeaf(
 }
 
 /**
- * Projects one HTML container - the document root or an element - from its children's
- * already-computed projections. THE element mapping, and the only place that decides
+ * Projects one HTML container — the document root or an element — from its children's
+ * already-computed projections. The element mapping, and the only place that decides
  * what an HTML tag becomes in markdown.
  *
  * @remarks
@@ -2403,13 +2403,13 @@ export function projectHTMLLeaf(
  * inline runs wrapped in paragraphs; `ul` / `ol` a list, ordered from the tag and
  * numbered from `start`; `th` / `td`, `tr`, and `table` a GFM table whose column
  * alignment comes from each header-position cell's `align` attribute. Every
- * `UNSAFE_ELEMENTS` subtree contributes nothing at all, text included. Every OTHER
+ * `UNSAFE_ELEMENTS` subtree contributes nothing at all, text included. Every other
  * element unwraps to its children, so wrapper soup melts while its content keeps its
- * shape - `<div><p>a</p><p>b</p></div>` stays two paragraphs.
+ * shape — `<div><p>a</p><p>b</p></div>` stays two paragraphs.
  *
  * Three mappings read their own node rather than only their children's projections,
  * because HTML puts the fact in a position rather than in a value: a `pre` takes its
- * body from its `code` child's raw text, and a list takes one item per `li` child - so
+ * body from its `code` child's raw text, and a list takes one item per `li` child — so
  * an empty `<li>` is still an item, while the whitespace between two of them is not.
  * A `tr` accepts only its own direct cells, and a table derives the first `th`-bearing
  * row from its own source structure.
@@ -2471,7 +2471,7 @@ export function projectHTMLNode(
 			const inner = trimInlines(normalizeInlines(content, true))
 			if (!isNonEmptyArray(inner)) return createProjection({ text: merged.text })
 			// Markdown refuses emphasis padded with whitespace (`* x *` is literal), so the
-			// padding moves OUTSIDE the marker rather than being lost with the word boundary.
+			// padding moves outside the marker rather than being lost with the word boundary.
 			const first = content[0]
 			const last = content[content.length - 1]
 			const inlines: InlineNode[] = []
@@ -2488,7 +2488,7 @@ export function projectHTMLNode(
 		}
 		case 'code': {
 			const body = merged.text.replace(/\r\n?/g, '\n').replace(/\s*\n\s*/g, ' ')
-			// A span padded on BOTH sides is exactly what the parser strips back off, so the
+			// A span padded on both sides is exactly what the parser strips back off, so the
 			// canonical value is the stripped one.
 			const value =
 				body.length > 2 && body.startsWith(' ') && body.endsWith(' ') && !isEmptyString(body.trim())
@@ -2557,7 +2557,7 @@ export function projectHTMLNode(
 		}
 		case 'th':
 		case 'td': {
-			// html's set is the gate; the union is the bridge - an alignment markdown has no
+			// html's set is the gate; the union is the bridge — an alignment markdown has no
 			// delimiter for stays absent rather than becoming a decorative label.
 			const declared = (attributeOf(node, 'align') ?? '').trim().toLowerCase()
 			const align =
@@ -2704,36 +2704,36 @@ export function projectHTMLNode(
 }
 
 /**
- * Projects an `@orkestrel/html` {@link HTMLNode} into a {@link MarkdownDocument} - the
+ * Projects an `@orkestrel/html` {@link HTMLNode} into a {@link MarkdownDocument} — the
  * HTML→markdown direction, and the inverse of {@link markdownToHTML}.
  *
  * @remarks
- * **Engine.** One total handler table - {@link projectHTMLNode} for the containers,
- * {@link projectHTMLLeaf} for the leaves - folded by `@orkestrel/html`'s own `foldNode`, so
+ * **Engine.** One total handler table — {@link projectHTMLNode} for the containers,
+ * {@link projectHTMLLeaf} for the leaves — folded by `@orkestrel/html`'s own `foldNode`, so
  * depth capping, cycle safety, and bottom-up ordering are inherited rather than
  * rebuilt. Total: hostile, cyclic, and pathologically deep input degrades instead of
  * throwing.
  *
  * **Composed depth.** Both packages cap recursion at 64, and html's cap is reached
- * first: a document nested past it projects to a chain bounded by THAT cap, with the
+ * first: a document nested past it projects to a chain bounded by that cap, with the
  * content below it truncated before markdown ever sees it. Since the projected chain
  * can be a level or two deeper than {@link MAX_DEPTH}, the serializer's own cap can
- * then truncate again - so the anchor law below is a law within the depth budget, and
+ * then truncate again — so the anchor law that follows is a law within the depth budget, and
  * beyond it only totality is promised.
  *
  * **Safety.** Every `href` and `src` is re-sanitized through
  * `sanitizeURL(value, SAFE_URL_SCHEMES)` whether or not the AST was ever sanitized,
  * because a hand-built one never was. A refused destination empties to `''` and the
- * link or image is KEPT - `[text]()` - since a bad URL is no reason to lose the words
+ * link or image is kept — `[text]()` — because a bad URL is no reason to lose the words
  * around it. An `UNSAFE_ELEMENTS` subtree contributes nothing at all, text included, so
  * a `script` body can never resurface as prose.
  *
  * **The anchor law.** HTML→markdown is lossy, so the fixpoint that matters is the
- * PROJECTED AST, not the input bytes:
+ * projected AST, not the input bytes:
  * `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals `htmlToMarkdown(x)`.
  * The projection therefore emits canonical markdown shapes rather than literal
- * translations - whitespace collapsed, edges trimmed, a blank paragraph dropped, a hard
- * break only where a line can end - because a shape markdown cannot write back is a
+ * translations — whitespace collapsed, edges trimmed, a blank paragraph dropped, a hard
+ * break only where a line can end — because a shape markdown cannot write back is a
  * shape this projection has no business producing.
  *
  * @param node - The HTML document or bare node to project
@@ -2763,7 +2763,7 @@ export function htmlToMarkdown(node: HTMLNode): MarkdownDocument {
 }
 
 /**
- * Walks a {@link MarkdownNode} depth-first, pre-order, root-inclusive - yields
+ * Walks a {@link MarkdownNode} depth-first, pre-order, root-inclusive — yields
  * the node itself, then recurses into its children (block children, list items,
  * image/link inline children, table header/row cells' inline nodes) in walk order.
  *
@@ -2822,16 +2822,16 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
 }
 
 /**
- * Folds a {@link MarkdownNode} into a `T` through a total catamorphism - children are
+ * Folds a {@link MarkdownNode} into a `T` through a total catamorphism — children are
  * folded first (post-order), then the node's own {@link MarkdownHandler} is invoked
  * with the already-folded children.
  *
  * @remarks
- * **Table contract.** A {@link TableNode} has no single `children` array - its cells
+ * **Table contract.** A {@link TableNode} has no single `children` array — its cells
  * live in `header` (one inline-node list per column) and `rows` (a list of such
- * rows). The `table` handler receives ONE folded `T` per inline node, flattened in
- * walk order across ALL cells - every header cell's inline nodes (column order), then
- * every body row's cells' inline nodes (row order, then column order) - and reads
+ * rows). The `table` handler receives one folded `T` per inline node, flattened in
+ * walk order across all cells — every header cell's inline nodes (column order), then
+ * every body row's cells' inline nodes (row order, then column order) — and reads
  * `node.header[c].length` / `node.rows[r][c].length` off the table node itself to
  * recover cell boundaries within the flat list.
  *
@@ -2994,10 +2994,10 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlerMap<T>,
 }
 
 /**
- * Rewrites a {@link MarkdownDocument} bottom-up (copy-on-write) - each node's children
+ * Rewrites a {@link MarkdownDocument} bottom-up (copy-on-write) — each node's children
  * are rewritten first (post-order), then `rewrite` is applied to the node itself; the
- * document ROOT is never passed to `rewrite` (the `element: 'document'` invariant
- * always holds). A table's inline cells and a list's items ARE rewritten.
+ * document root is never passed to `rewrite` (the `element: 'document'` invariant
+ * always holds). A table's inline cells and a list's items are rewritten too.
  *
  * @remarks
  * Never mutates `document`. An unchanged subtree keeps its input identity. A parent
@@ -3006,12 +3006,12 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlerMap<T>,
  * whose `element` does not fit the slot it was called for (a block slot handed a
  * non-{@link BlockNode}, an inline slot handed a non-{@link InlineNode}, a list-item
  * slot handed a non-`listItem`), the ill-fitting result is discarded and the accepted
- * input child is reused - `rewriteDocument` stays total and never produces a
+ * input child is reused — `rewriteDocument` stays total and never produces a
  * structurally invalid document.
  *
  * Descent is capped at {@link MAX_DEPTH}, the same cap {@link walkNodes} and
  * {@link foldNode} observe: at `depth >= MAX_DEPTH` the subtree is passed through
- * UNCHANGED (by reference, not rebuilt, and `rewrite` is not invoked on it) instead of
+ * unchanged (by reference, not rebuilt, and `rewrite` is not invoked on it) instead of
  * recursing further, so a pathologically deep adopted document cannot exhaust the
  * call stack. {@link MarkdownInterface.map} inherits this cap since it delegates here.
  *
@@ -3256,7 +3256,7 @@ export function rewriteDocument(
 
 /**
  * Concatenates the `value` / `code` content of every descendant text / code-span /
- * code-block node under `node`, including image alternative content, in walk order -
+ * code-block node under `node`, including image alternative content, in walk order —
  * the plain-text projection of an AST (search indexing, word counts, a text-only
  * preview).
  *

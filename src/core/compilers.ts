@@ -11,6 +11,9 @@ import { markdownToHTML } from './helpers.js'
  * Renders a {@link MarkdownNode} to sanitized canonical HTML.
  *
  * @remarks
+ * Sanitization is unconditional: the function takes one argument and declares no
+ * options, so no call shape opts out of it.
+ *
  * Markdown widens `@orkestrel/html`'s attribute floor by exactly `src`, because image
  * syntax is meaningless without its source. `src` is still a URL attribute, so the
  * floor refuses `javascript:`, `data:`, `vbscript:`, and `file:` values. A stricter

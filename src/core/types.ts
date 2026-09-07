@@ -1,13 +1,13 @@
 //  Markdown AST
 //
-// A {@link MarkdownInterface} parses a markdown document into a typed AST - a
+// A {@link MarkdownInterface} parses a markdown document into a typed AST — a
 // discriminated union of node values keyed by their `element` (the axis that
 // varies: never `kind` / `type`). The AST is the primary contract
 // (render-agnostic, exhaustively testable); three separate projections carry it out
 // to sanitized HTML, out to canonical markdown, and in from an HTML AST. Block nodes
 // carry document structure;
 // {@link InlineNode}s carry the inline content of a heading / paragraph / list item
-// / table cell. Every node is plain readonly data - no behaviour.
+// / table cell. Every node is plain readonly data — no behaviour.
 
 /**
  * Names the horizontal alignment of a GFM table column, as declared by its delimiter row
@@ -15,11 +15,17 @@
  * by `null` in {@link TableNode.align}: the positional array requires one entry per
  * column, JSON cannot carry `undefined` in an array, and the bare delimiter is an
  * explicit no-alignment marker rather than an omitted value.
+ *
+ * @remarks
+ * The other place absence appears is {@link MarkdownCell.align}, which holds
+ * `undefined` when the projected cell declared no alignment. That member is a plain
+ * optional property on one cell rather than an entry in a positional array, so it
+ * takes the ordinary `undefined` instead of the in-band `null` marker.
  */
 export type TableAlign = 'left' | 'right' | 'center'
 
 /**
- * Represents the parsed parts of a single list-item line - the value the block phase's
+ * Represents the parsed parts of a single list-item line — the value the block phase's
  * list detector returns for a `-` / `*` / `+` bullet or a `1.` / `1)` ordinal line.
  */
 export interface ListItemMatch {
@@ -31,12 +37,12 @@ export interface ListItemMatch {
 	readonly content: string
 	/** Holds the leading-space indent of the marker. */
 	readonly indent: number
-	/** Holds the full marker width (indent + bullet/ordinal + the following space) - the continuation indent. */
+	/** Holds the full marker width (indent + bullet/ordinal + the following space) — the continuation indent. */
 	readonly marker: number
 }
 
 /**
- * Represents the parsed parts of a single ATX heading line - the value the block phase's heading
+ * Represents the parsed parts of a single ATX heading line — the value the block phase's heading
  * detector returns for a `#` … `######` line.
  */
 export interface HeadingMatch {
@@ -49,7 +55,7 @@ export interface HeadingMatch {
 }
 
 /**
- * Represents the parsed parts of a fenced-code opening line - the value the block phase's fence
+ * Represents the parsed parts of a fenced-code opening line — the value the block phase's fence
  * detector returns for a ```` ``` ```` or `~~~` opener.
  */
 export interface FenceMatch {
@@ -60,7 +66,7 @@ export interface FenceMatch {
 }
 
 /**
- * Represents the located extent of one inline code span - the value the inline phase's code
+ * Represents the located extent of one inline code span — the value the inline phase's code
  * scanner returns for a matched backtick run.
  */
 export interface CodeSpanMatch {
@@ -71,7 +77,7 @@ export interface CodeSpanMatch {
 }
 
 /**
- * Represents the located syntax bounds of one `[text](href)` link - the value the inline phase's
+ * Represents the located syntax bounds of one `[text](href)` link — the value the inline phase's
  * link locator returns for a balanced label followed by a destination.
  */
 export interface LinkBounds {
@@ -82,7 +88,7 @@ export interface LinkBounds {
 }
 
 /**
- * Represents the located content and syntax bounds of one emphasis run - the value the inline
+ * Represents the located content and syntax bounds of one emphasis run — the value the inline
  * phase's emphasis locator returns for a matched marker run.
  */
 export interface EmphasisBounds {
@@ -97,7 +103,7 @@ export interface EmphasisBounds {
 }
 
 /**
- * Represents the scanned result of one `[text](href)` link - the node the inline phase's link
+ * Represents the scanned result of one `[text](href)` link — the node the inline phase's link
  * scanner built from {@link LinkBounds} and where the scan resumes.
  */
 export interface LinkScan {
@@ -108,7 +114,7 @@ export interface LinkScan {
 }
 
 /**
- * Represents the scanned result of one emphasis run - the node the inline phase's emphasis
+ * Represents the scanned result of one emphasis run — the node the inline phase's emphasis
  * scanner built from {@link EmphasisBounds} and where the scan resumes.
  */
 export interface EmphasisScan {
@@ -119,7 +125,7 @@ export interface EmphasisScan {
 }
 
 /**
- * Represents the result of collecting one GFM table - the node the construct scanner built and
+ * Represents the result of collecting one GFM table — the node the construct scanner built and
  * where the block phase resumes.
  */
 export interface TableCollection {
@@ -130,7 +136,7 @@ export interface TableCollection {
 }
 
 /**
- * Represents the result of collecting one list - the node the construct scanner built and where
+ * Represents the result of collecting one list — the node the construct scanner built and where
  * the block phase resumes.
  */
 export interface ListCollection {
@@ -141,14 +147,14 @@ export interface ListCollection {
 }
 
 /**
- * Addresses a half-open region of the ORIGINAL markdown string, in UTF-16 code units -
+ * Addresses a half-open region of the original markdown string, in UTF-16 code units —
  * `start` inclusive, `end` exclusive. The provenance a parse records for a node and
  * {@link MarkdownInterface.span} reads back.
  *
  * @remarks
  * The coordinates address the string the handle was constructed from, never the line
  * text a later phase walks, so `markdown.slice(span.start, span.end)` returns the
- * ORIGINAL source region the node was produced from. That region is not the node's
+ * original source region the node was produced from. That region is not the node's
  * value: it carries the syntax the value drops, such as a `\` escape marker, and the
  * characters that normalization removed, such as a trailing space the paragraph phase
  * trimmed. The text node of `'a \nb'` has the `value` `a\nb` and reports
@@ -164,13 +170,13 @@ export interface MarkdownSpan {
 }
 
 /**
- * Maps one run of a {@link MarkdownSource} back to the region of the ORIGINAL
+ * Maps one run of a {@link MarkdownSource} back to the region of the original
  * markdown string it was taken from.
  *
  * @remarks
  * `offset` addresses {@link MarkdownSource.text}; `start` and `end` address the
  * original string. The run's original length derives from `end - start` rather than
- * being stored beside them, so no length member exists to drift. The run's DERIVED
+ * being stored beside them, so no length member exists to drift. The run's derived
  * extent ends where the next segment's `offset` begins, so a run may cover more of the
  * original than it holds derived: the separator run `joinSources` records over a
  * normalized `\r\n` terminator is one derived code unit over a two-unit original
@@ -181,10 +187,10 @@ export interface MarkdownSpan {
  *
  * - strictly inside the run, `p` projects to `start + (p - offset)`;
  * - at the run's derived end, `p` projects to `end`, so the boundary claims the run's
- *   whole original region instead of the prefix an affine step would reach - which is
+ *   whole original region instead of the prefix an affine step would reach — which is
  *   how the one-unit `\r\n` separator run above reports its two-unit region;
  * - a zero-width `p` that coincides with a later segment's `offset` resolves through the
- *   LAST segment whose `offset` equals `p`, skipping every earlier segment at that
+ *   last segment whose `offset` equals `p`, skipping every earlier segment at that
  *   position whatever its extent, so a discontinuous abutment reports that final run's
  *   `start` rather than the earlier run's `end`.
  *
@@ -201,7 +207,7 @@ export interface MarkdownSegment {
 
 /**
  * Pairs a piece of derived markdown text with the runs mapping it back to the
- * original string - what `splitLines` returns per line, so every phase downstream of
+ * original string — what `splitLines` returns per line, so every phase downstream of
  * it keeps original coordinates instead of reconstructing them from node values.
  *
  * @remarks
@@ -226,19 +232,19 @@ export interface MarkdownSource {
 }
 
 /**
- * Represents a run of plain text - the leaf inline node. `value` is the decoded text with
+ * Represents a run of plain text — the leaf inline node. `value` is the decoded text with
  * markdown escapes (`\*`, `\_`, …) already resolved to their literal characters;
  * html's text encoder escapes `&`, `<`, `>` on the way out; `"` and `'` stay literal
  * in character data.
  */
 export interface TextNode {
 	readonly element: 'text'
-	/** Holds the literal text content (escapes resolved, NOT yet HTML-escaped). */
+	/** Holds the literal text content (escapes resolved, not yet HTML-escaped). */
 	readonly value: string
 }
 
 /**
- * Represents emphasized inline content - `*italic*` / `_italic_` (`strong: false`) or
+ * Represents emphasized inline content — `*italic*` / `_italic_` (`strong: false`) or
  * `**bold**` / `__bold__` (`strong: true`). `children` are the nested inline nodes,
  * so emphasis composes (a `**bold _and italic_**` is a strong node wrapping a text
  * node and an emphasis node).
@@ -252,7 +258,7 @@ export interface EmphasisNode {
 }
 
 /**
- * Represents an inline code span - `` `code` ``. `value` is the verbatim span text; no inner
+ * Represents an inline code span — `` `code` ``. `value` is the verbatim span text; no inner
  * markdown is parsed (code is literal), and the renderer HTML-escapes it inside a
  * `<code>` element.
  */
@@ -263,7 +269,7 @@ export interface CodeSpanNode {
 }
 
 /**
- * Represents a GFM hard line break - two or more trailing spaces before a newline in
+ * Represents a GFM hard line break — two or more trailing spaces before a newline in
  * markdown source, a `br` element in HTML.
  */
 export interface LineBreakNode {
@@ -271,7 +277,7 @@ export interface LineBreakNode {
 }
 
 /**
- * Represents an inline link - `[text](href)`. `children` are the inline nodes of the link text.
+ * Represents an inline link — `[text](href)`. `children` are the inline nodes of the link text.
  * At render, html's floor removes a refused `href` attribute and the link keeps its
  * text; {@link htmlToMarkdown} instead stores a refused destination as `''`.
  */
@@ -284,7 +290,7 @@ export interface LinkNode {
 }
 
 /**
- * Represents an inline image - `![alt](src)`. `children` are the inline nodes of the
+ * Represents an inline image — `![alt](src)`. `children` are the inline nodes of the
  * alternative content and `src` is the image destination.
  */
 export interface ImageNode {
@@ -305,7 +311,7 @@ export type InlineNode =
 	| ImageNode
 
 /**
- * Represents an ATX heading - `#` … `######`. `level` is 1–6 (the number of leading `#`),
+ * Represents an ATX heading — `#` … `######`. `level` is 1–6 (the number of leading `#`),
  * `children` the inline content of the heading text.
  */
 export interface HeadingNode {
@@ -316,14 +322,14 @@ export interface HeadingNode {
 	readonly children: readonly InlineNode[]
 }
 
-/** Represents a paragraph - a run of non-blank lines that is not another block; `children` its inline content. */
+/** Represents a paragraph — a run of non-blank lines that is not another block; `children` its inline content. */
 export interface ParagraphNode {
 	readonly element: 'paragraph'
 	/** Holds the inline content of the paragraph. */
 	readonly children: readonly InlineNode[]
 }
 
-/** Represents one item of a {@link ListNode} - `children` the block content of the item (typically one paragraph, plus any nested list). */
+/** Represents one item of a {@link ListNode} — `children` the block content of the item (typically one paragraph, plus any nested list). */
 export interface ListItemNode {
 	readonly element: 'listItem'
 	/** Holds the block content of the list item (its text as a paragraph, plus any nested list). */
@@ -331,7 +337,7 @@ export interface ListItemNode {
 }
 
 /**
- * Represents a list - bulleted (`-` / `*` / `+`, `ordered: false`) or numbered (`1.` / `1)`,
+ * Represents a list — bulleted (`-` / `*` / `+`, `ordered: false`) or numbered (`1.` / `1)`,
  * `ordered: true`). `start` is the first ordinal of an ordered list (usually `1`).
  * Nesting is expressed by a {@link ListNode} appearing in a {@link ListItemNode}'s
  * `children`.
@@ -347,16 +353,16 @@ export interface ListNode {
 }
 
 /**
- * Represents a GFM table - `header` the inline content of each header cell, `rows` the body
+ * Represents a GFM table — `header` the inline content of each header cell, `rows` the body
  * rows (each a list of cells, each cell inline content), `align` the per-column
  * alignment from the delimiter row. A short body row is padded with empty cells; an
  * over-long one is truncated to the header's column count.
  */
 export interface TableNode {
 	readonly element: 'table'
-	/** Holds the header row - one cell of inline content per column. */
+	/** Holds the header row — one cell of inline content per column. */
 	readonly header: ReadonlyArray<readonly InlineNode[]>
-	/** Holds the body rows - each a list of cells, each cell inline content. */
+	/** Holds the body rows — each a list of cells, each cell inline content. */
 	readonly rows: ReadonlyArray<ReadonlyArray<readonly InlineNode[]>>
 	/**
 	 * Holds the per-column alignment from the delimiter row, in column order. `null`
@@ -368,7 +374,7 @@ export interface TableNode {
 }
 
 /**
- * Represents a fenced code block - ```` ```lang ````. `code` is the verbatim block content (no
+ * Represents a fenced code block — ```` ```lang ````. `code` is the verbatim block content (no
  * inner markdown; the closing fence and the trailing newline are stripped), `lang`
  * the info-string language tag (the first word after the opening fence), absent when
  * none was given.
@@ -381,14 +387,14 @@ export interface CodeBlockNode {
 	readonly code: string
 }
 
-/** Represents a blockquote - `>`-prefixed lines; `children` the block content parsed from the de-quoted lines (so quotes nest). */
+/** Represents a blockquote — `>`-prefixed lines; `children` the block content parsed from the de-quoted lines (so quotes nest). */
 export interface BlockquoteNode {
 	readonly element: 'blockquote'
 	/** Holds the block content of the quote (the `>`-stripped lines, re-parsed as blocks). */
 	readonly children: readonly BlockNode[]
 }
 
-/** Represents a thematic break - a horizontal rule (`---` / `***` / `___` on its own line). */
+/** Represents a thematic break — a horizontal rule (`---` / `***` / `___` on its own line). */
 export interface ThematicBreakNode {
 	readonly element: 'thematicBreak'
 }
@@ -404,7 +410,7 @@ export type BlockNode =
 	| ThematicBreakNode
 
 /**
- * Represents the root of a parsed markdown AST - the ordered block children of the whole
+ * Represents the root of a parsed markdown AST — the ordered block children of the whole
  * document. The value {@link MarkdownInterface.document} holds.
  */
 export interface MarkdownDocument {
@@ -414,22 +420,29 @@ export interface MarkdownDocument {
 }
 
 /**
- * Represents any node in a markdown AST - the {@link MarkdownDocument} root, a {@link BlockNode},
+ * Represents any node in a markdown AST — the {@link MarkdownDocument} root, a {@link BlockNode},
  * a {@link ListItemNode}, or an {@link InlineNode}. The exhaustive set every
  * projection's `switch` covers.
  */
 export type MarkdownNode = MarkdownDocument | BlockNode | ListItemNode | InlineNode
 
-/** Represents one projected table cell - the inline content and alignment of a `th` / `td`. */
+/**
+ * Represents one projected table cell — the inline content and alignment of a `th` / `td`.
+ *
+ * @remarks
+ * {@link htmlToMarkdown} derives a projected table's header row from the source HTML
+ * structure rather than from any flag a cell carries: the header is the first
+ * `th`-bearing row, and every row after it becomes a body row.
+ */
 export interface MarkdownCell {
 	/** Holds the alignment the cell's `align` attribute declared; `undefined` when it declared none. */
 	readonly align: TableAlign | undefined
-	/** Holds the cell's inline content - a table cell is inline-only, so block content flattens to text. */
+	/** Holds the cell's inline content — a table cell is inline-only, so block content flattens to text. */
 	readonly inlines: readonly InlineNode[]
 }
 
 /**
- * Represents what one HTML node projects to on the way to markdown - the fold value
+ * Represents what one HTML node projects to on the way to markdown — the fold value
  * `htmlToMarkdown` carries up the AST.
  *
  * @remarks
@@ -439,14 +452,14 @@ export interface MarkdownCell {
  * under a `pre`. Rather than guess, each node reports every view its ancestors could
  * need, and the ancestor that knows the context takes the one it wants.
  *
- * - `blocks` / `inlines` - the block and inline views. They are exclusive by
+ * - `blocks` / `inlines` — the block and inline views. They are exclusive by
  *   construction: as soon as a node contributes a block, the inline runs around it
  *   are wrapped into paragraphs, so `blocks` being non-empty means `inlines` is
  *   empty and no interleaving is ever lost.
- * - `text` - the raw, uncollapsed, unescaped subtree text a code span and a
+ * - `text` — the raw, uncollapsed, unescaped subtree text a code span and a
  *   `pre > code` body need verbatim. An `UNSAFE_ELEMENTS` subtree contributes none
  *   of it, so a script body can never resurface as prose.
- * - `cells` / `rows` - table structure in flight. A cell travels up to its `tr` and a
+ * - `cells` / `rows` — table structure in flight. A cell travels up to its `tr` and a
  *   row up to its `table`, passing through the `thead` / `tbody` wrappers between
  *   them untouched; whatever never reaches a table degrades to paragraphs.
  */
@@ -459,19 +472,19 @@ export interface MarkdownProjection {
 	readonly text: string
 	/** Holds the cells this node contributes to an enclosing row. */
 	readonly cells: readonly MarkdownCell[]
-	/** Holds the rows this node contributes to an enclosing table - each its cells, in column order. */
+	/** Holds the rows this node contributes to an enclosing table — each its cells, in column order. */
 	readonly rows: ReadonlyArray<readonly MarkdownCell[]>
 }
 
 /**
- * Represents a fold handler for one AST element - receives the node and its children
- * ALREADY folded to `T`, and produces the node's own `T`. The building block of a
+ * Represents a fold handler for one AST element — receives the node and its children
+ * already folded to `T`, and produces the node's own `T`. The building block of a
  * {@link MarkdownHandlerMap} catamorphism table.
  */
 export type MarkdownHandler<TNode, T> = (node: TNode, children: readonly T[]) => T
 
 /**
- * Represents the total catamorphism table for {@link MarkdownInterface.fold} - one
+ * Represents the total catamorphism table for {@link MarkdownInterface.fold} — one
  * {@link MarkdownHandler} per AST element, keyed by its `element` discriminant. Every
  * key is required: a fold is total over the AST, so there is no element it can skip.
  */
@@ -482,11 +495,11 @@ export interface MarkdownHandlerMap<T> {
 	readonly heading: MarkdownHandler<HeadingNode, T>
 	/** Folds a {@link ParagraphNode} from its already-folded inline children. */
 	readonly paragraph: MarkdownHandler<ParagraphNode, T>
-	/** Folds a {@link ThematicBreakNode} (leaf - always called with an empty children list). */
+	/** Folds a {@link ThematicBreakNode} (leaf — always called with an empty children list). */
 	readonly thematicBreak: MarkdownHandler<ThematicBreakNode, T>
 	/** Folds a {@link BlockquoteNode} from its already-folded block children. */
 	readonly blockquote: MarkdownHandler<BlockquoteNode, T>
-	/** Folds a {@link CodeBlockNode} (leaf - always called with an empty children list). */
+	/** Folds a {@link CodeBlockNode} (leaf — always called with an empty children list). */
 	readonly codeBlock: MarkdownHandler<CodeBlockNode, T>
 	/** Folds a {@link ListNode} from its already-folded item children. */
 	readonly list: MarkdownHandler<ListNode, T>
@@ -494,19 +507,19 @@ export interface MarkdownHandlerMap<T> {
 	readonly listItem: MarkdownHandler<ListItemNode, T>
 	/**
 	 * Folds a {@link TableNode} from its cells' already-folded inline nodes, flattened
-	 * to ONE folded `T` per inline node - header cells first (column order), then body
-	 * rows' cells (row order, then column order). It is NOT a leaf: recover cell
+	 * to one folded `T` per inline node — header cells first (column order), then body
+	 * rows' cells (row order, then column order). It is not a leaf: recover cell
 	 * boundaries from `node.header[c].length` / `node.rows[r][c].length` against the
 	 * flat `children` list.
 	 */
 	readonly table: MarkdownHandler<TableNode, T>
-	/** Folds a {@link TextNode} (leaf - always called with an empty children list). */
+	/** Folds a {@link TextNode} (leaf — always called with an empty children list). */
 	readonly text: MarkdownHandler<TextNode, T>
 	/** Folds an {@link EmphasisNode} from its already-folded inline children. */
 	readonly emphasis: MarkdownHandler<EmphasisNode, T>
-	/** Folds a {@link CodeSpanNode} (leaf - always called with an empty children list). */
+	/** Folds a {@link CodeSpanNode} (leaf — always called with an empty children list). */
 	readonly codeSpan: MarkdownHandler<CodeSpanNode, T>
-	/** Folds a {@link LineBreakNode} (leaf - always called with an empty children list). */
+	/** Folds a {@link LineBreakNode} (leaf — always called with an empty children list). */
 	readonly break: MarkdownHandler<LineBreakNode, T>
 	/** Folds a {@link LinkNode} from its already-folded inline children. */
 	readonly link: MarkdownHandler<LinkNode, T>
@@ -515,20 +528,20 @@ export interface MarkdownHandlerMap<T> {
 }
 
 /**
- * Represents a copy-on-write node rewrite applied bottom-up by {@link MarkdownInterface.map} -
+ * Represents a copy-on-write node rewrite applied bottom-up by {@link MarkdownInterface.map} —
  * receives one node (its own children already rewritten) and returns its
  * replacement (the same node, unchanged, or a new node).
  */
 export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
 
 /**
- * Pairs a parsed document with the {@link MarkdownSpan} of each of its nodes - what
+ * Pairs a parsed document with the {@link MarkdownSpan} of each of its nodes — what
  * `parseProvenance` returns, and what `parseDocument` projects the document out of.
  *
  * @remarks
- * `spans` is keyed by node identity, so it addresses the nodes of THAT document and
- * no other. A node the parse merged from adjacent scanner output - the text run
- * `coalesceText` joins - is present and carries the region ENCLOSING its parts, from
+ * `spans` is keyed by node identity, so it addresses the nodes of that document and
+ * no other. A node the parse merged from adjacent scanner output — the text run
+ * `coalesceText` joins — is present and carries the region enclosing its parts, from
  * the first part's `start` to the last part's `end`, which can include original text
  * lying between them. Absence means the parse recorded no region for the node, not
  * that the node was assembled from more than one region. Destructure it as
@@ -540,19 +553,19 @@ export type MarkdownParseResult = readonly [
 ]
 
 /**
- * Pairs a rewritten value with the input node each rewritten node was produced from -
+ * Pairs a rewritten value with the input node each rewritten node was produced from —
  * what `rewriteDocument` returns, so provenance survives a rewrite instead of ending at
  * it. `T` is the rewritten value: the document for a whole-document rewrite.
  *
  * @remarks
- * `derivations` is keyed by the nodes of the OUTPUT, and each entry names the DIRECT
+ * `derivations` is keyed by the nodes of the output, and each entry names the direct
  * input the rewrite drew that output from. {@link MarkdownInterface.map} resolves each
  * output node against the source handle's own spans in a fixed order, and follows no
  * second derivation edge:
  *
- * - the output identity's OWN span in the source handle wins, whatever the map says,
- *   so an identity the rewrite reused - one node returned for several inputs, or a
- *   node the handler moved elsewhere in the tree - keeps the region it already had;
+ * - the output identity's own span in the source handle wins, whatever the map says,
+ *   so an identity the rewrite reused — one node returned for several inputs, or a
+ *   node the handler moved elsewhere in the tree — keeps the region it already had;
  * - otherwise the span of the direct input the entry names, where that input has one;
  * - otherwise none. Where the output identity holds no region of its own, a node mapped
  *   to `undefined`, a node whose direct input has no span, and a node with no entry at
@@ -573,14 +586,14 @@ export type MarkdownDerivation<T> = readonly [
  * the query, rewrite, and fold operations over it.
  *
  * @remarks
- * - **Immutable.** {@link MarkdownInterface.map} never mutates the stored AST - it
- *   returns a NEW {@link MarkdownInterface} instance; the document root invariant
+ * - **Immutable.** {@link MarkdownInterface.map} never mutates the stored AST — it
+ *   returns a new {@link MarkdownInterface} instance; the document root invariant
  *   (`element: 'document'`) always holds.
  * - **Traversal order.** `walk` / `find` / `filter` / `reduce` walk the AST
- *   depth-first, pre-order, root-inclusive; `stream` is shallow - only the
+ *   depth-first, pre-order, root-inclusive; `stream` is shallow — only the
  *   document's direct block children.
  * - **`stream`.** Returns a web-standard {@link ReadableStream} over the top-level
- *   blocks - a fresh, pull-based source per call: exactly one block is enqueued per
+ *   blocks — a fresh, pull-based source per call: exactly one block is enqueued per
  *   `pull`, so a slow consumer's backpressure is respected and no work happens ahead
  *   of demand. Cancellable through the returned stream's own `cancel()`, async-iterable
  *   wherever the platform supports it (Node, Deno, and browsers that ship the
@@ -594,7 +607,7 @@ export interface MarkdownInterface {
 	/** Holds the stored {@link MarkdownDocument} AST root. */
 	readonly document: MarkdownDocument
 	/**
-	 * Returns THE deep traversal - a lazy, depth-first, pre-order, root-inclusive
+	 * Returns the deep traversal — a lazy, depth-first, pre-order, root-inclusive
 	 * {@link Generator} over every {@link MarkdownNode} in the document. The sync
 	 * `for (const node of markdown.walk())` surface is also consumable by
 	 * `for await (const node of markdown.walk())` (JavaScript accepts a sync
@@ -604,15 +617,15 @@ export interface MarkdownInterface {
 	 */
 	walk(): Generator<MarkdownNode>
 	/**
-	 * Finds the first node (depth-first, pre-order) narrowed by a type guard or matched
-	 * by a predicate, and returns `undefined` when no node matches.
+	 * Finds the first node (depth-first, pre-order) narrowed by a type guard, and returns
+	 * `undefined` when no node matches; a second overload takes a plain predicate.
 	 */
 	find<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): T | undefined
 	/** Finds the first node (depth-first, pre-order) matching a predicate. */
 	find(predicate: (node: MarkdownNode) => boolean): MarkdownNode | undefined
 	/**
-	 * Collects every node (depth-first, pre-order) narrowed by a type guard or matched by
-	 * a predicate.
+	 * Collects every node (depth-first, pre-order) narrowed by a type guard; a second
+	 * overload takes a plain predicate.
 	 */
 	filter<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): readonly T[]
 	/** Collects every node (depth-first, pre-order) matching a predicate. */
@@ -626,11 +639,11 @@ export interface MarkdownInterface {
 	 *
 	 * @remarks
 	 * Provenance is per handle and per node identity, so a node reports a region only
-	 * where THIS handle holds coordinates for it. A handle constructed from an adopted
+	 * where this handle holds coordinates for it. A handle constructed from an adopted
 	 * {@link MarkdownDocument} reports `undefined` for every node: it parsed no string,
-	 * so no coordinates exist to report. A text run the PARSE joined from adjacent
+	 * so no coordinates exist to report. A text run the parse joined from adjacent
 	 * scanner output reports the region enclosing its parts rather than `undefined`;
-	 * only a REWRITE output that holds no region of its own and was assembled from
+	 * only a rewrite output that holds no region of its own and was assembled from
 	 * separate source nodes reports `undefined`. The region a node does report is the
 	 * original source it was produced from, which can include syntax its value drops
 	 * and characters that normalization removed. Each call returns a fresh value rather
@@ -645,7 +658,7 @@ export interface MarkdownInterface {
 	fold<T>(handlers: MarkdownHandlerMap<T>): T
 	/**
 	 * Returns a web-standard {@link ReadableStream} over the document's top-level block nodes
-	 * (shallow, source order) - a lazy, pull-based, backpressure-respecting source. A
+	 * (shallow, source order) — a lazy, pull-based, backpressure-respecting source. A
 	 * fresh, independently-replayable stream every call; never mutates the document.
 	 */
 	stream(): ReadableStream<BlockNode>

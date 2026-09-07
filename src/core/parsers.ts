@@ -195,7 +195,7 @@ export function parseBlocks(
 
 /**
  * Parses a markdown string into a typed {@link MarkdownDocument} AST through the
- * block phase - the document half of what {@link parseProvenance} returns. Malformed
+ * block phase — the document half of what {@link parseProvenance} returns. Malformed
  * markdown degrades to literal text, so the parse never throws.
  *
  * @param markdown - The markdown source to parse.
