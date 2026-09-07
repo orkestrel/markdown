@@ -56,7 +56,7 @@ export const TEST_SEED = 42
 // sit here beside the other base helpers, shared across the Markdown and
 // AST-validator unit tests.
 
-/** Parse `markdown` and narrow its FIRST block, asserting at least one exists. */
+/** Parses `markdown` and narrows its FIRST block, asserting at least one exists. */
 export function firstBlock(markdown: string): BlockNode {
 	const block = new Markdown(markdown).document.children[0]
 	if (block === undefined) throw new Error('expected at least one block')
@@ -148,17 +148,17 @@ export function inlineText(nodes: readonly InlineNode[]): string {
 // (`parseDocument(renderMarkdown(projection))` deep-equals `projection`) is proved
 // over — one entry per markdown construct the projection can emit.
 
-/** A {@link MarkdownProjection} with every field defaulted — the projection leaves' test input. */
+/** Builds a {@link MarkdownProjection} with every field defaulted — the projection leaves' test input. */
 export function buildProjection(parts: Partial<MarkdownProjection>): MarkdownProjection {
 	return createProjection(parts)
 }
 
-/** Parse `html` with `@orkestrel/html` and project it to a markdown document. */
+/** Parses `html` with `@orkestrel/html` and projects it to a markdown document. */
 export function projectHTML(html: string): MarkdownDocument {
 	return htmlToMarkdown(parseHTML(html))
 }
 
-/** Markdown sources whose parsed AST must survive canonical rendering and reparsing. */
+/** Lists markdown sources whose parsed AST must survive canonical rendering and reparsing. */
 export const MARKDOWN_FIXPOINT_CORPUS: ReadonlyArray<{
 	readonly name: string
 	readonly source: string
@@ -181,7 +181,7 @@ export const MARKDOWN_FIXPOINT_CORPUS: ReadonlyArray<{
 	},
 ]
 
-/** The HTML documents the projection's round-trip anchor law is proved over. */
+/** Lists the HTML documents the projection's round-trip anchor law is proved over. */
 export const PROJECTION_CORPUS: ReadonlyArray<{ readonly name: string; readonly html: string }> = [
 	{ name: 'headings', html: '<h1>Title</h1><h2>Sub &amp; more</h2><h6>Deep</h6>' },
 	{ name: 'emphasis nesting', html: '<p>a <strong><em>c</em> and b</strong> d</p>' },
@@ -228,7 +228,7 @@ export const PROJECTION_CORPUS: ReadonlyArray<{ readonly name: string; readonly 
 // produce exactly those shapes.
 
 /**
- * An emphasis-like record whose `children` array contains a reference cycle
+ * Builds an emphasis-like record whose `children` array contains a reference cycle
  * (the array holds the record itself). Exercises guard totality against
  * cyclic input without relying on structural recursion blowing the stack.
  */
@@ -239,7 +239,7 @@ export function buildCyclicNode(): unknown {
 }
 
 /**
- * An object shaped like a markdown node whose `element` property is a getter
+ * Builds an object shaped like a markdown node whose `element` property is a getter
  * that throws when read. Exercises guard totality against input that throws
  * mid-inspection rather than returning a plain value.
  */
@@ -255,7 +255,7 @@ export function buildHostileNode(): unknown {
 }
 
 /**
- * An emphasis-like inline chain nested `levels` deep, each level's `children`
+ * Builds an emphasis-like inline chain nested `levels` deep, each level's `children`
  * holding exactly the next level, with a text-like record at the innermost
  * leaf. For stack-safety tests on inline guards/traversal.
  */
@@ -268,7 +268,7 @@ export function buildDeepInlineNode(levels: number): unknown {
 }
 
 /**
- * A blockquote-like block chain nested `levels` deep, each level's `children`
+ * Builds a blockquote-like block chain nested `levels` deep, each level's `children`
  * holding exactly the next level, with a paragraph-like record at the
  * innermost leaf. For stack-safety tests on block guards/traversal.
  */
@@ -284,12 +284,12 @@ export function buildDeepBlockNode(levels: number): unknown {
 // Plain string builders producing markdown input nested `levels` deep, for
 // asserting the parser degrades gracefully (never throws) past `MAX_DEPTH`.
 
-/** Markdown source with `levels` leading `>` blockquote markers before `text`. */
+/** Builds markdown source with `levels` leading `>` blockquote markers before `text`. */
 export function buildDeepQuoteInput(levels: number, text = 'leaf'): string {
 	return `${'> '.repeat(levels)}${text}`
 }
 
-/** Markdown source for an `levels`-deep nested list, one indent per level. */
+/** Builds markdown source for an `levels`-deep nested list, one indent per level. */
 export function buildDeepListInput(levels: number, text = 'leaf'): string {
 	const lines: string[] = []
 	for (let depth = 0; depth < levels; depth += 1) {
@@ -298,7 +298,7 @@ export function buildDeepListInput(levels: number, text = 'leaf'): string {
 	return lines.join('\n')
 }
 
-/** Markdown source with `levels` nested `*emphasis*`/`[link](` inline markers around `text`. */
+/** Builds markdown source with `levels` nested `*emphasis*`/`[link](` inline markers around `text`. */
 export function buildDeepEmphasisInput(levels: number, text = 'leaf'): string {
 	let source = text
 	for (let depth = 0; depth < levels; depth += 1) {

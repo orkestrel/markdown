@@ -676,7 +676,7 @@ describe('Markdown — adversarial (deep input)', () => {
 	})
 
 	it('an identity map over an ADOPTED 10,000-deep blockquote-chain document does not throw', () => {
-		// Built directly as an AST (not via parseDocument, which caps depth during
+		// Built directly as an AST (not through parseDocument, which caps depth during
 		// parsing) and adopted as-is, so map/rewriteDocument sees the FULL depth.
 		const leaf: ParagraphNode = {
 			element: 'paragraph',

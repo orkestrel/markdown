@@ -22,7 +22,7 @@ import { arrayShape, createContract, nullableShape, seededRandom } from '@orkest
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { TEST_SEED } from '../../setup.js'
 
-// Each shape here compiles (via createContract) into a guard / parser /
+// Each shape here compiles (through createContract) into a guard / parser /
 // schema / generator that must agree in lockstep. These
 // shapes are the non-recursive slice of the markdown AST (types.ts) — every
 // field shapes directly, no lazy/self-referential node.

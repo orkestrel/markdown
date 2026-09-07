@@ -681,7 +681,7 @@ describe('parseDocument — line endings', () => {
 
 describe('parseDocument — round-trip over a self-contained composite document', () => {
 	// One inline fixture exercising every construct this parser supports, proving it
-	// handles a realistic WHOLE document (not just one construct at a time) — no disk
+	// handles a realistic WHOLE document (not one construct at a time alone) — no disk
 	// reads.
 	const markdown = [
 		'# Title',

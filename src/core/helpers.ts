@@ -1711,7 +1711,7 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 
 /**
  * Renders a {@link MarkdownNode} to its CANONICAL markdown source - the inverse
- * projection of `renderHTML`, and the serializer a `parse(renderMarkdown(doc))`
+ * projection of `renderHTML`. It is the serializer a `parse(renderMarkdown(doc))`
  * round-trip is built on. Canonical forms: `*` / `**` emphasis at even emphasis
  * nesting depths and `_` / `__` at odd depths, `- ` bullets, `N. ` sequential
  * ordinals (from the list's `start`), `---` thematic breaks, fenced code blocks
