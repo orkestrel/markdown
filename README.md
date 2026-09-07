@@ -1,12 +1,18 @@
 # @orkestrel/markdown
 
-A types-first markdown layer over `@orkestrel/html`: parse GitHub-Flavored Markdown into a typed
-AST, project that AST out to sanitized HTML or to canonical markdown source, and project an HTML AST
-back in.
+> A types-first markdown layer over `@orkestrel/html`: a linear-time scanner that parses
+> GitHub-Flavored Markdown into a typed AST, a stateful `Markdown` workspace that queries,
+> rewrites, folds, and streams that AST, and standalone projections that carry it out to
+> sanitized HTML or canonical markdown source and carry an HTML AST back in.
+
+Parse a document with the `createMarkdown` function, query and rewrite the AST the handle holds,
+then write it back out with the `renderHTML` or `renderMarkdown` function. Where the source is
+HTML instead, the `htmlToMarkdown` function brings it the other way. Part of the `@orkestrel`
+line.
 
 - **One AST, several projections.** Nodes are plain readonly data keyed by `element`; parsing,
   querying, rewriting, folding, streaming, and every conversion are operations over it.
-- **Both directions live here.** `markdownToHTML` and `htmlToMarkdown` are inverse projections
+- **Each direction lives here.** `markdownToHTML` and `htmlToMarkdown` are inverse projections
   across the boundary, because what an HTML subtree means in markdown is markdown's knowledge, not
   html's.
 - **Sanitized by default, with no opt-out.** `renderHTML` takes one argument and composes
@@ -24,7 +30,7 @@ npm install @orkestrel/markdown
 
 - Node.js >= 22.12
 - Ships ES and CommonJS builds with its own `.d.ts` types
-- Two runtime dependencies, `@orkestrel/html` and `@orkestrel/contract`
+- Depends at runtime on `@orkestrel/html` and `@orkestrel/contract`
 
 ## Usage
 
@@ -63,7 +69,7 @@ bundle of guard, parser, JSON Schema, and seeded generator.
   `htmlToMarkdown(x)`: whatever the projection emits, markdown can write it and read it back
   unchanged.
 
-Both round-trip laws hold within the depth budget — markdown's `MAX_DEPTH`, plus html's own cap on
+Each round-trip law holds within the depth budget — markdown's `MAX_DEPTH`, plus html's own cap on
 the inbound trip; beyond it only totality is promised.
 
 - **Sanitized output** — `renderHTML` refuses `javascript:`, `data:`, `vbscript:`, `file:`, and

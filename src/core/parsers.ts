@@ -195,7 +195,8 @@ export function parseBlocks(
 
 /**
  * Parses a markdown string into a typed {@link MarkdownDocument} AST through the
- * block phase.
+ * block phase - the document half of what {@link parseProvenance} returns. Malformed
+ * markdown degrades to literal text, so the parse never throws.
  *
  * @param markdown - The markdown source to parse.
  * @returns The parsed document.
@@ -211,7 +212,8 @@ export function parseDocument(markdown: string): MarkdownDocument {
 }
 
 /**
- * Parses a markdown string into a document and its original-source spans.
+ * Parses a markdown string into a document and its original-source spans. Malformed
+ * markdown degrades to literal text, so the parse never throws.
  *
  * @param markdown - The markdown source to parse.
  * @returns The parsed document and its node-identity span map.
@@ -234,7 +236,8 @@ export function parseProvenance(markdown: string): MarkdownParseResult {
 
 /**
  * Parses inline markdown text (emphasis, code spans, links, images, and hard
- * breaks) into inline AST nodes, coalescing adjacent text runs.
+ * breaks) into inline AST nodes, coalescing adjacent text runs and reading no block
+ * structure. Malformed markdown degrades to literal text, so the parse never throws.
  *
  * @param text - The inline markdown text to parse.
  * @returns The parsed inline nodes.

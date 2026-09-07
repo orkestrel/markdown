@@ -39,16 +39,15 @@ import { parseProvenance } from './parsers.js'
  *   on it walk the AST depth-first, pre-order, root-inclusive (through {@link walkNodes});
  *   `stream` is shallow - only the document's direct block children.
  *
- * @example
+ * @example Construct from a string and narrow with a guard
  * ```ts
- * import { Markdown, isHeadingNode, renderMarkdown } from '@src/core'
+ * import { Markdown, isHeadingNode } from '@orkestrel/markdown'
  *
  * const markdown = new Markdown('# Title\n\nA **bold** [link](https://x.dev).')
- * const heading = markdown.find(isHeadingNode) // the HeadingNode, or undefined
- * const shouted = markdown.map((node) =>
- *   node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
- * )
- * renderMarkdown(shouted.document) // '# TITLE\n\nA **BOLD** [LINK](https://x.dev).'
+ * markdown.document.children[0] // { element: 'heading', level: 1, children: [...] }
+ *
+ * const heading = markdown.find(isHeadingNode) // HeadingNode | undefined, narrowed
+ * if (heading !== undefined) heading.level // number — narrowed to HeadingNode
  * ```
  */
 export class Markdown implements MarkdownInterface {

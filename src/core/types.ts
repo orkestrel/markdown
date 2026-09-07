@@ -262,7 +262,10 @@ export interface CodeSpanNode {
 	readonly value: string
 }
 
-/** Represents a GFM hard line break - two or more trailing spaces before a newline. */
+/**
+ * Represents a GFM hard line break - two or more trailing spaces before a newline in
+ * markdown source, a `br` element in HTML.
+ */
 export interface LineBreakNode {
 	readonly element: 'break'
 }
@@ -600,11 +603,17 @@ export interface MarkdownInterface {
 	 * is shallow (top-level blocks only) and backpressure-respecting.
 	 */
 	walk(): Generator<MarkdownNode>
-	/** Finds the first node (depth-first, pre-order) narrowed by a type guard. */
+	/**
+	 * Finds the first node (depth-first, pre-order) narrowed by a type guard or matched
+	 * by a predicate, and returns `undefined` when no node matches.
+	 */
 	find<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): T | undefined
 	/** Finds the first node (depth-first, pre-order) matching a predicate. */
 	find(predicate: (node: MarkdownNode) => boolean): MarkdownNode | undefined
-	/** Collects every node (depth-first, pre-order) narrowed by a type guard. */
+	/**
+	 * Collects every node (depth-first, pre-order) narrowed by a type guard or matched by
+	 * a predicate.
+	 */
 	filter<T extends MarkdownNode>(guard: (node: MarkdownNode) => node is T): readonly T[]
 	/** Collects every node (depth-first, pre-order) matching a predicate. */
 	filter(predicate: (node: MarkdownNode) => boolean): readonly MarkdownNode[]
@@ -630,7 +639,7 @@ export interface MarkdownInterface {
 	span(node: MarkdownNode): MarkdownSpan | undefined
 	/** Rewrites the AST bottom-up (copy-on-write) and returns a new {@link MarkdownInterface}. */
 	map(rewrite: MarkdownRewriteHandler): MarkdownInterface
-	/** Folds the AST depth-first, pre-order into an accumulator. */
+	/** Folds the AST depth-first, pre-order into an accumulator through a reducer callback. */
 	reduce<T>(callback: (accumulator: T, node: MarkdownNode) => T, initial: T): T
 	/** Runs a total catamorphism over the document using a {@link MarkdownHandlerMap} table. */
 	fold<T>(handlers: MarkdownHandlerMap<T>): T

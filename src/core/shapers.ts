@@ -106,7 +106,8 @@ export const thematicBreakShape = objectShape({
 
 /**
  * Describes the shape of a {@link TableAlign} - the per-column GFM table alignment
- * literal.
+ * literal. Absence is no member of it, so the shape refuses the `null` a bare `---`
+ * delimiter takes in a `TableNode`'s `align` list.
  *
  * @example
  * ```ts

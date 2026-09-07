@@ -594,10 +594,11 @@ export function stripQuote(source: MarkdownSource): MarkdownSource {
 }
 
 /**
- * Splits one GFM table row into its cell strings - outer pipes are optional, an escaped
- * pipe (`\|`) inside a cell is NOT a separator (it becomes a literal `|`), and the
- * empty leading / trailing cell produced by an outer `|` is dropped. Derives the string
- * form from {@link splitTableSources}, which owns the escaped-pipe splitting rule.
+ * Splits one GFM table row into its cell strings - outer pipes are optional, a pipe
+ * escaped by a leading backslash inside a cell is NOT a separator (it becomes a literal
+ * pipe character), and the empty leading / trailing cell an outer pipe produces is
+ * dropped. Derives the string form from {@link splitTableSources}, which owns the
+ * escaped-pipe splitting rule.
  *
  * @param row - The raw table row line
  * @returns The row's cells, in column order
@@ -1716,9 +1717,9 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
  * nesting depths and `_` / `__` at odd depths, `- ` bullets, `N. ` sequential
  * ordinals (from the list's `start`), `---` thematic breaks, fenced code blocks
  * (backtick run widened past any 3+ backtick run inside the body), ATX headings,
- * `> `-prefixed blockquote lines, GFM tables (1-space-padded cells, `\|`-escaped
- * pipes, an alignment delimiter row), `[text](href)` links, `![alt](src)` images,
- * and two-space hard breaks. A `text` node's literal content is backslash-escaped
+ * `> `-prefixed blockquote lines, GFM tables (1-space-padded cells, a backslash
+ * before each literal pipe, an alignment delimiter row), `[text](href)` links,
+ * `![alt](src)` images, and two-space hard breaks. A `text` node's literal content is backslash-escaped
  * wherever it would otherwise re-parse as markup, so parsing the rendered source
  * returns the node it was rendered from.
  *
