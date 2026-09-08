@@ -64,10 +64,12 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 
 From [`constants.ts`](../src/core/constants.ts).
 
-| Constant           | Kind  | Value                                                        | Summary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------ | ----- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MAX_DEPTH`        | const | `64`                                                         | Caps the recursion depth the parse pipeline (`parseDocument` and its `parsers.ts` helpers), the `helpers.ts` traversal / projection functions (`markdownToHTML`, `renderMarkdown`, `walkNodes`, `foldNode`, `rewriteDocument`), and the `compilers.ts` renderer (`renderHTML`) honor before degrading. It bounds blockquote nesting, inline nesting (emphasis / links), and traversal / projection recursion so pathological or hostile input cannot exhaust the call stack. `htmlToMarkdown` is the inherited exception: its fold and depth cap belong to `@orkestrel/html`. |
-| `EMPTY_PROJECTION` | const | `{ blocks: [], inlines: [], text: '', cells: [], rows: [] }` | Holds the frozen empty HTML-to-markdown projection from which projection factories default every absent field.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+A `Shape` cell holds the constant's declared type.
+
+| Constant           | Kind  | Shape                | Summary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------ | ----- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MAX_DEPTH`        | const | `number`             | Caps the recursion depth the parse pipeline (`parseDocument` and its `parsers.ts` helpers), the `helpers.ts` traversal / projection functions (`markdownToHTML`, `renderMarkdown`, `walkNodes`, `foldNode`, `rewriteDocument`), and the `compilers.ts` renderer (`renderHTML`) honor before degrading, at 64. It bounds blockquote nesting, inline nesting (emphasis / links), and traversal / projection recursion so pathological or hostile input cannot exhaust the call stack. `htmlToMarkdown` is the inherited exception: its fold and depth cap belong to `@orkestrel/html`. |
+| `EMPTY_PROJECTION` | const | `MarkdownProjection` | Holds the frozen empty HTML-to-markdown projection from which projection factories default every absent field.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ### Parsers
 
@@ -148,7 +150,7 @@ From [`compilers.ts`](../src/core/compilers.ts) — the class-driving half of th
 
 Declarative `ContractShape` values (from `@orkestrel/contract`) from [`shapers.ts`](../src/core/shapers.ts) — one shape compiles into a guard, coercing parser, JSON Schema, and seeded generator (the compilers live in `@orkestrel/contract`, invoked here through `createContract` in `factories.ts`). Only the non-recursive node types shape here; any type whose fields recurse into `BlockNode` / `InlineNode` / `MarkdownNode` stays guard-only (`validators.ts`, through `lazyOf`) — see [Relationship with @orkestrel/contract](#relationship-with-orkestrelcontract).
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`. In a shaper table a `Shape` cell holds the node shape the value compiles into.
+A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
 
 | Shaper               | Kind  | Shape                                         | Summary                                                                                                                                                                                                       |
 | -------------------- | ----- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -629,6 +631,8 @@ method, every standalone projection and traversal helper, and the contract-facto
 
 ### Construct from a string and narrow with a guard
 
+Construct a `Markdown` from a source string and narrow a found node with a guard:
+
 ```ts
 import { Markdown, isHeadingNode } from '@orkestrel/markdown'
 
@@ -640,6 +644,8 @@ if (heading !== undefined) heading.level // number — narrowed to HeadingNode
 ```
 
 ### Construct from an adopted document
+
+Adopt an already-parsed `MarkdownDocument` after validating it with a guard:
 
 ```ts
 import { Markdown, isMarkdownDocument } from '@orkestrel/markdown'
@@ -657,6 +663,8 @@ adopt({ element: 'bogus' }) // undefined - rejected before Markdown ever adopts 
 
 ### Filter and flatten
 
+Filter every link node and flatten each one down to its link text:
+
 ```ts
 import { Markdown, isLinkNode, flattenText } from '@orkestrel/markdown'
 
@@ -666,6 +674,8 @@ const labels = links.map((link) => flattenText(link)) // ['one', 'two']
 ```
 
 ### Chain `map` rewrites, then write back with `renderMarkdown`
+
+Chain two `map` rewrites and write the result back out with `renderMarkdown`:
 
 ```ts
 import { Markdown, renderMarkdown } from '@orkestrel/markdown'
@@ -687,6 +697,8 @@ transform pipeline is a chain of small, composable, side-effect-free rewrites en
 
 ### Reduce into an accumulator
 
+Reduce over every heading node into a plain array of heading levels:
+
 ```ts
 import { Markdown, isHeadingNode } from '@orkestrel/markdown'
 
@@ -699,6 +711,8 @@ const levels = markdown.reduce<readonly number[]>(
 ```
 
 ### Environment-agnostic fold
+
+Fold a document through a total `MarkdownHandlerMap` that projects it to a plain HTML string:
 
 ```ts
 import { Markdown } from '@orkestrel/markdown'
@@ -757,6 +771,8 @@ for await (const block of markdown.stream()) topsAsync.push(block.element)
 
 ### Sync deep iteration
 
+Walk every node synchronously with the deep, depth-first `walk` generator:
+
 ```ts
 import { Markdown } from '@orkestrel/markdown'
 
@@ -767,6 +783,8 @@ for (const node of markdown.walk()) all.push(node.element) // deep, depth-first,
 ```
 
 ### Async iteration with `for await…of`
+
+Consume `walk()` and `stream()` alike with `for await…of`, in a writer that only needs an async iterable:
 
 ```ts
 import { Markdown } from '@orkestrel/markdown'
@@ -790,6 +808,8 @@ writer, a queue) without first collecting the whole traversal into memory or nee
 async iterator.
 
 ### Standalone projections and traversal on a bare node
+
+Run the class-free projections, traversal, and rewrite functions directly against a bare node or document:
 
 ```ts
 import { parseDocument as parseHTML } from '@orkestrel/html'
@@ -896,6 +916,8 @@ carries no coalescing guarantee. Apply `coalesceText` yourself when you depend o
 
 ### Guide-parity extraction
 
+Extract every `## Surface`-table identifier from this guide's own markdown text:
+
 ```ts
 import { Markdown, isTableNode, flattenText } from '@orkestrel/markdown'
 
@@ -910,6 +932,8 @@ function extractSurfaceNames(source: string): readonly string[] {
 ```
 
 ### Contract-backed fixture generation
+
+Compile a shape into a contract and generate a reproducible fixture from a seed:
 
 ```ts
 import { createTextContract } from '@orkestrel/markdown'
