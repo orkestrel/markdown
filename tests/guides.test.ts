@@ -2,7 +2,6 @@
 // this repo's own `guides/README.md` manifest. The constants that follow are this
 // package's own, as is the executed section that closes the file.
 
-import type { ElementNode, HTMLDocument } from '@orkestrel/html'
 import type {
 	MarkdownDocument,
 	MarkdownHandlerMap,
@@ -10,66 +9,20 @@ import type {
 	MarkdownProjection,
 	MarkdownSpan,
 } from '@src/core'
-import { describe, expect, it } from 'vitest'
-import {
-	computeSymbolKey,
-	createGuide,
-	createSource,
-	createSourceManager,
-	extractFenceImports,
-	findDrift,
-	findMissing,
-	findMissingSymbols,
-	findUnexampled,
-	findUnlisted,
-	isExternalLink,
-	parseManifest,
-	resolveLink,
-} from '@orkestrel/guide'
-import { readFileSync } from 'node:fs'
-import { requireValue } from '@orkestrel/test'
+import { GuideCommand } from '@orkestrel/guide/server'
 import { readInventory } from '@orkestrel/test/server'
-import { seededRandom } from '@orkestrel/contract'
-import { foldNode as foldHTMLNode, parseDocument as parseHTML } from '@orkestrel/html'
-import {
-	Markdown,
-	createProjection,
-	createTextContract,
-	flattenText,
-	foldNode,
-	htmlToMarkdown,
-	isHeadingNode,
-	isLinkNode,
-	isMarkdownDocument,
-	isTableNode,
-	isTextNode,
-	markdownToHTML,
-	mergeProjections,
-	parseDocument,
-	parseInline,
-	parseProvenance,
-	projectHTMLLeaf,
-	projectHTMLNode,
-	projectionToBlocks,
-	renderHTML,
-	renderMarkdown,
-	rewriteDocument,
-	scanEmphasis,
-	scanInline,
-	scanInlineSource,
-	scanLink,
-	splitLines,
-	walkNodes,
-} from '@src/core'
+import { createVitest } from 'vitest/node'
 
 /** Every fence language this package's guides are allowed to use. */
 const FENCE_LANGUAGES = Object.freeze(['text', 'ts'])
 /** The fence language whose blocks count as worked examples. */
 const EXAMPLE_LANGUAGE = 'ts'
+/** The package identity that binds its manifest, module map, and README pitch. */
+const PACKAGE_NAME = '@orkestrel/markdown'
 /** The one guide this package sources, whose tagline the README pitch equals. */
 const GUIDE_SPEC = 'guides/markdown.md'
 /** Each import specifier this package's own guides may resolve against. */
-const MODULES = Object.freeze({ '@orkestrel/markdown': 'src/core', '@src/core': 'src/core' })
+const MODULES = Object.freeze({ [PACKAGE_NAME]: 'src/core', '@src/core': 'src/core' })
 /**
  * Declarations deliberately kept out of the barrel, as `computeSymbolKey` strings.
  *
@@ -80,726 +33,622 @@ const MODULES = Object.freeze({ '@orkestrel/markdown': 'src/core', '@src/core': 
  */
 const INTERNAL: readonly string[] = Object.freeze([])
 
-/** Root-level files these checks read. `readInventory` walks directories only. */
-const ROOT_FILES = Object.freeze(['AGENTS.md', 'README.md'])
-
-const root = new URL('../', import.meta.url)
-const files: Record<string, string> = {
-	...readInventory(root, ['src', 'guides', 'tests'], { extensions: ['.ts', '.md'] }),
-}
-for (const name of ROOT_FILES) files[name] = readFileSync(new URL(name, root), 'utf8')
-const manifest = parseManifest(
-	requireValue(files['guides/README.md'], 'Missing file: guides/README.md'),
-	'guides',
-)
-const sources = createSourceManager({ files, modules: MODULES })
-const own = requireValue(
-	manifest.find((entry) => entry.spec === GUIDE_SPEC),
-	`Missing manifest row: ${GUIDE_SPEC}`,
-)
-
-it('manifest lists at least one guide', () => {
-	expect(manifest.length).toBeGreaterThan(0)
-})
-
-// The example half of the equality case is silent over an empty population: with no
-// title on both sides `findDrift` compares no pair and the case passes on the summaries
-// alone. This pins the population this repository's own guide contributes, so removing
-// every `@example` title reddens the suite instead of quietly retiring half the gate.
-// The failure names both title sets, because a pin reporting only its own emptiness
-// leaves the reader to work out which side dropped the title.
-it('pairs at least one example title across the guide and the source', () => {
-	const guide = createGuide(requireValue(files[GUIDE_SPEC], `Missing file: ${GUIDE_SPEC}`))
-	const source = createSource({ files, module: own.source })
-	const declared = source
-		.examples()
-		.map((example) => example.title)
-		.filter((title) => title !== undefined)
-	const titled = new Set(declared)
-	const headings: string[] = []
-	const paired: string[] = []
-	for (const fence of guide.fences()) {
-		if (fence.title === undefined) continue
-		headings.push(fence.title)
-		if (titled.has(fence.title)) paired.push(fence.title)
-	}
-	const unpaired =
-		paired.length > 0
-			? []
-			: [
-					`${GUIDE_SPEC} pairs: guide ${JSON.stringify(headings)} source ${JSON.stringify(declared)}`,
-				]
-	expect(unpaired).toEqual([])
-})
-
-// The README's pitch and the guide's tagline are one text, each read as the blockquote
-// under its file's H1. `README.md` is outside the concept index, so the reader is
-// applied to it directly rather than through a manifest row. Each side is guarded
-// against `undefined` first, so a file that lost its blockquote reports that rather
-// than reporting two absences as agreement.
-it('opens the README with the guide tagline', () => {
-	const pitch = createGuide(requireValue(files['README.md'], 'Missing file: README.md')).tagline()
-	const tagline = createGuide(
-		requireValue(files[GUIDE_SPEC], `Missing file: ${GUIDE_SPEC}`),
-	).tagline()
-
-	expect(pitch).not.toBeUndefined()
-	expect(tagline).not.toBeUndefined()
-	expect(pitch).toBe(tagline)
-})
-
-for (const entry of manifest) {
-	const guide = createGuide(requireValue(files[entry.spec], `Missing file: ${entry.spec}`))
-	const source = createSource({ files, module: entry.source })
-
-	describe(`${entry.concept}`, () => {
-		it('uses only listed fence languages', () => {
-			expect(findUnlisted(guide.fences(), FENCE_LANGUAGES)).toEqual([])
-		})
-
-		it('extracts a non-empty documented surface', () => {
-			expect(guide.surface().length).toBeGreaterThan(0)
-		})
-		it('re-exports every direct declaration that is not named internal', () => {
-			const stranded = findMissingSymbols(source.exports(), source.surface())
-			expect(stranded.filter((key) => !INTERNAL.includes(key))).toEqual([])
-		})
-		it('names no symbol internal that the barrel already exports', () => {
-			const stranded = findMissingSymbols(source.exports(), source.surface())
-			expect(INTERNAL.filter((key) => !stranded.includes(key))).toEqual([])
-		})
-		it('re-exports only direct declarations', () => {
-			expect(findMissingSymbols(source.surface(), source.exports())).toEqual([])
-		})
-		it('documents every barrel export', () => {
-			expect(findMissingSymbols(source.surface(), guide.surface())).toEqual([])
-		})
-		it('documents only barrel exports', () => {
-			expect(findMissingSymbols(guide.surface(), source.surface())).toEqual([])
-		})
-
-		it('exposes no hidden module-scope declarations', () => {
-			expect(source.hidden().map(computeSymbolKey)).toEqual([])
-		})
-
-		for (const group of guide.methods()) {
-			const members = source.methods(group.interface).map((method) => method.name)
-			const documented = group.methods.map((method) => method.name)
-			const entity = group.interface.replace(/Interface$/, '')
-			describe(`${group.interface}`, () => {
-				it('documents at least one method', () => {
-					expect(group.methods.length).toBeGreaterThan(0)
-				})
-				it('documents every interface method', () => {
-					expect(findMissing(members, documented)).toEqual([])
-				})
-				it('documents no phantom method', () => {
-					expect(findMissing(documented, members)).toEqual([])
-				})
-				it(`${entity} exposes no undocumented method`, () => {
-					const extra =
-						entity === group.interface
-							? []
-							: findMissing(
-									source.methods(entity).map((method) => method.name),
-									documented,
-								)
-					expect(extra).toEqual([])
-				})
-			})
-		}
-
-		// The equality gate: a `Summary` cell against its export's description paragraph, a
-		// titled fence against the `@example` of that title. `findDrift` owns the comparison
-		// and names both sides; converge the two sides with `npm run docs`, never by
-		// weakening this assertion. `findDrift` pairs an example only where a title is
-		// present on both sides, so an untitled `@example` block is outside this case. Each
-		// collected line is the spec, the key, and each side's text or `absent` — the same
-		// worklist `npm run docs` prints, so a failure here is read the way that command's
-		// output is.
-		it('keeps every compared summary and example equal to its source', () => {
-			const disagreeing: string[] = []
-			for (const drift of findDrift(guide, source)) {
-				const left = drift.guide === undefined ? 'absent' : JSON.stringify(drift.guide)
-				const right = drift.source === undefined ? 'absent' : JSON.stringify(drift.source)
-				disagreeing.push(`${entry.spec} ${drift.key}: guide ${left} source ${right}`)
-			}
-			expect(disagreeing).toEqual([])
-		})
-
-		it('documents an example for every Surface function', () => {
-			const fences = guide
-				.fences()
-				.filter((fence) => fence.language === EXAMPLE_LANGUAGE)
-				.map((fence) => fence.code)
-			const names = guide
-				.surface()
-				.filter((symbol) => symbol.keyword === 'function')
-				.map((symbol) => symbol.name)
-			expect(
-				findUnexampled(
-					names,
-					fences,
-					source.examples().map((example) => example.name),
-				),
-			).toEqual([])
-		})
-
-		for (const group of guide.methods()) {
-			const entity = group.interface.replace(/Interface$/, '')
-			const documented = group.methods.map((method) => method.name)
-			const examples =
-				entity === group.interface
-					? source.examples(group.interface).map((example) => example.name)
-					: source
-							.examples(group.interface)
-							.map((example) => example.name)
-							.concat(source.examples(entity).map((example) => example.name))
-			describe(`${group.interface} examples`, () => {
-				it('documents an example for every method', () => {
-					const fences = guide
-						.fences()
-						.filter((fence) => fence.language === EXAMPLE_LANGUAGE)
-						.map((fence) => fence.code)
-					expect(findUnexampled(documented, fences, examples)).toEqual([])
-				})
-			})
-		}
-
-		it('imports only real exports in every ```ts fence', () => {
-			const fences = guide.fences().filter((fence) => fence.language === EXAMPLE_LANGUAGE)
-			for (const fence of fences) {
-				for (const { specifier, names } of extractFenceImports(fence.code)) {
-					const imported = sources.source(specifier)
-					if (imported === undefined) continue
-					const surface = imported.surface().map((symbol) => symbol.name)
-					expect(findMissing(names, surface)).toEqual([])
-				}
-			}
-		})
-
-		it('resolves every relative link', () => {
-			const broken = guide
-				.links()
-				.filter((href) => !isExternalLink(href))
-				.map((href) => resolveLink(entry.spec, href))
-				.filter((path) => !source.exists(path))
-			expect(broken).toEqual([])
-		})
-		it('links only to test files that exist', () => {
-			const missing = guide
-				.tests()
-				.map((href) => resolveLink(entry.spec, href))
-				.filter((path) => !source.exists(path))
-			expect(missing).toEqual([])
-		})
-	})
-}
-
-// ── Fence helpers ─────────────────────────────────────────────────────────────
-// The adoption fence and the house-rule fence of `guides/markdown.md` each declare a
-// named function of their own. A transcription that kept the declaration inside its
-// case would nest a function in a body, which `AGENTS.md` refuses, so each one sits
-// here at module scope with the fence's own body and the fence's own name.
-
-/** The adopt-a-document fence's guarded constructor. */
-function adopt(candidate: unknown): Markdown | undefined {
-	if (!isMarkdownDocument(candidate)) return undefined
-	return new Markdown(candidate)
-}
-
-/** The house-rule fence's element handler: a `kbd` reads as a code span, everything else defaults. */
-function projectKbdNode(
-	node: ElementNode | HTMLDocument,
-	children: readonly MarkdownProjection[],
-): MarkdownProjection {
-	if (node.category === 'element' && node.name === 'kbd') {
-		const merged = mergeProjections(children)
-		return createProjection({
-			inlines: [{ element: 'codeSpan', value: merged.text }],
-			text: merged.text,
-		})
-	}
-	return projectHTMLNode(node, children)
-}
-
-/** The guide-parity fence's extractor: every Surface-table first-column identifier of a guide. */
-function extractSurfaceNames(source: string): readonly string[] {
-	const markdown = new Markdown(source)
-	const tables = markdown.filter(isTableNode)
-	return tables.flatMap((table) =>
-		table.rows.map((row) => flattenText({ element: 'paragraph', children: row[0] ?? [] })),
+await new GuideCommand({
+	root: new URL('../', import.meta.url),
+	patterns: ['src/**/*.ts', 'tests/**/*.ts', 'guides/*.md', '*.md', 'package.json'],
+	modules: MODULES,
+	languages: FENCE_LANGUAGES,
+	language: EXAMPLE_LANGUAGE,
+	reader: readInventory,
+	runner: createVitest,
+}).execute(async ({ files, report, rows }) => {
+	const { isRecord, parseJSON, seededRandom } = await import('@orkestrel/contract')
+	const { computeSymbolKey, findMissingSymbols } = await import('@orkestrel/guide')
+	const { foldNode: foldHTMLNode, parseDocument: parseHTML } = await import('@orkestrel/html')
+	const { requireValue } = await import('@orkestrel/test')
+	const {
+		Markdown,
+		createTextContract,
+		flattenText,
+		foldNode,
+		htmlToMarkdown,
+		isHeadingNode,
+		isLinkNode,
+		isTextNode,
+		markdownToHTML,
+		parseDocument,
+		parseInline,
+		parseProvenance,
+		projectHTMLLeaf,
+		projectionToBlocks,
+		renderHTML,
+		renderMarkdown,
+		rewriteDocument,
+		scanEmphasis,
+		scanInline,
+		scanInlineSource,
+		scanLink,
+		splitLines,
+		walkNodes,
+	} = await import('@src/core')
+	const { adopt, extractSurfaceNames, projectKbdNode } = await import('./setupGuides.js')
+	const { describe, expect, it } = await import('vitest')
+	const own = requireValue(
+		rows.find((row) => row.entry.spec === GUIDE_SPEC),
+		`Missing manifest row: ${GUIDE_SPEC}`,
 	)
-}
+	const manifest = parseJSON(requireValue(files['package.json'], 'Missing inventory: package.json'))
+	if (!isRecord(manifest)) throw new Error('Invalid package manifest: package.json')
 
-// The EXECUTED half. Every preceding check reads a name — from the guide text or from
-// the barrel — and a name that resolves proves nothing about a sentence beside it, so a
-// fence whose comment claims a value the code contradicts passes all of them. The cases
-// here run the flagship fences of `guides/markdown.md` and assert the values their
-// comments claim. Each transcription is followed by a presence guard that reads the
-// transcribed lines back out of the guide, so the pair cannot drift: change a fence,
-// change the transcription beside it. The transcriptions import through `@src/core`
-// because that is the specifier this project resolves; the fences use the published
-// `@orkestrel/markdown`, and `MODULES` maps both to the same source.
-describe('flagship fences', () => {
-	const guideText = requireValue(files['guides/markdown.md'], 'Missing file: guides/markdown.md')
-
-	it('reads a heading back to the region of the original string it was parsed from', () => {
-		const source = '# Title\n\nA **bold** word.'
-		const markdown = new Markdown(source)
-
-		const heading = requireValue(markdown.find(isHeadingNode), 'expected a heading')
-		const region = requireValue(markdown.span(heading), 'expected a region')
-
-		expect(region).toEqual({ start: 0, end: 7 })
-		expect(source.slice(region.start, region.end)).toBe('# Title')
+	it('manifest lists at least one guide', () => {
+		expect(report.input).toEqual([])
+		expect(rows.length).toBeGreaterThan(0)
+		expect(own.entry.spec).toBe(GUIDE_SPEC)
 	})
 
-	it('carries the provenance fence lines the transcription copies', () => {
-		expect(guideText).toContain("const source = '# Title\\n\\nA **bold** word.'")
-		expect(guideText).toContain('region // { start: 0, end: 7 }')
-		expect(guideText).toContain("source.slice(region.start, region.end) // '# Title'")
+	// The example half of the equality case is silent over an empty population: with no
+	// title on both sides `findDrift` compares no pair and the case passes on the summaries
+	// alone. This pins the population this repository's own guide contributes, so removing
+	// every `@example` title reddens the suite instead of quietly retiring half the gate.
+	// The failure names both title sets, because a pin reporting only its own emptiness
+	// leaves the reader to work out which side dropped the title.
+	it('pairs at least one example title across the guide and the source', () => {
+		expect(report.examples.titles.filter((finding) => finding.spec === GUIDE_SPEC)).toEqual([])
 	})
 
-	it('slices the escape spelling for a text node whose value dropped it', () => {
-		const source = 'a \\* b *c*'
-		const markdown = new Markdown(source)
-
-		const text = requireValue(markdown.filter(isTextNode)[0], 'expected a text node')
-		const region = requireValue(markdown.span(text), 'expected a region')
-
-		expect(text.value).toBe('a * b ')
-		expect(region).toEqual({ start: 0, end: 7 })
-		expect(source.slice(region.start, region.end)).toBe('a \\* b ')
+	// The README's pitch and the guide's tagline are one text, each read as the blockquote
+	// under its file's H1. The native report owns their comparison. The manifest assertion
+	// binds that report to this package rather than allowing an unrelated package identity.
+	it('opens the README with the guide tagline', () => {
+		expect(manifest.name).toBe(PACKAGE_NAME)
+		expect(report.pitch).toEqual([])
 	})
 
-	it('carries the escaped-spelling fence lines the transcription copies', () => {
-		expect(guideText).toContain("const source = 'a \\\\* b *c*'")
-		expect(guideText).toContain("text?.value // 'a * b '")
-		expect(guideText).toContain('region // { start: 0, end: 7 } — the region slices the spelling')
-	})
-
-	it('returns the document and its span map together from one handle-free parse', () => {
-		const [document, spans] = parseProvenance('# Title\n\nA **bold** word.')
-
-		expect(spans.get(document)).toEqual({ start: 0, end: 25 })
-	})
-
-	it('carries the parseProvenance fence lines the transcription copies', () => {
-		expect(guideText).toContain(
-			"const [document, spans] = parseProvenance('# Title\\n\\nA **bold** word.')",
-		)
-		expect(guideText).toContain('spans.get(document) // { start: 0, end: 25 }')
-	})
-
-	it('keeps a rewritten node on the region its input held in the original source', () => {
-		const markdown = new Markdown('# Hi\n\nText.')
-		const lowered = markdown.map((node) =>
-			node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
-		)
-
-		const first = requireValue(lowered.filter(isTextNode)[0], 'expected a text node')
-
-		expect(first.value).toBe('hi')
-		expect(lowered.span(first)).toEqual({ start: 2, end: 4 })
-	})
-
-	it('carries the rewrite-provenance fence lines the transcription copies', () => {
-		expect(guideText).toContain("first?.value // 'hi'")
-		expect(guideText).toContain('region // { start: 2, end: 4 }')
-	})
-
-	it('reports no region for an adopted projection and for one output built from separate sources', () => {
-		const imported = new Markdown(htmlToMarkdown(parseHTML('<div>text<p>para</p></div>')))
-
-		expect(imported.span(imported.document)).toBeUndefined()
-
-		const markdown = new Markdown('a *b* c')
-		const joined = { element: 'text', value: 'joined' } as const
-		const merged = markdown.map((node) => (node.element === 'text' ? joined : node))
-		const text = requireValue(merged.filter(isTextNode)[0], 'expected a text node')
-
-		expect(merged.span(text)).toBeUndefined()
-	})
-
-	it('carries the absent-provenance fence lines the transcription copies', () => {
-		expect(guideText).toContain('imported.span(imported.document) // undefined')
-		expect(guideText).toContain('merged.span(text) // undefined')
-	})
-
-	it('records each inline node it emits against the original line coordinates', () => {
-		const line = requireValue(splitLines('> a *b*')[0], 'expected a line')
-		const spans = new Map<MarkdownNode, MarkdownSpan>()
-		const nodes = scanInlineSource(line, 2, line.text.length, spans, 0)
-
-		const text = requireValue(nodes[0], 'expected a text node')
-		const emphasis = requireValue(nodes[1], 'expected an emphasis node')
-
-		expect(spans.get(text)).toEqual({ start: 2, end: 4 })
-		expect(spans.get(emphasis)).toEqual({ start: 4, end: 7 })
-	})
-
-	it('carries the offset-bearing scan fence lines the transcription copies', () => {
-		expect(guideText).toContain("const [line] = splitLines('> a *b*')")
-		expect(guideText).toContain('spans.get(text) // { start: 2, end: 4 }')
-		expect(guideText).toContain('spans.get(emphasis) // { start: 4, end: 7 }')
-	})
-
-	it('folds a house-rule element through the exported projection vocabulary', () => {
-		const projected = foldHTMLNode<MarkdownProjection>(
-			parseHTML('<p>Press <kbd>Esc</kbd> twice.</p>'),
-			{
-				document: projectKbdNode,
-				element: projectKbdNode,
-				text: projectHTMLLeaf,
-				comment: projectHTMLLeaf,
-				doctype: projectHTMLLeaf,
-			},
-		)
-
-		expect(renderMarkdown({ element: 'document', children: projectionToBlocks(projected) })).toBe(
-			'Press `Esc` twice.',
-		)
-	})
-
-	it('carries the house-rule fence lines the transcription copies', () => {
-		expect(guideText).toContain("if (node.category === 'element' && node.name === 'kbd') {")
-		expect(guideText).toContain(
-			"renderMarkdown(project(parseHTML('<p>Press <kbd>Esc</kbd> twice.</p>'))) // 'Press `Esc` twice.'",
-		)
-	})
-
-	it('parses a string into a document whose first child a guard narrows to a heading', () => {
-		const markdown = new Markdown('# Title\n\nA **bold** [link](https://x.dev).')
-		const first = requireValue(markdown.document.children[0], 'expected a block')
-
-		expect(first.element).toBe('heading')
-
-		const heading = requireValue(markdown.find(isHeadingNode), 'expected a heading')
-
-		expect(heading.level).toBe(1)
-	})
-
-	it('carries the construct-and-narrow fence lines the transcription copies', () => {
-		expect(guideText).toContain(
-			"const markdown = new Markdown('# Title\\n\\nA **bold** [link](https://x.dev).')",
-		)
-		expect(guideText).toContain(
-			"markdown.document.children[0] // { element: 'heading', level: 1, children: [...] }",
-		)
-	})
-
-	it('adopts a valid document and refuses a shape the guard rejects', () => {
-		const good: MarkdownDocument = { element: 'document', children: [] }
-
-		expect(adopt(good)).toBeInstanceOf(Markdown)
-		expect(adopt({ element: 'bogus' })).toBeUndefined()
-	})
-
-	it('carries the adoption fence lines the transcription copies', () => {
-		expect(guideText).toContain('adopt(good) // Markdown instance')
-		expect(guideText).toContain("adopt({ element: 'bogus' }) // undefined")
-	})
-
-	it('collects every link and flattens each one to its label text', () => {
-		const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
-		const links = markdown.filter(isLinkNode)
-		const labels = links.map((link) => flattenText(link))
-
-		expect(labels).toEqual(['one', 'two'])
-	})
-
-	it('carries the filter-and-flatten fence lines the transcription copies', () => {
-		expect(guideText).toContain(
-			"const labels = links.map((link) => flattenText(link)) // ['one', 'two']",
-		)
-	})
-
-	it('chains map rewrites and writes the result back as canonical markdown', () => {
-		const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
-
-		const shouted = markdown.map((node) =>
-			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
-		)
-		const linked = shouted.map((node) =>
-			node.element === 'link' ? { ...node, href: `${node.href}?ref=guide` } : node,
-		)
-
-		expect(renderMarkdown(linked.document)).toBe(
-			'SEE [ONE](https://a.dev?ref=guide) AND [TWO](https://b.dev?ref=guide).',
-		)
-	})
-
-	it('carries the rewrite-chain fence lines the transcription copies', () => {
-		expect(guideText).toContain(
-			"renderMarkdown(linked.document) // 'SEE [ONE](https://a.dev?ref=guide) AND [TWO](https://b.dev?ref=guide).'",
-		)
-	})
-
-	it('reduces the traversal into the accumulator the fence declares', () => {
-		const markdown = new Markdown('# One\n\n## Two\n\nBody text.')
-
-		const levels = markdown.reduce<readonly number[]>(
-			(accumulator, node) => (isHeadingNode(node) ? [...accumulator, node.level] : accumulator),
-			[],
-		)
-
-		expect(levels).toEqual([1, 2])
-	})
-
-	it('carries the reduce fence lines the transcription copies', () => {
-		expect(guideText).toContain(') // [1, 2]')
-	})
-
-	it('folds a document to a string through a total handler table', () => {
-		const toHTML: MarkdownHandlerMap<string> = {
-			document: (_, children) => children.join('\n'),
-			heading: (node, children) => `<h${node.level}>${children.join('')}</h${node.level}>`,
-			paragraph: (_, children) => `<p>${children.join('')}</p>`,
-			thematicBreak: () => '<hr>',
-			blockquote: (_, children) => `<blockquote>${children.join('\n')}</blockquote>`,
-			codeBlock: (node) => `<pre><code>${node.code}</code></pre>`,
-			list: (node, children) =>
-				node.ordered ? `<ol>${children.join('')}</ol>` : `<ul>${children.join('')}</ul>`,
-			listItem: (_, children) => `<li>${children.join('')}</li>`,
-			table: (_, children) => `<table>${children.join('')}</table>`,
-			text: (node) => node.value,
-			emphasis: (node, children) =>
-				node.strong ? `<strong>${children.join('')}</strong>` : `<em>${children.join('')}</em>`,
-			codeSpan: (node) => `<code>${node.value}</code>`,
-			break: () => '<br>',
-			link: (node, children) => `<a href="${node.href}">${children.join('')}</a>`,
-			image: (node, children) => `<img src="${node.src}" alt="${children.join('')}">`,
-		}
-
-		const markdown = new Markdown('# Hi')
-
-		expect(markdown.fold(toHTML)).toBe('<h1>Hi</h1>')
-	})
-
-	it('carries the fold fence lines the transcription copies', () => {
-		expect(guideText).toContain('const toHTML: MarkdownHandlerMap<string> = {')
-		expect(guideText).toContain("markdown.fold(toHTML) // '<h1>Hi</h1>'")
-	})
-
-	it('streams the top-level blocks through a reader loop and through async iteration alike', async () => {
-		const markdown = new Markdown('# Title\n\nFirst.\n\nSecond.')
-
-		const reader = markdown.stream().getReader()
-		const tops: string[] = []
-		for (let result = await reader.read(); !result.done; result = await reader.read()) {
-			tops.push(result.value.element)
-		}
-
-		expect(tops).toEqual(['heading', 'paragraph', 'paragraph'])
-
-		const topsAsync: string[] = []
-		for await (const block of markdown.stream()) topsAsync.push(block.element)
-
-		expect(topsAsync).toEqual(tops)
-	})
-
-	it('carries the streaming fence lines the transcription copies', () => {
-		expect(guideText).toContain('const reader = markdown.stream().getReader()')
-		expect(guideText).toContain("// tops: ['heading', 'paragraph', 'paragraph']")
-		expect(guideText).toContain(
-			'for await (const block of markdown.stream()) topsAsync.push(block.element)',
-		)
-	})
-
-	it('walks every node deep, depth-first, pre-order, and root first', () => {
-		const markdown = new Markdown('# Title\n\nA **bold** word.')
-
-		const all: string[] = []
-		for (const node of markdown.walk()) all.push(node.element)
-
-		expect(all).toEqual([
-			'document',
-			'heading',
-			'text',
-			'paragraph',
-			'text',
-			'emphasis',
-			'text',
-			'text',
-		])
-	})
-
-	it('carries the sync-iteration fence lines the transcription copies', () => {
-		expect(guideText).toContain(
-			'for (const node of markdown.walk()) all.push(node.element) // deep, depth-first, pre-order',
-		)
-	})
-
-	it('yields the same sequence to a for-await loop that the sync walk yields', async () => {
-		const markdown = new Markdown('# Title\n\nA **bold** word.')
-
-		const written: string[] = []
-		for await (const node of markdown.walk()) written.push(node.element)
-
-		expect(written).toEqual([...markdown.walk()].map((node) => node.element))
-	})
-
-	it('carries the async-iteration fence lines the transcription copies', () => {
-		expect(guideText).toContain(
-			'for await (const node of markdown.walk()) writer.write(node.element) // sync generator, for-await composes fine',
-		)
-	})
-
-	it('drives every standalone projection and traversal from a bare node', () => {
-		const markdown = new Markdown('# Hi\n\nText.')
-
-		expect(renderHTML(markdown.document)).toBe('<h1>Hi</h1><p>Text.</p>')
-		expect(markdownToHTML(markdown.document).category).toBe('document')
-		expect(parseDocument(renderMarkdown(markdown.document))).toEqual(markdown.document)
-
-		const imported = htmlToMarkdown(parseHTML('<h1>Release notes</h1><p>Ship <b>fast</b>.</p>'))
-
-		expect(renderMarkdown(imported)).toBe('# Release notes\n\nShip **fast**.')
-
-		const heading = requireValue(markdown.document.children[0], 'expected a block')
-
-		expect([...walkNodes(heading)].map((node) => node.element)).toEqual(['heading', 'text'])
-
-		const countHandlers: MarkdownHandlerMap<number> = {
-			document: (_, children) => children.reduce((a, b) => a + b, 0),
-			heading: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			paragraph: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			thematicBreak: () => 1,
-			blockquote: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			codeBlock: () => 1,
-			list: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			listItem: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			table: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			text: () => 1,
-			emphasis: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			codeSpan: () => 1,
-			break: () => 1,
-			link: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			image: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-		}
-
-		expect(foldNode(heading, countHandlers, 0)).toBe(2)
-
-		const [rewritten, derivations] = rewriteDocument(markdown.document, (node) =>
-			node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
-		)
-
-		expect(rewritten.children.length).toBe(markdown.document.children.length)
-		expect(derivations.size).toBeGreaterThan(0)
-
-		const [unchanged] = rewriteDocument(markdown.document, (node) => node)
-
-		expect(unchanged).toBe(markdown.document)
-		expect(parseInline('a **bold** span').map((node) => node.element)).toEqual([
-			'text',
-			'emphasis',
-			'text',
-		])
-	})
-
-	it('carries the standalone fence lines the transcription copies', () => {
-		expect(guideText).toContain("renderHTML(markdown.document) // '<h1>Hi</h1><p>Text.</p>'")
-		expect(guideText).toContain('markdownToHTML(markdown.document) // { category: ')
-		expect(guideText).toContain("renderMarkdown(imported) // '# Release notes\\n\\nShip **fast**.'")
-		expect(guideText).toContain(
-			"const elements = [...walkNodes(heading)].map((node) => node.element) // ['heading', 'text']",
-		)
-		expect(guideText).toContain('const nodeCount = foldNode(heading, countHandlers, 0) // 2')
-		expect(guideText).toContain('derivations.size > 0 // true')
-		expect(guideText).toContain('unchanged === markdown.document // true')
-	})
-
-	it('scans one inline construct at a time and degrades an unclosed one to undefined', () => {
-		expect(scanInline('a **b** c', 0, 9).map((node) => node.element)).toEqual([
-			'text',
-			'emphasis',
-			'text',
-		])
-
-		const link = scanLink('[docs](https://x.dev)', 0, 21)
-
-		expect(link?.node.href).toBe('https://x.dev')
-		expect(link?.end).toBe(21)
-
-		const emphasis = scanEmphasis('**bold**', 0, 8)
-
-		expect(emphasis?.node.strong).toBe(true)
-		expect(emphasis?.end).toBe(8)
-		expect(scanLink('[unclosed', 0, 9)).toBeUndefined()
-	})
-
-	it('carries the scanner fence lines the transcription copies', () => {
-		expect(guideText).toContain("scanInline('a **b** c', 0, 9)")
-		expect(guideText).toContain("link?.node.href // 'https://x.dev'")
-		expect(guideText).toContain('link?.end // 21')
-		expect(guideText).toContain('emphasis?.node.strong // true')
-		expect(guideText).toContain('emphasis?.end // 8')
-		expect(guideText).toContain("scanLink('[unclosed', 0, 9) // undefined")
-	})
-
-	it('extracts the Surface-table identifiers of this very guide by parsing it as markdown', () => {
-		const names = extractSurfaceNames(guideText)
-
-		expect(names).toContain('MarkdownHandlerMap<T>')
-		expect(names).toContain('scanLink')
-		expect(names).toContain('LinkScan')
-	})
-
-	it('carries the guide-parity extraction fence lines the transcription copies', () => {
-		expect(guideText).toContain(
-			'const tables = markdown.filter(isTableNode) // readonly TableNode[] — narrowed, no cast needed',
-		)
-		expect(guideText).toContain(
-			"table.rows.map((row) => flattenText({ element: 'paragraph', children: row[0] ?? [] })),",
-		)
-	})
-
-	it('generates a fixture from a seed that its own guard accepts and a repeat reproduces', () => {
-		const text = createTextContract()
-
-		expect(text.schema.type).toBe('object')
-
-		const fixture = text.generate(seededRandom(42))
-
-		expect(text.is(fixture)).toBe(true)
-		expect(text.generate(seededRandom(42))).toEqual(fixture)
-	})
-
-	it('carries the contract-fixture fence lines the transcription copies', () => {
-		expect(guideText).toContain('const text = createTextContract()')
-		expect(guideText).toContain('text.schema // the compiled JSON Schema for TextNode')
-		expect(guideText).toContain(
-			'const fixture = text.generate(seededRandom(42)) // reproducible seed data',
-		)
-		expect(guideText).toContain('text.is(fixture) // true')
-	})
-
-	it('renders markdown-sourced hostile content the sanitizer paragraphs claim', () => {
-		const source = [
-			'<script>alert(1)</script>',
-			'',
-			'[link](javascript:alert(1))',
-			'',
-			'![alt](javascript:alert(1))',
-			'',
-			'![alt](https://x.dev/pic.png)',
-		].join('\n')
-
-		const html = renderHTML(parseDocument(source))
-
-		expect(html).toBe(
-			'<p>&lt;script&gt;alert(1)&lt;/script&gt;</p><p><a>link</a></p><p><img alt="alt"></p><p><img src="https://x.dev/pic.png" alt="alt"></p>',
-		)
-	})
-
-	it('carries the sanitizer fence lines the transcription copies', () => {
-		expect(guideText).toContain("'<script>alert(1)</script>',")
-		expect(guideText).toContain("'[link](javascript:alert(1))',")
-		expect(guideText).toContain("'![alt](javascript:alert(1))',")
-		expect(guideText).toContain("'![alt](https://x.dev/pic.png)',")
-		expect(guideText).toContain(
-			'// \'<p>&lt;script&gt;alert(1)&lt;/script&gt;</p><p><a>link</a></p><p><img alt="alt"></p><p><img src="https://x.dev/pic.png" alt="alt"></p>\'',
-		)
+	for (const { entry, guide, source } of rows) {
+		describe(`${entry.concept}`, () => {
+			it('uses only listed fence languages', () => {
+				expect(report.fences.filter((finding) => finding.spec === entry.spec)).toEqual([])
+			})
+
+			it('extracts a non-empty documented surface', () => {
+				expect(guide.surface().length).toBeGreaterThan(0)
+			})
+			it('re-exports every direct declaration that is not named internal', () => {
+				const stranded = findMissingSymbols(source.exports(), source.surface())
+				expect(stranded.filter((key) => !INTERNAL.includes(key))).toEqual([])
+			})
+			it('names no symbol internal that the barrel already exports', () => {
+				const stranded = findMissingSymbols(source.exports(), source.surface())
+				expect(INTERNAL.filter((key) => !stranded.includes(key))).toEqual([])
+			})
+			it('re-exports only direct declarations', () => {
+				expect(findMissingSymbols(source.surface(), source.exports())).toEqual([])
+			})
+			it('documents every barrel export', () => {
+				expect(findMissingSymbols(source.surface(), guide.surface())).toEqual([])
+			})
+			it('documents only barrel exports', () => {
+				expect(findMissingSymbols(guide.surface(), source.surface())).toEqual([])
+			})
+
+			it('exposes no hidden module-scope declarations', () => {
+				expect(source.hidden().map(computeSymbolKey)).toEqual([])
+			})
+
+			it('documents populated method groups', () => {
+				expect(report.sections.filter((finding) => finding.spec === entry.spec)).toEqual([])
+			})
+
+			it('keeps behavioral interfaces and implementing classes in parity', () => {
+				expect(report.methods.filter((finding) => finding.spec === entry.spec)).toEqual([])
+			})
+
+			// The equality gate: a `Summary` cell against its export's description paragraph, a
+			// titled fence against the `@example` of that title. `findDrift` owns the comparison
+			// and names both sides; converge the two sides through the native entry, never by
+			// weakening this assertion. `findDrift` pairs an example only where a title is
+			// present on both sides, so an untitled `@example` block is outside this case. Each
+			// collected line is the spec, the key, and each side's text or `absent` — the same
+			// worklist the native entry prints, so a failure here is read the way that command's
+			// output is.
+			it('keeps every compared summary and example equal to its source', () => {
+				expect(report.drift.filter((finding) => finding.spec === entry.spec)).toEqual([])
+			})
+
+			it('documents an example for every Surface function', () => {
+				expect(report.examples.functions.filter((finding) => finding.spec === entry.spec)).toEqual(
+					[],
+				)
+			})
+
+			it('documents an example for every method', () => {
+				expect(report.examples.methods.filter((finding) => finding.spec === entry.spec)).toEqual([])
+			})
+
+			it('imports only real exports in every ```ts fence', () => {
+				expect(report.imports.filter((finding) => finding.spec === entry.spec)).toEqual([])
+			})
+
+			it('resolves every relative link', () => {
+				expect(report.links.filter((finding) => finding.spec === entry.spec)).toEqual([])
+			})
+			it('links only to test files that exist', () => {
+				expect(report.tests.filter((finding) => finding.spec === entry.spec)).toEqual([])
+			})
+		})
+	}
+
+	// The EXECUTED half. Every preceding check reads a name — from the guide text or from
+	// the barrel — and a name that resolves proves nothing about a sentence beside it, so a
+	// fence whose comment claims a value the code contradicts passes all of them. The cases
+	// here run the flagship fences of `guides/markdown.md` and assert the values their
+	// comments claim. Each transcription is followed by a presence guard that reads the
+	// transcribed lines back out of the guide, so the pair cannot drift: change a fence,
+	// change the transcription beside it. The transcriptions import through `@src/core`
+	// because that is the specifier this project resolves; the fences use the published
+	// `@orkestrel/markdown`, and `MODULES` maps both to the same source.
+	describe('flagship fences', () => {
+		const guideText = requireValue(files['guides/markdown.md'], 'Missing file: guides/markdown.md')
+
+		it('reads a heading back to the region of the original string it was parsed from', () => {
+			const source = '# Title\n\nA **bold** word.'
+			const markdown = new Markdown(source)
+
+			const heading = requireValue(markdown.find(isHeadingNode), 'expected a heading')
+			const region = requireValue(markdown.span(heading), 'expected a region')
+
+			expect(region).toEqual({ start: 0, end: 7 })
+			expect(source.slice(region.start, region.end)).toBe('# Title')
+		})
+
+		it('carries the provenance fence lines the transcription copies', () => {
+			expect(guideText).toContain("const source = '# Title\\n\\nA **bold** word.'")
+			expect(guideText).toContain('region // { start: 0, end: 7 }')
+			expect(guideText).toContain("source.slice(region.start, region.end) // '# Title'")
+		})
+
+		it('slices the escape spelling for a text node whose value dropped it', () => {
+			const source = 'a \\* b *c*'
+			const markdown = new Markdown(source)
+
+			const text = requireValue(markdown.filter(isTextNode)[0], 'expected a text node')
+			const region = requireValue(markdown.span(text), 'expected a region')
+
+			expect(text.value).toBe('a * b ')
+			expect(region).toEqual({ start: 0, end: 7 })
+			expect(source.slice(region.start, region.end)).toBe('a \\* b ')
+		})
+
+		it('carries the escaped-spelling fence lines the transcription copies', () => {
+			expect(guideText).toContain("const source = 'a \\\\* b *c*'")
+			expect(guideText).toContain("text?.value // 'a * b '")
+			expect(guideText).toContain('region // { start: 0, end: 7 } — the region slices the spelling')
+		})
+
+		it('returns the document and its span map together from one handle-free parse', () => {
+			const [document, spans] = parseProvenance('# Title\n\nA **bold** word.')
+
+			expect(spans.get(document)).toEqual({ start: 0, end: 25 })
+		})
+
+		it('carries the parseProvenance fence lines the transcription copies', () => {
+			expect(guideText).toContain(
+				"const [document, spans] = parseProvenance('# Title\\n\\nA **bold** word.')",
+			)
+			expect(guideText).toContain('spans.get(document) // { start: 0, end: 25 }')
+		})
+
+		it('keeps a rewritten node on the region its input held in the original source', () => {
+			const markdown = new Markdown('# Hi\n\nText.')
+			const lowered = markdown.map((node) =>
+				node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
+			)
+
+			const first = requireValue(lowered.filter(isTextNode)[0], 'expected a text node')
+
+			expect(first.value).toBe('hi')
+			expect(lowered.span(first)).toEqual({ start: 2, end: 4 })
+		})
+
+		it('carries the rewrite-provenance fence lines the transcription copies', () => {
+			expect(guideText).toContain("first?.value // 'hi'")
+			expect(guideText).toContain('region // { start: 2, end: 4 }')
+		})
+
+		it('reports no region for an adopted projection and for one output built from separate sources', () => {
+			const imported = new Markdown(htmlToMarkdown(parseHTML('<div>text<p>para</p></div>')))
+
+			expect(imported.span(imported.document)).toBeUndefined()
+
+			const markdown = new Markdown('a *b* c')
+			const joined = { element: 'text', value: 'joined' } as const
+			const merged = markdown.map((node) => (node.element === 'text' ? joined : node))
+			const text = requireValue(merged.filter(isTextNode)[0], 'expected a text node')
+
+			expect(merged.span(text)).toBeUndefined()
+		})
+
+		it('carries the absent-provenance fence lines the transcription copies', () => {
+			expect(guideText).toContain('imported.span(imported.document) // undefined')
+			expect(guideText).toContain('merged.span(text) // undefined')
+		})
+
+		it('records each inline node it emits against the original line coordinates', () => {
+			const line = requireValue(splitLines('> a *b*')[0], 'expected a line')
+			const spans = new Map<MarkdownNode, MarkdownSpan>()
+			const nodes = scanInlineSource(line, 2, line.text.length, spans, 0)
+
+			const text = requireValue(nodes[0], 'expected a text node')
+			const emphasis = requireValue(nodes[1], 'expected an emphasis node')
+
+			expect(spans.get(text)).toEqual({ start: 2, end: 4 })
+			expect(spans.get(emphasis)).toEqual({ start: 4, end: 7 })
+		})
+
+		it('carries the offset-bearing scan fence lines the transcription copies', () => {
+			expect(guideText).toContain("const [line] = splitLines('> a *b*')")
+			expect(guideText).toContain('spans.get(text) // { start: 2, end: 4 }')
+			expect(guideText).toContain('spans.get(emphasis) // { start: 4, end: 7 }')
+		})
+
+		it('folds a house-rule element through the exported projection vocabulary', () => {
+			const projected = foldHTMLNode<MarkdownProjection>(
+				parseHTML('<p>Press <kbd>Esc</kbd> twice.</p>'),
+				{
+					document: projectKbdNode,
+					element: projectKbdNode,
+					text: projectHTMLLeaf,
+					comment: projectHTMLLeaf,
+					doctype: projectHTMLLeaf,
+				},
+			)
+
+			expect(renderMarkdown({ element: 'document', children: projectionToBlocks(projected) })).toBe(
+				'Press `Esc` twice.',
+			)
+		})
+
+		it('carries the house-rule fence lines the transcription copies', () => {
+			expect(guideText).toContain("if (node.category === 'element' && node.name === 'kbd') {")
+			expect(guideText).toContain(
+				"renderMarkdown(project(parseHTML('<p>Press <kbd>Esc</kbd> twice.</p>'))) // 'Press `Esc` twice.'",
+			)
+		})
+
+		it('parses a string into a document whose first child a guard narrows to a heading', () => {
+			const markdown = new Markdown('# Title\n\nA **bold** [link](https://x.dev).')
+			const first = requireValue(markdown.document.children[0], 'expected a block')
+
+			expect(first.element).toBe('heading')
+
+			const heading = requireValue(markdown.find(isHeadingNode), 'expected a heading')
+
+			expect(heading.level).toBe(1)
+		})
+
+		it('carries the construct-and-narrow fence lines the transcription copies', () => {
+			expect(guideText).toContain(
+				"const markdown = new Markdown('# Title\\n\\nA **bold** [link](https://x.dev).')",
+			)
+			expect(guideText).toContain(
+				"markdown.document.children[0] // { element: 'heading', level: 1, children: [...] }",
+			)
+		})
+
+		it('adopts a valid document and refuses a shape the guard rejects', () => {
+			const good: MarkdownDocument = { element: 'document', children: [] }
+
+			expect(adopt(good)).toBeInstanceOf(Markdown)
+			expect(adopt({ element: 'bogus' })).toBeUndefined()
+		})
+
+		it('carries the adoption fence lines the transcription copies', () => {
+			expect(guideText).toContain('adopt(good) // Markdown instance')
+			expect(guideText).toContain("adopt({ element: 'bogus' }) // undefined")
+		})
+
+		it('collects every link and flattens each one to its label text', () => {
+			const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
+			const links = markdown.filter(isLinkNode)
+			const labels = links.map((link) => flattenText(link))
+
+			expect(labels).toEqual(['one', 'two'])
+		})
+
+		it('carries the filter-and-flatten fence lines the transcription copies', () => {
+			expect(guideText).toContain(
+				"const labels = links.map((link) => flattenText(link)) // ['one', 'two']",
+			)
+		})
+
+		it('chains map rewrites and writes the result back as canonical markdown', () => {
+			const markdown = new Markdown('See [one](https://a.dev) and [two](https://b.dev).')
+
+			const shouted = markdown.map((node) =>
+				node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
+			)
+			const linked = shouted.map((node) =>
+				node.element === 'link' ? { ...node, href: `${node.href}?ref=guide` } : node,
+			)
+
+			expect(renderMarkdown(linked.document)).toBe(
+				'SEE [ONE](https://a.dev?ref=guide) AND [TWO](https://b.dev?ref=guide).',
+			)
+		})
+
+		it('carries the rewrite-chain fence lines the transcription copies', () => {
+			expect(guideText).toContain(
+				"renderMarkdown(linked.document) // 'SEE [ONE](https://a.dev?ref=guide) AND [TWO](https://b.dev?ref=guide).'",
+			)
+		})
+
+		it('reduces the traversal into the accumulator the fence declares', () => {
+			const markdown = new Markdown('# One\n\n## Two\n\nBody text.')
+
+			const levels = markdown.reduce<readonly number[]>(
+				(accumulator, node) => (isHeadingNode(node) ? [...accumulator, node.level] : accumulator),
+				[],
+			)
+
+			expect(levels).toEqual([1, 2])
+		})
+
+		it('carries the reduce fence lines the transcription copies', () => {
+			expect(guideText).toContain(') // [1, 2]')
+		})
+
+		it('folds a document to a string through a total handler table', () => {
+			const toHTML: MarkdownHandlerMap<string> = {
+				document: (_, children) => children.join('\n'),
+				heading: (node, children) => `<h${node.level}>${children.join('')}</h${node.level}>`,
+				paragraph: (_, children) => `<p>${children.join('')}</p>`,
+				thematicBreak: () => '<hr>',
+				blockquote: (_, children) => `<blockquote>${children.join('\n')}</blockquote>`,
+				codeBlock: (node) => `<pre><code>${node.code}</code></pre>`,
+				list: (node, children) =>
+					node.ordered ? `<ol>${children.join('')}</ol>` : `<ul>${children.join('')}</ul>`,
+				listItem: (_, children) => `<li>${children.join('')}</li>`,
+				table: (_, children) => `<table>${children.join('')}</table>`,
+				text: (node) => node.value,
+				emphasis: (node, children) =>
+					node.strong ? `<strong>${children.join('')}</strong>` : `<em>${children.join('')}</em>`,
+				codeSpan: (node) => `<code>${node.value}</code>`,
+				break: () => '<br>',
+				link: (node, children) => `<a href="${node.href}">${children.join('')}</a>`,
+				image: (node, children) => `<img src="${node.src}" alt="${children.join('')}">`,
+			}
+
+			const markdown = new Markdown('# Hi')
+
+			expect(markdown.fold(toHTML)).toBe('<h1>Hi</h1>')
+		})
+
+		it('carries the fold fence lines the transcription copies', () => {
+			expect(guideText).toContain('const toHTML: MarkdownHandlerMap<string> = {')
+			expect(guideText).toContain("markdown.fold(toHTML) // '<h1>Hi</h1>'")
+		})
+
+		it('streams the top-level blocks through a reader loop and through async iteration alike', async () => {
+			const markdown = new Markdown('# Title\n\nFirst.\n\nSecond.')
+
+			const reader = markdown.stream().getReader()
+			const tops: string[] = []
+			for (let result = await reader.read(); !result.done; result = await reader.read()) {
+				tops.push(result.value.element)
+			}
+
+			expect(tops).toEqual(['heading', 'paragraph', 'paragraph'])
+
+			const topsAsync: string[] = []
+			for await (const block of markdown.stream()) topsAsync.push(block.element)
+
+			expect(topsAsync).toEqual(tops)
+		})
+
+		it('carries the streaming fence lines the transcription copies', () => {
+			expect(guideText).toContain('const reader = markdown.stream().getReader()')
+			expect(guideText).toContain("// tops: ['heading', 'paragraph', 'paragraph']")
+			expect(guideText).toContain(
+				'for await (const block of markdown.stream()) topsAsync.push(block.element)',
+			)
+		})
+
+		it('walks every node deep, depth-first, pre-order, and root first', () => {
+			const markdown = new Markdown('# Title\n\nA **bold** word.')
+
+			const all: string[] = []
+			for (const node of markdown.walk()) all.push(node.element)
+
+			expect(all).toEqual([
+				'document',
+				'heading',
+				'text',
+				'paragraph',
+				'text',
+				'emphasis',
+				'text',
+				'text',
+			])
+		})
+
+		it('carries the sync-iteration fence lines the transcription copies', () => {
+			expect(guideText).toContain(
+				'for (const node of markdown.walk()) all.push(node.element) // deep, depth-first, pre-order',
+			)
+		})
+
+		it('yields the same sequence to a for-await loop that the sync walk yields', async () => {
+			const markdown = new Markdown('# Title\n\nA **bold** word.')
+
+			const written: string[] = []
+			for await (const node of markdown.walk()) written.push(node.element)
+
+			expect(written).toEqual([...markdown.walk()].map((node) => node.element))
+		})
+
+		it('carries the async-iteration fence lines the transcription copies', () => {
+			expect(guideText).toContain(
+				'for await (const node of markdown.walk()) writer.write(node.element) // sync generator, for-await composes fine',
+			)
+		})
+
+		it('drives every standalone projection and traversal from a bare node', () => {
+			const markdown = new Markdown('# Hi\n\nText.')
+
+			expect(renderHTML(markdown.document)).toBe('<h1>Hi</h1><p>Text.</p>')
+			expect(markdownToHTML(markdown.document).category).toBe('document')
+			expect(parseDocument(renderMarkdown(markdown.document))).toEqual(markdown.document)
+
+			const imported = htmlToMarkdown(parseHTML('<h1>Release notes</h1><p>Ship <b>fast</b>.</p>'))
+
+			expect(renderMarkdown(imported)).toBe('# Release notes\n\nShip **fast**.')
+
+			const heading = requireValue(markdown.document.children[0], 'expected a block')
+
+			expect([...walkNodes(heading)].map((node) => node.element)).toEqual(['heading', 'text'])
+
+			const countHandlers: MarkdownHandlerMap<number> = {
+				document: (_, children) => children.reduce((a, b) => a + b, 0),
+				heading: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+				paragraph: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+				thematicBreak: () => 1,
+				blockquote: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+				codeBlock: () => 1,
+				list: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+				listItem: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+				table: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+				text: () => 1,
+				emphasis: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+				codeSpan: () => 1,
+				break: () => 1,
+				link: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+				image: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
+			}
+
+			expect(foldNode(heading, countHandlers, 0)).toBe(2)
+
+			const [rewritten, derivations] = rewriteDocument(markdown.document, (node) =>
+				node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
+			)
+
+			expect(rewritten.children.length).toBe(markdown.document.children.length)
+			expect(derivations.size).toBeGreaterThan(0)
+
+			const [unchanged] = rewriteDocument(markdown.document, (node) => node)
+
+			expect(unchanged).toBe(markdown.document)
+			expect(parseInline('a **bold** span').map((node) => node.element)).toEqual([
+				'text',
+				'emphasis',
+				'text',
+			])
+		})
+
+		it('carries the standalone fence lines the transcription copies', () => {
+			expect(guideText).toContain("renderHTML(markdown.document) // '<h1>Hi</h1><p>Text.</p>'")
+			expect(guideText).toContain('markdownToHTML(markdown.document) // { category: ')
+			expect(guideText).toContain(
+				"renderMarkdown(imported) // '# Release notes\\n\\nShip **fast**.'",
+			)
+			expect(guideText).toContain(
+				"const elements = [...walkNodes(heading)].map((node) => node.element) // ['heading', 'text']",
+			)
+			expect(guideText).toContain('const nodeCount = foldNode(heading, countHandlers, 0) // 2')
+			expect(guideText).toContain('derivations.size > 0 // true')
+			expect(guideText).toContain('unchanged === markdown.document // true')
+		})
+
+		it('scans one inline construct at a time and degrades an unclosed one to undefined', () => {
+			expect(scanInline('a **b** c', 0, 9).map((node) => node.element)).toEqual([
+				'text',
+				'emphasis',
+				'text',
+			])
+
+			const link = scanLink('[docs](https://x.dev)', 0, 21)
+
+			expect(link?.node.href).toBe('https://x.dev')
+			expect(link?.end).toBe(21)
+
+			const emphasis = scanEmphasis('**bold**', 0, 8)
+
+			expect(emphasis?.node.strong).toBe(true)
+			expect(emphasis?.end).toBe(8)
+			expect(scanLink('[unclosed', 0, 9)).toBeUndefined()
+		})
+
+		it('carries the scanner fence lines the transcription copies', () => {
+			expect(guideText).toContain("scanInline('a **b** c', 0, 9)")
+			expect(guideText).toContain("link?.node.href // 'https://x.dev'")
+			expect(guideText).toContain('link?.end // 21')
+			expect(guideText).toContain('emphasis?.node.strong // true')
+			expect(guideText).toContain('emphasis?.end // 8')
+			expect(guideText).toContain("scanLink('[unclosed', 0, 9) // undefined")
+		})
+
+		it('extracts the Surface-table identifiers of this very guide by parsing it as markdown', () => {
+			const names = extractSurfaceNames(guideText)
+
+			expect(names).toContain('MarkdownHandlerMap<T>')
+			expect(names).toContain('scanLink')
+			expect(names).toContain('LinkScan')
+		})
+
+		it('carries the guide-parity extraction fence lines the transcription copies', () => {
+			expect(guideText).toContain(
+				'const tables = markdown.filter(isTableNode) // readonly TableNode[] — narrowed, no cast needed',
+			)
+			expect(guideText).toContain(
+				"table.rows.map((row) => flattenText({ element: 'paragraph', children: row[0] ?? [] })),",
+			)
+		})
+
+		it('generates a fixture from a seed that its own guard accepts and a repeat reproduces', () => {
+			const text = createTextContract()
+
+			expect(text.schema.type).toBe('object')
+
+			const fixture = text.generate(seededRandom(42))
+
+			expect(text.is(fixture)).toBe(true)
+			expect(text.generate(seededRandom(42))).toEqual(fixture)
+		})
+
+		it('carries the contract-fixture fence lines the transcription copies', () => {
+			expect(guideText).toContain('const text = createTextContract()')
+			expect(guideText).toContain('text.schema // the compiled JSON Schema for TextNode')
+			expect(guideText).toContain(
+				'const fixture = text.generate(seededRandom(42)) // reproducible seed data',
+			)
+			expect(guideText).toContain('text.is(fixture) // true')
+		})
+
+		it('renders markdown-sourced hostile content the sanitizer paragraphs claim', () => {
+			const source = [
+				'<script>alert(1)</script>',
+				'',
+				'[link](javascript:alert(1))',
+				'',
+				'![alt](javascript:alert(1))',
+				'',
+				'![alt](https://x.dev/pic.png)',
+			].join('\n')
+
+			const html = renderHTML(parseDocument(source))
+
+			expect(html).toBe(
+				'<p>&lt;script&gt;alert(1)&lt;/script&gt;</p><p><a>link</a></p><p><img alt="alt"></p><p><img src="https://x.dev/pic.png" alt="alt"></p>',
+			)
+		})
+
+		it('carries the sanitizer fence lines the transcription copies', () => {
+			expect(guideText).toContain("'<script>alert(1)</script>',")
+			expect(guideText).toContain("'[link](javascript:alert(1))',")
+			expect(guideText).toContain("'![alt](javascript:alert(1))',")
+			expect(guideText).toContain("'![alt](https://x.dev/pic.png)',")
+			expect(guideText).toContain(
+				'// \'<p>&lt;script&gt;alert(1)&lt;/script&gt;</p><p><a>link</a></p><p><img alt="alt"></p><p><img src="https://x.dev/pic.png" alt="alt"></p>\'',
+			)
+		})
 	})
 })
