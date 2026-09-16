@@ -37,7 +37,13 @@ import type {
 import { EMPTY_PROJECTION, MAX_DEPTH } from './constants.js'
 import { isBlockNode, isInlineNode } from './validators.js'
 import { parseBlocks } from './parsers.js'
-import { isEmptyString, isNonEmptyArray, isNonEmptyString, parseInteger } from '@orkestrel/contract'
+import {
+	isEmptyString,
+	isNonEmptyArray,
+	isNonEmptyString,
+	isString,
+	parseInteger,
+} from '@orkestrel/contract'
 import {
 	SAFE_URL_SCHEMES,
 	TABLE_ALIGNMENTS,
@@ -1444,7 +1450,7 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 		if (!frame.expanded) {
 			if (frame.depth >= MAX_DEPTH) {
 				values.push(
-					'value' in current && typeof current.value === 'string'
+					'value' in current && isString(current.value)
 						? { category: 'text', value: current.value }
 						: undefined,
 				)
@@ -1769,7 +1775,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 			if (
 				(frame.depth >= MAX_DEPTH || current.element === 'text') &&
 				'value' in current &&
-				typeof current.value === 'string'
+				isString(current.value)
 			) {
 				for (let index = 0; index < current.value.length; index += 1) {
 					const character = current.value[index] ?? ''

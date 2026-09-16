@@ -7,6 +7,7 @@ import type {
 	MarkdownRewriteHandler,
 	MarkdownSpan,
 } from './types.js'
+import { isString } from '@orkestrel/contract'
 import { foldNode, rewriteDocument, walkNodes } from './helpers.js'
 import { parseProvenance } from './parsers.js'
 
@@ -55,7 +56,7 @@ export class Markdown implements MarkdownInterface {
 	readonly #spans: Map<MarkdownNode, MarkdownSpan>
 
 	constructor(input: string | MarkdownDocument) {
-		if (typeof input === 'string') {
+		if (isString(input)) {
 			const [document, spans] = parseProvenance(input)
 			this.#document = document
 			this.#spans = new Map(spans)
