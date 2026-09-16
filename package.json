@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/markdown",
-	"version": "0.0.14",
+	"version": "0.0.15",
 	"description": "A types-first markdown layer over @orkestrel/html — typed AST, both conversion directions, and sanitized HTML by default.",
 	"keywords": [
 		"ast",
