@@ -72,8 +72,8 @@
 		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.18",
-		"@orkestrel/html": "^0.0.11"
+		"@orkestrel/contract": "^0.0.19",
+		"@orkestrel/html": "^0.0.12"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.59.3",
