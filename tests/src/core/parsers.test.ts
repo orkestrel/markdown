@@ -698,6 +698,22 @@ describe('parseDocument — round-trip over a self-contained composite document'
 })
 
 describe('parseBlocks', () => {
+	it('preserves paragraph fence and quote boundaries across a wide source', () => {
+		// Base: cc01cc6:src/core/parsers.ts:71.
+		const source = 'paragraph\n\n```\ncode\n```\n> quote\n\n'.repeat(50_000)
+		const blocks = parseBlocks(splitLines(source), 0)
+		expect(blocks).toHaveLength(150_000)
+		expect(blocks.slice(0, 3)).toEqual([
+			{ element: 'paragraph', children: [{ element: 'text', value: 'paragraph' }] },
+			{ element: 'codeBlock', code: 'code' },
+			{
+				element: 'blockquote',
+				children: [{ element: 'paragraph', children: [{ element: 'text', value: 'quote' }] }],
+			},
+		])
+		expect(blocks.slice(-3)).toEqual(blocks.slice(0, 3))
+	})
+
 	it('honors the depth parameter — parseBlocks(lines, MAX_DEPTH) degrades to one literal paragraph', () => {
 		const blocks = parseBlocks(splitLines('# heading\nplain'), MAX_DEPTH)
 		expect(blocks).toHaveLength(1)
@@ -715,6 +731,16 @@ describe('parseBlocks', () => {
 })
 
 describe('parseProvenance — original-source spans', () => {
+	it('retains span insertion order from inline text through the document', () => {
+		// Base: cc01cc6:src/core/parsers.ts:113,126,233.
+		const [, spans] = parseProvenance('# H')
+		expect(Array.from(spans.keys(), (node) => node.element)).toEqual([
+			'text',
+			'heading',
+			'document',
+		])
+	})
+
 	it('records the document span through a trailing terminator', () => {
 		const markdown = '# Head\n'
 		const [document, spans] = parseProvenance(markdown)

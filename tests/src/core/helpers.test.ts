@@ -688,6 +688,47 @@ describe('unescapeText', () => {
 })
 
 describe('coalesceText', () => {
+	it('uses the replaced array iterator and retains its singleton identity', () => {
+		// Base: cc01cc6:src/core/helpers.ts:771.
+		const first: InlineNode = { element: 'text', value: 'a' }
+		const nodes: InlineNode[] = [first, { element: 'text', value: 'b' }]
+		Object.defineProperty(nodes, Symbol.iterator, { value: () => [first].values() })
+		expect(coalesceText(nodes)).toEqual([first])
+		expect(coalesceText(nodes)[0]).toBe(first)
+	})
+
+	it('reads an early text value before a later array getter', () => {
+		// Base: cc01cc6:src/core/helpers.ts:774.
+		const first = Object.defineProperty({ element: 'text' as const, value: '' }, 'value', {
+			get() {
+				throw new RangeError('early value')
+			},
+		})
+		const nodes: InlineNode[] = [first, { element: 'text', value: 'b' }]
+		Object.defineProperty(nodes, 2, {
+			get() {
+				throw new TypeError('late index')
+			},
+		})
+		expect(() => coalesceText(nodes)).toThrow(new RangeError('early value'))
+	})
+
+	it('omits a merged span when an interior text part has no span', () => {
+		// Base: cc01cc6:src/core/helpers.ts:774.
+		const first: InlineNode = { element: 'text', value: 'a' }
+		const last: InlineNode = { element: 'text', value: 'c' }
+		const spans = new Map<MarkdownNode, MarkdownSpan>([
+			[first, { start: 0, end: 1 }],
+			[last, { start: 2, end: 3 }],
+		])
+		const [merged] = coalesceText([first, { element: 'text', value: 'b' }, last], spans)
+		expect(merged).toEqual({ element: 'text', value: 'abc' })
+		if (merged === undefined) throw new Error('Missing merged text')
+		expect(spans.has(merged)).toBe(false)
+		expect(spans.has(first)).toBe(true)
+		expect(spans.has(last)).toBe(true)
+	})
+
 	it('merges adjacent text nodes', () => {
 		expect(
 			coalesceText([
@@ -1002,6 +1043,15 @@ describe('markdownToHTML', () => {
 })
 
 describe('renderMarkdown — canonical forms', () => {
+	it('preserves following links across wide inline siblings', () => {
+		// Base: cc01cc6:src/core/helpers.ts:1890.
+		const children = Array.from({ length: 10_000 }).flatMap((): InlineNode[] => [
+			{ element: 'text', value: '!' },
+			{ element: 'link', href: '/x', children: [{ element: 'text', value: 'x' }] },
+		])
+		expect(renderMarkdown({ element: 'paragraph', children })).toBe('\\![x](/x)'.repeat(10_000))
+	})
+
 	it('normalizes underscore emphasis to asterisks', () => {
 		expect(renderMarkdown(parseDocument('_em_'))).toBe('*em*')
 		expect(renderMarkdown(parseDocument('__strong__'))).toBe('**strong**')
@@ -2093,6 +2143,21 @@ describe('normalizeInlines', () => {
 })
 
 describe('mergeProjections', () => {
+	it('preserves wide inline cell and row projection order', () => {
+		// Base: cc01cc6:src/core/helpers.ts:2286.
+		const projections = Array.from({ length: 20_000 }, (_, index) =>
+			createProjection({
+				inlines: [{ element: 'codeSpan', value: String(index) }],
+				cells: [{ align: undefined, inlines: [{ element: 'text', value: String(index) }] }],
+			}),
+		)
+		const merged = mergeProjections(projections)
+		expect(merged.inlines).toEqual(projections.flatMap((projection) => projection.inlines))
+		expect(merged.cells).toEqual(projections.flatMap((projection) => projection.cells))
+		const rows = projections.map((projection) => createProjection({ rows: [projection.cells] }))
+		expect(mergeProjections(rows).rows).toEqual(rows.flatMap((projection) => projection.rows))
+	})
+
 	it('keeps a pure-inline run inline and coalesces it', () => {
 		const merged = mergeProjections([
 			buildProjection({ inlines: [{ element: 'text', value: 'a' }], text: 'a' }),

@@ -31,6 +31,7 @@ import {
 	stripQuote,
 } from './helpers.js'
 import { MAX_DEPTH } from './constants.js'
+import { MarkdownLineIterator } from './MarkdownLineIterator.js'
 
 /**
  * Parses a run of markdown lines into a block AST, recursing into nested
@@ -67,7 +68,8 @@ export function parseBlocks(
 		return [paragraph]
 	}
 	const blocks: BlockNode[] = []
-	lines.keys().reduce((index, step) => {
+	const indices = new MarkdownLineIterator(lines.keys())
+	indices.reduce((index, step) => {
 		if (step < index) return index
 		const line = text[index] ?? ''
 		if (isBlankLine(line)) {
@@ -77,7 +79,7 @@ export function parseBlocks(
 		if (fence) {
 			const start = index
 			const body: Array<readonly [number, boolean, MarkdownSource | undefined]> = []
-			for (const cursor of lines.keys().drop(index + 1)) {
+			for (const cursor of indices) {
 				const closed = isFenceClose(text[cursor] ?? '', fence.marker)
 				body.push([cursor, closed, closed ? undefined : lines[cursor]])
 				if (closed) break
@@ -126,9 +128,12 @@ export function parseBlocks(
 		}
 		if (isQuote(line)) {
 			const start = index
-			const quoted: Array<readonly [number, MarkdownSource]> = []
-			for (const cursor of lines.keys().drop(index)) {
-				if (!isQuote(text[cursor] ?? '')) break
+			const first = lines[index]
+			const quoted: Array<readonly [number, MarkdownSource]> =
+				first === undefined ? [] : [[index, stripQuote(first)]]
+			while (indices.value !== undefined && isQuote(text[indices.value] ?? '')) {
+				const cursor = indices.next().value
+				if (cursor === undefined) break
 				const quotedLine = lines[cursor]
 				if (quotedLine === undefined) break
 				quoted.push([cursor, stripQuote(quotedLine)])
@@ -160,13 +165,14 @@ export function parseBlocks(
 			return list.next
 		}
 		const start = index
-		const paragraph: Array<readonly [number, MarkdownSource | undefined]> = []
-		for (const cursor of lines.keys().drop(index)) {
-			if (
-				isBlankLine(text[cursor] ?? '') ||
-				(paragraph.some(([, source]) => source !== undefined) && startsBlock(text, cursor))
-			)
-				break
+		const paragraph: Array<readonly [number, MarkdownSource | undefined]> = [[index, lines[index]]]
+		while (
+			indices.value !== undefined &&
+			!isBlankLine(text[indices.value] ?? '') &&
+			!startsBlock(text, indices.value)
+		) {
+			const cursor = indices.next().value
+			if (cursor === undefined) break
 			paragraph.push([cursor, lines[cursor]])
 		}
 		const next = paragraph.length === 0 ? index : (paragraph.at(-1)?.[0] ?? index) + 1
@@ -234,12 +240,8 @@ export function parseProvenance(markdown: string): MarkdownParseResult {
 	memo.set(document, { start: 0, end: markdown.length })
 	const nodes: MarkdownNode[] = [document]
 	for (const node of nodes) for (const child of listChildren(node)) nodes.push(child)
-	const spans = new Map(
-		nodes.flatMap((node): ReadonlyArray<readonly [MarkdownNode, MarkdownSpan]> => {
-			const span = memo.get(node)
-			return span === undefined ? [] : [[node, span]]
-		}),
-	)
+	const present = new Set(nodes)
+	const spans = new Map([...memo].filter(([node]) => present.has(node)))
 	return [document, spans]
 }
 

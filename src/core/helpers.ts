@@ -36,7 +36,7 @@ import type {
 	TableNode,
 } from './types.js'
 import { EMPTY_PROJECTION, MAX_DEPTH } from './constants.js'
-import { isBlockNode, isInlineNode, isTextNode } from './validators.js'
+import { isBlockNode, isInlineNode } from './validators.js'
 import { parseBlocks } from './parsers.js'
 import {
 	isEmptyString,
@@ -754,25 +754,43 @@ export function coalesceText(
 	nodes: readonly InlineNode[],
 	spans?: Map<MarkdownNode, MarkdownSpan>,
 ): readonly InlineNode[] {
-	return splitTextRuns(nodes)
-		.map((run): InlineNode | undefined => {
-			const first = run[0]
-			if (first === undefined || run.length === 1) return first
-			const merged: InlineNode = {
-				element: 'text',
-				value: run
-					.filter(isTextNode)
-					.map((part) => part.value)
-					.join(''),
+	const result = Iterator.from(nodes).reduce<{
+		readonly first: InlineNode | undefined
+		readonly last: InlineNode | undefined
+		readonly value: string | undefined
+		readonly complete: boolean
+		readonly log: InlineNode[]
+	}>(
+		({ first, last, value, complete, log }, node) => {
+			if (node.element === 'text' && first?.element === 'text') {
+				return {
+					first,
+					last: node,
+					value: (value ?? first.value) + node.value,
+					complete: complete && (spans?.has(node) ?? false),
+					log,
+				}
 			}
-			const last = run.at(-1)
-			const left = spans?.get(first)
-			const right = last === undefined ? undefined : spans?.get(last)
-			if (left !== undefined && right !== undefined)
-				spans?.set(merged, { start: left.start, end: right.end })
-			return merged
-		})
-		.filter((node) => node !== undefined)
+			if (first !== undefined) {
+				const merged: InlineNode = value === undefined ? first : { element: 'text', value }
+				const left = spans?.get(first)
+				const right = last === undefined ? undefined : spans?.get(last)
+				if (value !== undefined && complete && left !== undefined && right !== undefined)
+					spans?.set(merged, { start: left.start, end: right.end })
+				log.push(merged)
+			}
+			return { first: node, last: node, value: undefined, complete: spans?.has(node) ?? false, log }
+		},
+		{ first: undefined, last: undefined, value: undefined, complete: false, log: [] },
+	)
+	if (result.first === undefined) return result.log
+	const merged: InlineNode =
+		result.value === undefined ? result.first : { element: 'text', value: result.value }
+	const left = spans?.get(result.first)
+	const right = result.last === undefined ? undefined : spans?.get(result.last)
+	if (result.value !== undefined && result.complete && left !== undefined && right !== undefined)
+		spans?.set(merged, { start: left.start, end: right.end })
+	return [...result.log, merged]
 }
 
 /**
@@ -1689,11 +1707,11 @@ export function renderMarkdown(node: MarkdownNode): string {
 			for (const groupIndex of groups.keys()) {
 				const group = groups[groupIndex]
 				if (group === undefined) continue
-				for (const position of group.keys()) {
-					const child = group[position]
+				const siblings = group.filter((child) => child !== undefined)
+				for (const position of siblings.keys()) {
+					const child = siblings[position]
 					if (child === undefined) continue
-					const following =
-						adjacent[groupIndex] === true ? findFollowingNode(group, position + 1) : undefined
+					const following = adjacent[groupIndex] === true ? siblings[position + 1] : undefined
 					const escapeBang = following?.element === 'link'
 					children.push(child)
 					escapeBangs.push(escapeBang)
@@ -2017,11 +2035,7 @@ export function mergeProjections(children: readonly MarkdownProjection[]): Markd
 	const blocks: BlockNode[] = []
 	const text: string[] = []
 	const [tail, remainingCells, remainingRows] = Iterator.from(children).reduce<
-		readonly [
-			readonly InlineNode[],
-			readonly MarkdownCell[],
-			ReadonlyArray<readonly MarkdownCell[]>,
-		]
+		readonly [InlineNode[], MarkdownCell[], Array<readonly MarkdownCell[]>]
 	>(
 		([pending, cells, rows], child) => {
 			if (child === undefined) return [pending, cells, rows]
@@ -2040,22 +2054,14 @@ export function mergeProjections(children: readonly MarkdownProjection[]): Markd
 				return [[], [], []]
 			}
 			const rowed = isNonEmptyArray<readonly MarkdownCell[]>(child.rows)
-			const nextRows = rowed
-				? [
-						...rows,
-						...(isNonEmptyArray<MarkdownCell>(cells) ? [[...cells]] : []),
-						...Iterator.from(child.rows).filter((row) => row !== undefined),
-					]
-				: rows
-			const nextCells = [
-				...(rowed ? [] : cells),
-				...Iterator.from(child.cells).filter((cell) => cell !== undefined),
-			]
-			const nextPending = [
-				...pending,
-				...Iterator.from(child.inlines).filter((inline) => inline !== undefined),
-			]
-			return [nextPending, nextCells, nextRows]
+			if (rowed) {
+				if (isNonEmptyArray<MarkdownCell>(cells)) rows.push(cells)
+				for (const row of child.rows) if (row !== undefined) rows.push(row)
+			}
+			const nextCells = rowed ? [] : cells
+			for (const cell of child.cells) if (cell !== undefined) nextCells.push(cell)
+			for (const inline of child.inlines) if (inline !== undefined) pending.push(inline)
+			return [pending, nextCells, rows]
 		},
 		[[], [], []],
 	)
