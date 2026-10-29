@@ -5,29 +5,16 @@
 // character structural predicates narrow nothing, so they live in helpers.ts and are
 // proved in helpers.test.ts.
 
-import type { MarkdownNode } from '@src/core'
 import {
 	isBlockNode,
-	isBlockquoteNode,
-	isCodeBlockNode,
-	isCodeSpanNode,
-	isEmphasisNode,
-	isHeadingNode,
-	isImageNode,
 	isInlineNode,
-	isLineBreakNode,
-	isLinkNode,
-	isListNode,
 	isMarkdownDocument,
 	isMarkdownNode,
-	isParagraphNode,
-	isTableNode,
-	isTextNode,
-	isThematicBreakNode,
 	parseDocument,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import {
+	samples,
 	assertInlineNode,
 	assertListNode,
 	buildCyclicNode,
@@ -36,32 +23,6 @@ import {
 	buildHostileNode,
 	firstBlock,
 } from '../../setup.js'
-
-interface Sample {
-	readonly name: string
-	readonly node: MarkdownNode
-	readonly guard: (node: MarkdownNode) => boolean
-}
-
-const samples: readonly Sample[] = [
-	{ name: 'heading', node: firstBlock('# H'), guard: isHeadingNode },
-	{ name: 'paragraph', node: firstBlock('text'), guard: isParagraphNode },
-	{ name: 'list', node: firstBlock('- a'), guard: isListNode },
-	{
-		name: 'table',
-		node: firstBlock('| a | b |\n| --- | --- |\n| 1 | 2 |'),
-		guard: isTableNode,
-	},
-	{ name: 'codeBlock', node: firstBlock('```\ncode\n```'), guard: isCodeBlockNode },
-	{ name: 'blockquote', node: firstBlock('> q'), guard: isBlockquoteNode },
-	{ name: 'thematicBreak', node: firstBlock('---'), guard: isThematicBreakNode },
-	{ name: 'text', node: assertInlineNode('plain'), guard: isTextNode },
-	{ name: 'emphasis', node: assertInlineNode('*em*'), guard: isEmphasisNode },
-	{ name: 'codeSpan', node: assertInlineNode('`code`'), guard: isCodeSpanNode },
-	{ name: 'break', node: { element: 'break' }, guard: isLineBreakNode },
-	{ name: 'link', node: assertInlineNode('[t](https://example.com)'), guard: isLinkNode },
-	{ name: 'image', node: assertInlineNode('![alt](image.png)'), guard: isImageNode },
-]
 
 describe('parser AST validators', () => {
 	for (const sample of samples) {
@@ -280,12 +241,11 @@ describe('from-unknown AST guards: totality against adversarial input', () => {
 	})
 
 	it('returns false, never throws, for image-like records with hostile prototypes', () => {
-		const prototype = {
+		const hostile: unknown = Object.create({
 			get element(): string {
 				throw new Error('hostile prototype')
 			},
-		}
-		const hostile: unknown = Object.create(prototype)
+		})
 		expect(() => isInlineNode(hostile)).not.toThrow()
 		expect(isInlineNode(hostile)).toBe(false)
 	})
@@ -302,24 +262,22 @@ describe('from-unknown AST guards: totality against adversarial input', () => {
 
 	it('does not throw on a pathologically deep inline chain, and returns a boolean', () => {
 		const deep = buildDeepInlineNode(100000)
-		let result: boolean = false
 		expect(() => {
-			result = isInlineNode(deep)
+			const result = isInlineNode(deep)
+			expect(typeof result).toBe('boolean')
 		}).not.toThrow()
 		// Extreme depth may legitimately fail containment (recursion depth cap) -
 		// only the no-throw + boolean-return contract is asserted here.
-		expect(typeof result).toBe('boolean')
 	})
 
 	it('does not throw on a pathologically deep block chain, and returns a boolean', () => {
 		const deep = buildDeepBlockNode(100000)
-		let result: boolean = false
 		expect(() => {
-			result = isBlockNode(deep)
+			const result = isBlockNode(deep)
+			expect(typeof result).toBe('boolean')
 		}).not.toThrow()
 		// Extreme depth may legitimately fail containment (recursion depth cap) -
 		// only the no-throw + boolean-return contract is asserted here.
-		expect(typeof result).toBe('boolean')
 	})
 
 	it('rejects a modest-depth (10) chain built by buildDeepInlineNode (the fixture omits emphasis`s required `strong` field - it is a stack-safety shape, not a valid-node shape) but still does not throw', () => {

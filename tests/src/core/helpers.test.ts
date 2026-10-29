@@ -4,7 +4,6 @@ import type {
 	BlockquoteNode,
 	InlineNode,
 	MarkdownDocument,
-	MarkdownHandlerMap,
 	MarkdownNode,
 	ParagraphNode,
 	MarkdownSource,
@@ -12,9 +11,38 @@ import type {
 	TableNode,
 } from '@src/core'
 import {
+	buildWideBlocks,
+	buildHTMLChain,
+	buildWideHTML,
+	readCapNode,
+	countHandlers,
+	createOrderHandlers,
+	createTextHandlers,
+	rewrite,
+	countQuoteDepth,
+} from '../../setup.js'
+import {
+	projectMarkdownNode,
+	renderMarkdownNode,
+	foldMarkdownNode,
+	rebuildMarkdownNode,
+	rebuildMarkdownCell,
+	acceptMarkdownNode,
+	walkMarkdownCharacters,
+	countMarkdownRun,
+	findFollowingNode,
+	escapeMarkdownText,
+	locateMarkdownDelimiter,
+	recordMarkdownText,
+	scanMarkdownInline,
+	walkMarkdownLines,
 	EMPTY_PROJECTION,
 	MAX_DEPTH,
 	coalesceText,
+	splitTextRuns,
+	listChildren,
+	trimLeading,
+	trimTrailing,
 	collectList,
 	collectTable,
 	createProjection,
@@ -692,12 +720,20 @@ describe('coalesceText', () => {
 		const merged = coalesceText([left, right], spans)[0]
 		if (merged === undefined) throw new Error('expected coalesced text')
 		expect(spans.get(merged)).toEqual({ start: 2, end: 8 })
-		expect(spans.has(left)).toBe(false)
-		expect(spans.has(right)).toBe(false)
+		expect(spans.has(left)).toBe(true)
+		expect(spans.has(right)).toBe(true)
 	})
 })
 
 describe('scanCode', () => {
+	it('preserves HEAD answers for unmatched and long backtick runs', () => {
+		expect(scanCode('``open`', 0, 7)).toBeUndefined()
+		const run = '`'.repeat(4096)
+		expect(scanCode(run, 0, run.length)).toBeUndefined()
+		const source = run + ' x ' + run
+		expect(scanCode(source, 0, source.length)).toEqual({ value: 'x', end: source.length })
+	})
+
 	it('reads a backtick span and trims one padding space on each side', () => {
 		expect(scanCode('`x`', 0, 3)).toEqual({ value: 'x', end: 3 })
 		expect(scanCode('` x `', 0, 5)).toEqual({ value: 'x', end: 5 })
@@ -1480,8 +1516,10 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 			element: 'paragraph',
 			children: [{ element: 'text', value: 'leaf' }],
 		}
-		let node: BlockquoteNode | ParagraphNode = leaf
-		for (let level = 0; level < 200; level += 1) node = { element: 'blockquote', children: [node] }
+		const node = Array.from({ length: 200 }).reduce<BlockquoteNode | ParagraphNode>(
+			(child) => ({ element: 'blockquote', children: [child] }),
+			leaf,
+		)
 		expect(() => renderMarkdown(node)).not.toThrow()
 	})
 })
@@ -1553,24 +1591,6 @@ describe('walkNodes', () => {
 })
 
 describe('foldNode', () => {
-	const countHandlers: MarkdownHandlerMap<number> = {
-		document: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		heading: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		paragraph: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		thematicBreak: () => 1,
-		blockquote: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		codeBlock: () => 1,
-		list: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		listItem: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		table: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		text: () => 1,
-		emphasis: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		codeSpan: () => 1,
-		break: () => 1,
-		link: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-		image: (_, children) => 1 + children.reduce((total, count) => total + count, 0),
-	}
-
 	it('folds image alternative children and counts hard breaks as leaves', () => {
 		const document: MarkdownDocument = {
 			element: 'document',
@@ -1593,68 +1613,7 @@ describe('foldNode', () => {
 
 	it('folds children-first (post-order) — a text-collecting fold sees leaves before their parent', () => {
 		const order: string[] = []
-		const handlers: MarkdownHandlerMap<string> = {
-			document: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			heading: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			paragraph: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			thematicBreak: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			blockquote: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			codeBlock: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			list: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			listItem: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			table: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			text: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			emphasis: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			codeSpan: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			break: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			link: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-			image: (node) => {
-				order.push(node.element)
-				return node.element
-			},
-		}
+		const handlers = createOrderHandlers(order)
 		const document: MarkdownDocument = {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
@@ -1671,26 +1630,7 @@ describe('foldNode', () => {
 			rows: [[[{ element: 'text', value: 'r1c1' }], [{ element: 'text', value: 'r1c2' }]]],
 			align: [null, null],
 		}
-		const textHandlers: MarkdownHandlerMap<string> = {
-			document: (_, children) => children.join(''),
-			heading: (_, children) => children.join(''),
-			paragraph: (_, children) => children.join(''),
-			thematicBreak: () => '',
-			blockquote: (_, children) => children.join(''),
-			codeBlock: () => '',
-			list: (_, children) => children.join(''),
-			listItem: (_, children) => children.join(''),
-			table: (_, children) => {
-				cells.push(...children)
-				return children.join(',')
-			},
-			text: (node) => node.value,
-			emphasis: (_, children) => children.join(''),
-			codeSpan: (node) => node.value,
-			break: () => '',
-			link: (_, children) => children.join(''),
-			image: (_, children) => children.join(''),
-		}
+		const textHandlers = createTextHandlers(cells)
 		expect(foldNode(table, textHandlers, 0)).toBe('h1,h2,r1c1,r1c2')
 		expect(cells).toEqual(['h1', 'h2', 'r1c1', 'r1c2'])
 	})
@@ -1700,8 +1640,10 @@ describe('foldNode', () => {
 			element: 'paragraph',
 			children: [{ element: 'text', value: 'leaf' }],
 		}
-		let node: BlockquoteNode | ParagraphNode = leaf
-		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
+		const node = Array.from({ length: 70 }).reduce<BlockquoteNode | ParagraphNode>(
+			(child) => ({ element: 'blockquote', children: [child] }),
+			leaf,
+		)
 		expect(() => foldNode(node, countHandlers, 0)).not.toThrow()
 		// Below MAX_DEPTH the fold recurses fully; count is bounded by MAX_DEPTH, never
 		// unbounded by the full 70-level chain (proves the cap fired).
@@ -1716,8 +1658,7 @@ describe('foldNode', () => {
 	})
 
 	it('keeps every iterative AST engine total while an identity rewrite reuses a wide document', () => {
-		const blocks: BlockNode[] = []
-		for (let index = 0; index < 150_000; index += 1) blocks.push({ element: 'thematicBreak' })
+		const blocks = buildWideBlocks()
 		const document: MarkdownDocument = { element: 'document', children: blocks }
 
 		expect(() => renderHTML(document)).not.toThrow()
@@ -1980,26 +1921,19 @@ describe('rewriteDocument', () => {
 			children: [{ element: 'text', value: 'leaf' }],
 		}
 		const chain: Array<BlockquoteNode | ParagraphNode> = [leaf]
-		for (let level = 0; level < 100; level += 1) {
-			const previous = chain[chain.length - 1]
+		for (const level of Array.from({ length: 100 }).keys()) {
+			const previous = chain[level]
 			if (previous === undefined) continue
 			chain.push({ element: 'blockquote', children: [previous] })
 		}
 		const top = chain[chain.length - 1]
 		if (top === undefined) throw new Error('unreachable — chain always has 101 entries')
 		const document: MarkdownDocument = { element: 'document', children: [top] }
-		const rewrite = (node: MarkdownNode): MarkdownNode =>
-			node.element === 'text' ? { element: 'text', value: 'X' } : node
 
 		expect(() => rewriteDocument(document, rewrite)).not.toThrow()
 
 		const [rewritten] = rewriteDocument(document, rewrite)
-		let atCap: BlockNode | undefined = rewritten.children[0]
-		for (let level = 0; level < MAX_DEPTH; level += 1) {
-			if (atCap === undefined || atCap.element !== 'blockquote')
-				throw new Error('unreachable — chain is a pure blockquote run down to the cap')
-			atCap = atCap.children[0]
-		}
+		const atCap = readCapNode(rewritten.children[0])
 		// The node AT the cap (and everything below it) is the SAME reference as the
 		// original input — never rebuilt, `rewrite` never invoked on it.
 		expect(atCap).toBe(chain[chain.length - 1 - MAX_DEPTH])
@@ -2770,18 +2704,10 @@ describe('htmlToMarkdown — adversarial input', () => {
 	})
 
 	it('is total, and bounded, on nesting past the depth cap', () => {
-		let node: HTMLNode = { category: 'text', value: 'leaf' }
-		for (let level = 0; level < 200; level += 1) {
-			node = { category: 'element', name: 'blockquote', attributes: [], children: [node] }
-		}
+		const node = buildHTMLChain()
 		expect(() => htmlToMarkdown(node)).not.toThrow()
 		const projected = htmlToMarkdown(node)
-		let depth = 0
-		let block: BlockNode | undefined = projected.children[0]
-		while (block?.element === 'blockquote') {
-			depth += 1
-			block = block.children[0]
-		}
+		const depth = countQuoteDepth(projected.children[0])
 		// The composed cap is html's, not markdown's: html's fold stops descending first,
 		// so 200 levels of source project to a bounded chain (its cap plus the root and the
 		// node folded AT the cap) — and the serializer, whose own cap is markdown's, stays
@@ -2792,10 +2718,7 @@ describe('htmlToMarkdown — adversarial input', () => {
 	})
 
 	it('is total on a very wide document', () => {
-		const children: HTMLNode[] = []
-		for (let index = 0; index < 20_000; index += 1) {
-			children.push({ category: 'element', name: 'hr', attributes: [], children: [] })
-		}
+		const children = buildWideHTML()
 		expect(htmlToMarkdown({ category: 'document', children }).children).toHaveLength(20_000)
 	})
 
@@ -2909,5 +2832,141 @@ describe('htmlToMarkdown — the grand round trip', () => {
 			],
 		})
 		expect(renderMarkdown(projected)).toBe('[text]() ![alt]()')
+	})
+})
+
+describe('markdown node and scan operations', () => {
+	it('projects and renders individual nodes from supplied child results', () => {
+		expect(
+			projectMarkdownNode({ element: 'paragraph', children: [] }, [
+				{ category: 'text', value: 'hi' },
+			]),
+		).toEqual({
+			category: 'element',
+			name: 'p',
+			attributes: [],
+			children: [{ category: 'text', value: 'hi' }],
+		})
+		expect(renderMarkdownNode({ element: 'paragraph', children: [] }, ['a', 'b'], '', 0)).toBe('ab')
+		expect(foldMarkdownNode({ element: 'paragraph', children: [] }, countHandlers, [2, 3])).toBe(6)
+	})
+
+	it('retains unchanged nodes and rejects a replacement outside its slot', () => {
+		const original: ParagraphNode = { element: 'paragraph', children: [] }
+		const text: InlineNode = { element: 'text', value: 'hi' }
+		expect(rebuildMarkdownNode(original, [])).toBe(original)
+		expect(acceptMarkdownNode(original, original, text)).toBe(original)
+		const cell: readonly InlineNode[] = [text]
+		const replacement: InlineNode = { element: 'codeSpan', value: 'x' }
+		const pairs: Array<readonly [InlineNode, InlineNode]> = []
+		expect(rebuildMarkdownCell(cell, [replacement].values(), pairs)).toEqual([replacement])
+		expect(pairs).toEqual([[text, replacement]])
+	})
+
+	it('scans UTF-16 positions and balanced escaped delimiters', () => {
+		expect([...walkMarkdownCharacters('a😀', 0, 3)]).toEqual([
+			[0, 'a'],
+			[1, '\uD83D'],
+			[2, '\uDE00'],
+		])
+		expect([...walkMarkdownLines(splitLines('a\nb'), 1)]).toEqual([1])
+		expect(countMarkdownRun('***x', 0, 4)).toBe(3)
+		expect(countMarkdownRun('***x', 0, 2)).toBe(2)
+		expect(locateMarkdownDelimiter('[a\\]b]', 0, 6, '[', ']')).toBe(5)
+		expect(locateMarkdownDelimiter('[a', 0, 2, '[', ']')).toBeUndefined()
+		expect(findFollowingNode([], 0)).toBeUndefined()
+		expect(escapeMarkdownText('*x*', false)).toBe('\\*x\\*')
+	})
+
+	it('records text provenance and scans one construct without recording its own span', () => {
+		const source: MarkdownSource = {
+			text: 'a *b*',
+			segments: [{ offset: 0, start: 10, end: 15 }],
+		}
+		const spans = new Map<MarkdownNode, MarkdownSpan>()
+		const nodes: InlineNode[] = []
+		recordMarkdownText(source, 'a ', 0, 2, spans, nodes)
+		expect(nodes).toEqual([{ element: 'text', value: 'a ' }])
+		expect([...spans.values()]).toEqual([{ start: 10, end: 12 }])
+		const scan = scanMarkdownInline(source, 2, 5, spans, 0)
+		expect(scan?.end).toBe(5)
+		expect(scan?.node).toEqual({
+			element: 'emphasis',
+			strong: false,
+			children: [{ element: 'text', value: 'b' }],
+		})
+		expect([...spans.values()]).toEqual([
+			{ start: 10, end: 12 },
+			{ start: 13, end: 14 },
+		])
+	})
+})
+
+describe('inline derivations', () => {
+	it('splits text adjacency while retaining singleton node identities', () => {
+		const left: InlineNode = { element: 'text', value: 'a' }
+		const right: InlineNode = { element: 'text', value: 'b' }
+		const code: InlineNode = { element: 'codeSpan', value: 'c' }
+		expect(splitTextRuns([left, right, code, left])).toEqual([[left, right], [code], [left]])
+		expect(splitTextRuns([])).toEqual([])
+		expect(coalesceText([code, left])[0]).toBe(code)
+		expect(coalesceText([left])[0]).toBe(left)
+	})
+
+	it('trims only the selected inline edge', () => {
+		const node: InlineNode = { element: 'text', value: ' a ' }
+		expect(trimLeading([node])).toEqual([{ element: 'text', value: 'a ' }])
+		expect(trimTrailing([node])).toEqual([{ element: 'text', value: ' a' }])
+		expect(trimLeading([{ element: 'text', value: ' ' }, node])).toEqual([node])
+		expect(trimTrailing([node, { element: 'text', value: ' ' }])).toEqual([node])
+	})
+
+	it('keeps leading text whitespace after a discarded leading break', () => {
+		expect(
+			normalizeInlines([{ element: 'break' }, { element: 'text', value: ' a' }], true),
+		).toEqual([{ element: 'text', value: ' a' }])
+	})
+
+	it('joins nonempty segments across whitespace-only break segments', () => {
+		expect(
+			normalizeInlines(
+				[
+					{ element: 'text', value: 'a' },
+					{ element: 'break' },
+					{ element: 'text', value: ' ' },
+					{ element: 'break' },
+					{ element: 'text', value: 'b' },
+				],
+				true,
+			),
+		).toEqual([
+			{ element: 'text', value: 'a' },
+			{ element: 'break' },
+			{ element: 'text', value: 'b' },
+		])
+	})
+
+	it('drops trailing whitespace and a trailing break after emphasis', () => {
+		const emphasis: InlineNode = {
+			element: 'emphasis',
+			strong: false,
+			children: [{ element: 'text', value: 'a' }],
+		}
+		expect(
+			normalizeInlines([emphasis, { element: 'text', value: ' ' }, { element: 'break' }], true),
+		).toEqual([emphasis])
+	})
+
+	it('lists direct children in table cell order without descending into them', () => {
+		const first: InlineNode = { element: 'text', value: 'head' }
+		const last: InlineNode = { element: 'text', value: 'body' }
+		const table: TableNode = {
+			element: 'table',
+			header: [[first]],
+			rows: [[[last]]],
+			align: [null],
+		}
+		expect(listChildren(table)).toEqual([first, last])
+		expect(listChildren(first)).toEqual([])
 	})
 })

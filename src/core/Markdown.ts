@@ -128,9 +128,9 @@ export class Markdown implements MarkdownInterface {
 	// Collects every node (depth-first, pre-order) matching a predicate.
 	filter(predicate: (node: MarkdownNode) => boolean): readonly MarkdownNode[]
 	filter(predicate: (node: MarkdownNode) => boolean): readonly MarkdownNode[] {
-		const out: MarkdownNode[] = []
-		for (const node of this.walk()) if (predicate(node)) out.push(node)
-		return out
+		return this.walk()
+			.filter((node) => predicate(node))
+			.toArray()
 	}
 
 	/**
@@ -149,9 +149,7 @@ export class Markdown implements MarkdownInterface {
 
 	/** Folds the AST depth-first, pre-order into an accumulator. */
 	reduce<T>(callback: (accumulator: T, node: MarkdownNode) => T, initial: T): T {
-		let accumulator = initial
-		for (const node of this.walk()) accumulator = callback(accumulator, node)
-		return accumulator
+		return this.walk().reduce((accumulator, node) => callback(accumulator, node), initial)
 	}
 
 	/** Runs a total catamorphism over the document using a {@link MarkdownHandlerMap} table. */
@@ -170,7 +168,9 @@ export class Markdown implements MarkdownInterface {
 	 * ```ts
 	 * // universal - works in every ReadableStream-supporting environment
 	 * const reader = markdown.stream().getReader()
-	 * for (let result = await reader.read(); !result.done; result = await reader.read()) {
+	 * for (;;) {
+	 *   const result = await reader.read()
+	 *   if (result.done) break
 	 *   console.log(result.value) // one BlockNode
 	 * }
 	 *
@@ -182,18 +182,12 @@ export class Markdown implements MarkdownInterface {
 	 * ```
 	 */
 	stream(): ReadableStream<BlockNode> {
-		const blocks = this.#document.children
-		let index = 0
+		const blocks = this.#document.children.values()
 		return new ReadableStream<BlockNode>({
 			pull(controller) {
-				if (index < blocks.length) {
-					const block = blocks[index]
-					if (block === undefined) {
-						controller.close()
-						return
-					}
-					controller.enqueue(block)
-					index += 1
+				const block = blocks.next()
+				if (!block.done && block.value !== undefined) {
+					controller.enqueue(block.value)
 				} else {
 					controller.close()
 				}

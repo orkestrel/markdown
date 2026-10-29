@@ -1,21 +1,21 @@
-import type { ElementNode, HTMLDocument } from '@orkestrel/html'
-import type { MarkdownDocument, MarkdownProjection } from '@src/core'
+import type { HTMLDocument } from '@orkestrel/html'
+import type { MarkdownDocument } from '@src/core'
 import { Markdown } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import { buildProjection } from './setup.js'
-import { adopt, extractSurfaceNames, projectKbdNode } from './setupGuides.js'
+import {
+	ADOPTION_CASES,
+	SURFACE_CASES,
+	adopt,
+	buildElement,
+	buildText,
+	extractSurfaceNames,
+	projectKbdNode,
+} from './setupServer.js'
 
-// The subject is `tests/setupGuides.ts`, the helpers the `guides` project transcribes from the
+// The subject is `tests/setupServer.ts`, the helpers the `guides` project transcribes from the
 // guide's fences. Each expectation is a literal fixture written from the guide's claim, so a
 // helper that drifts from the fence it stands for fails here before the guide suite reads it.
-
-function buildElement(name: string): ElementNode {
-	return { category: 'element', name, attributes: [], children: [] }
-}
-
-function buildText(value: string): MarkdownProjection {
-	return buildProjection({ inlines: [{ element: 'text', value }], text: value })
-}
 
 describe('adopt', () => {
 	it('adopts a valid document as the handle document itself', () => {
@@ -29,19 +29,7 @@ describe('adopt', () => {
 		expect(markdown?.document).toBe(document)
 	})
 
-	it.each([
-		{ label: 'a foreign root element', candidate: { element: 'bogus' } },
-		{ label: 'a document without children', candidate: { element: 'document' } },
-		{
-			label: 'a document whose nested text node lacks its value',
-			candidate: {
-				element: 'document',
-				children: [{ element: 'paragraph', children: [{ element: 'text' }] }],
-			},
-		},
-		{ label: 'a markdown source string', candidate: '# Title' },
-		{ label: 'null', candidate: null },
-	])('refuses $label', ({ candidate }) => {
+	it.each(ADOPTION_CASES)('refuses $label', ({ candidate }) => {
 		expect(adopt(candidate)).toBeUndefined()
 	})
 })
@@ -118,11 +106,7 @@ describe('extractSurfaceNames', () => {
 		expect(extractSurfaceNames(source)).toEqual(['scanLink', 'LinkScan', 'MarkdownHandlerMap<T>'])
 	})
 
-	it.each([
-		{ label: 'an empty source', source: '' },
-		{ label: 'prose without a table', source: '# Guide\n\nThe `scanLink` function reads a link.' },
-		{ label: 'a table with a header and no body row', source: '| Name |\n| --- |' },
-	])('finds no name in $label', ({ source }) => {
+	it.each(SURFACE_CASES)('finds no name in $label', ({ source }) => {
 		expect(extractSurfaceNames(source)).toEqual([])
 	})
 })

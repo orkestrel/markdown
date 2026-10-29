@@ -24,6 +24,7 @@ import type {
 	MarkdownDerivation,
 	MarkdownDocument,
 	MarkdownHandlerMap,
+	MarkdownInlineScan,
 	MarkdownNode,
 	MarkdownProjection,
 	MarkdownRewriteHandler,
@@ -35,7 +36,7 @@ import type {
 	TableNode,
 } from './types.js'
 import { EMPTY_PROJECTION, MAX_DEPTH } from './constants.js'
-import { isBlockNode, isInlineNode } from './validators.js'
+import { isBlockNode, isInlineNode, isTextNode } from './validators.js'
 import { parseBlocks } from './parsers.js'
 import {
 	isEmptyString,
@@ -91,28 +92,16 @@ import {
  * ```
  */
 export function splitLines(markdown: string): readonly MarkdownSource[] {
-	const lines: MarkdownSource[] = []
-	let start = 0
-	let index = 0
-	while (index < markdown.length) {
-		const character = markdown[index]
-		if (character !== '\r' && character !== '\n') {
-			index += 1
-			continue
-		}
-		lines.push({
-			text: markdown.slice(start, index),
-			segments: [{ offset: 0, start, end: index }],
+	return Iterator.from(markdown.matchAll(/([^\r\n]*)(?:\r\n|\r|\n|$)/g))
+		.filter((match) => match.index < markdown.length || markdown.length === 0)
+		.map((match): MarkdownSource => {
+			const text = match[1] ?? ''
+			return {
+				text,
+				segments: [{ offset: 0, start: match.index, end: match.index + text.length }],
+			}
 		})
-		index += character === '\r' && markdown[index + 1] === '\n' ? 2 : 1
-		start = index
-	}
-	lines.push({
-		text: markdown.slice(start),
-		segments: [{ offset: 0, start, end: markdown.length }],
-	})
-	if (lines.length > 1 && lines[lines.length - 1]?.text === '') lines.pop()
-	return lines
+		.toArray()
 }
 
 /**
@@ -133,33 +122,37 @@ export function splitLines(markdown: string): readonly MarkdownSource[] {
 export function sliceSource(source: MarkdownSource, from: number, to: number): MarkdownSource {
 	const start = Math.max(0, Math.min(from, source.text.length))
 	const end = Math.max(start, Math.min(to, source.text.length))
-	const segments: MarkdownSegment[] = []
-	for (let index = 0; index < source.segments.length; index += 1) {
-		const segment = source.segments[index]
-		if (segment === undefined) continue
-		const next = source.segments[index + 1]
-		const limit = Math.min(
-			segment.offset + (segment.end - segment.start),
-			next === undefined ? source.text.length : next.offset,
-		)
-		const overlapStart = Math.max(start, segment.offset)
-		const overlapEnd = Math.min(end, limit)
-		const empty = segment.offset === limit && overlapStart === segment.offset
-		if (overlapStart >= overlapEnd && !empty) continue
-		const originalStart =
-			overlapStart === limit
-				? segment.end
-				: Math.min(segment.end, segment.start + overlapStart - segment.offset)
-		const originalEnd =
-			overlapEnd === limit
-				? segment.end
-				: Math.min(segment.end, segment.start + overlapEnd - segment.offset)
-		segments.push({
-			offset: overlapStart - start,
-			start: originalStart,
-			end: originalEnd,
+	const segments = source.segments
+		.keys()
+		.flatMap((index): readonly MarkdownSegment[] => {
+			const segment = source.segments[index]
+			if (segment === undefined) return []
+			const next = source.segments[index + 1]
+			const limit = Math.min(
+				segment.offset + (segment.end - segment.start),
+				next === undefined ? source.text.length : next.offset,
+			)
+			const overlapStart = Math.max(start, segment.offset)
+			const overlapEnd = Math.min(end, limit)
+			const empty = segment.offset === limit && overlapStart === segment.offset
+			if (overlapStart >= overlapEnd && !empty) return []
+			const originalStart =
+				overlapStart === limit
+					? segment.end
+					: Math.min(segment.end, segment.start + overlapStart - segment.offset)
+			const originalEnd =
+				overlapEnd === limit
+					? segment.end
+					: Math.min(segment.end, segment.start + overlapEnd - segment.offset)
+			return [
+				{
+					offset: overlapStart - start,
+					start: originalStart,
+					end: originalEnd,
+				},
+			]
 		})
-	}
+		.toArray()
 	return { text: source.text.slice(start, end), segments }
 }
 
@@ -178,11 +171,11 @@ export function sliceSource(source: MarkdownSource, from: number, to: number): M
  * ```
  */
 export function joinSources(sources: readonly MarkdownSource[], separator: string): MarkdownSource {
-	let text = ''
+	const parts: string[] = []
 	const segments: MarkdownSegment[] = []
-	for (let index = 0; index < sources.length; index += 1) {
+	sources.keys().reduce((offset, index) => {
 		const source = sources[index]
-		if (source === undefined) continue
+		if (source === undefined) return offset
 		if (index > 0) {
 			const previous = sources[index - 1]
 			const left = previous?.segments[previous.segments.length - 1]
@@ -193,19 +186,22 @@ export function joinSources(sources: readonly MarkdownSource[], separator: strin
 				right !== undefined &&
 				left.end < right.start
 			)
-				segments.push({ offset: text.length, start: left.end, end: right.start })
-			text += separator
+				segments.push({ offset, start: left.end, end: right.start })
+			parts.push(separator)
 		}
+		const start = offset + (index > 0 ? separator.length : 0)
 		for (const segment of source.segments) {
 			segments.push({
-				offset: text.length + segment.offset,
+				offset: start + segment.offset,
 				start: segment.start,
 				end: segment.end,
 			})
 		}
-		text += source.text
-	}
-	return { text, segments }
+		const text = source.text
+		parts.push(text)
+		return start + text.length
+	}, 0)
+	return { text: parts.join(''), segments }
 }
 
 /**
@@ -229,28 +225,43 @@ export function projectSpan(
 	to: number,
 ): MarkdownSpan | undefined {
 	if (from < 0 || to < from || to > source.text.length) return undefined
-	let start: number | undefined
-	let end: number | undefined
-	for (let index = 0; index < source.segments.length; index += 1) {
-		const segment = source.segments[index]
-		if (segment === undefined) continue
-		const next = source.segments[index + 1]
-		const limit = Math.min(
-			segment.offset + (segment.end - segment.start),
-			next === undefined ? source.text.length : next.offset,
+	const [spanStart, spanEnd] = source.segments
+		.keys()
+		.reduce<readonly [number | undefined, number | undefined, boolean]>(
+			([start, end, found], index) => {
+				if (found) return [start, end, found]
+				const segment = source.segments[index]
+				if (segment === undefined) return [start, end, false]
+				const next = source.segments[index + 1]
+				const limit = Math.min(
+					segment.offset + (segment.end - segment.start),
+					next === undefined ? source.text.length : next.offset,
+				)
+				if (from === to && from >= segment.offset && from <= limit) {
+					if (next !== undefined && from === next.offset) return [start, end, false]
+					const position =
+						from === limit
+							? segment.end
+							: Math.min(segment.end, segment.start + from - segment.offset)
+					return [position, position, true]
+				}
+				return [
+					start === undefined && from >= segment.offset && from < limit
+						? segment.start + from - segment.offset
+						: start,
+					to > segment.offset && to <= limit
+						? to === limit
+							? segment.end
+							: Math.min(segment.end, segment.start + to - segment.offset)
+						: end,
+					false,
+				]
+			},
+			[undefined, undefined, false],
 		)
-		if (from === to && from >= segment.offset && from <= limit) {
-			if (next !== undefined && from === next.offset) continue
-			const position =
-				from === limit ? segment.end : Math.min(segment.end, segment.start + from - segment.offset)
-			return { start: position, end: position }
-		}
-		if (start === undefined && from >= segment.offset && from < limit)
-			start = segment.start + from - segment.offset
-		if (to > segment.offset && to <= limit)
-			end = to === limit ? segment.end : Math.min(segment.end, segment.start + to - segment.offset)
-	}
-	return start === undefined || end === undefined ? undefined : { start, end }
+	return spanStart === undefined || spanEnd === undefined
+		? undefined
+		: { start: spanStart, end: spanEnd }
 }
 
 /**
@@ -310,12 +321,7 @@ export function normalizeParagraphLine(source: MarkdownSource, breaks: boolean):
  * ```
  */
 export function countIndent(line: string): number {
-	let count = 0
-	for (const character of line) {
-		if (character === ' ' || character === '\t') count += 1
-		else break
-	}
-	return count
+	return line.match(/^[ \t]*/)?.[0].length ?? 0
 }
 
 //  Line + character structural predicates
@@ -407,16 +413,10 @@ export function isQuote(line: string): boolean {
  */
 export function isFenceClose(line: string, marker: string): boolean {
 	const character = marker[0] === '~' ? '~' : '`'
-	let index = 0
-	while (index < line.length && isFenceWhitespace(line[index])) index++
-	let run = 0
-	while (index < line.length && line[index] === character) {
-		run++
-		index++
-	}
-	if (run < marker.length) return false
-	while (index < line.length && isFenceWhitespace(line[index])) index++
-	return index === line.length
+	const trimmed = line.replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, '')
+	return (
+		trimmed.length >= marker.length && Iterator.from(trimmed).every((value) => value === character)
+	)
 }
 
 /**
@@ -633,37 +633,31 @@ export function splitTableRow(row: string): readonly string[] {
 export function splitTableSources(row: MarkdownSource): readonly MarkdownSource[] {
 	const source = trimSource(row)
 	const cells: MarkdownSource[] = []
-	let pieces: MarkdownSource[] = []
-	let start = 0
-	for (let index = 0; index < source.text.length; index += 1) {
-		const character = source.text[index]
-		if (character === '\\' && source.text[index + 1] === '|') {
+	const pieces: MarkdownSource[] = []
+	const [tailStart, tailOffset] = Iterator.from(source.text.matchAll(/\\\||\|/g)).reduce<
+		readonly [number, number]
+	>(
+		([start, offset], match) => {
+			const index = match.index
 			pieces.push(sliceSource(source, start, index))
-			const span = projectSpan(source, index, index + 2)
-			pieces.push({
-				text: '|',
-				segments: span === undefined ? [] : [{ offset: 0, start: span.start, end: span.end }],
-			})
-			index += 1
-			start = index + 1
-			continue
-		}
-		if (character !== '|') continue
-		pieces.push(sliceSource(source, start, index))
-		cells.push(joinSources(pieces, ''))
-		pieces = []
-		start = index + 1
-	}
-	pieces.push(sliceSource(source, start, source.text.length))
-	cells.push(joinSources(pieces, ''))
-	if (isNonEmptyArray<MarkdownSource>(cells) && isEmptyString((cells[0]?.text ?? '').trim()))
-		cells.shift()
-	if (
-		isNonEmptyArray<MarkdownSource>(cells) &&
-		isEmptyString((cells[cells.length - 1]?.text ?? '').trim())
+			if (match[0] === '\\|') {
+				const span = projectSpan(source, index, index + 2)
+				pieces.push({
+					text: '|',
+					segments: span === undefined ? [] : [{ offset: 0, start: span.start, end: span.end }],
+				})
+				return [index + 2, offset]
+			}
+			cells.push(joinSources(pieces.slice(offset), ''))
+			return [index + 1, pieces.length]
+		},
+		[0, 0],
 	)
-		cells.pop()
-	return cells
+	pieces.push(sliceSource(source, tailStart, source.text.length))
+	cells.push(joinSources(pieces.slice(tailOffset), ''))
+	const first = isEmptyString((cells[0]?.text ?? '').trim()) ? 1 : 0
+	const end = isEmptyString((cells.at(-1)?.text ?? '').trim()) ? cells.length - 1 : cells.length
+	return cells.slice(first, end)
 }
 
 /**
@@ -736,17 +730,9 @@ export function startsBlock(lines: readonly string[], index: number): boolean {
  * ```
  */
 export function unescapeText(text: string): string {
-	let out = ''
-	for (let index = 0; index < text.length; index += 1) {
-		const character = text[index] ?? ''
-		if (character === '\\' && isEscapable(text[index + 1] ?? '')) {
-			out += text[index + 1] ?? ''
-			index += 1
-		} else {
-			out += character
-		}
-	}
-	return out
+	return text.replace(/\\([\s\S])/g, (match, character: string) =>
+		isEscapable(character) ? character : match,
+	)
 }
 
 /**
@@ -754,7 +740,8 @@ export function unescapeText(text: string): string {
  * unrecognized character, so coalescing keeps the AST clean and assertion-friendly.
  *
  * @param nodes - The inline nodes (possibly with adjacent text runs)
- * @param spans - The optional operation-owned node span recorder
+ * @param spans - The optional operation-owned span memo; inserts merged-node entries
+ *   without deleting or replacing constituent entries
  * @returns The nodes with consecutive text nodes concatenated
  *
  * @example
@@ -767,25 +754,25 @@ export function coalesceText(
 	nodes: readonly InlineNode[],
 	spans?: Map<MarkdownNode, MarkdownSpan>,
 ): readonly InlineNode[] {
-	const out: InlineNode[] = []
-	for (const node of nodes) {
-		const last = out[out.length - 1]
-		if (node.element === 'text' && last !== undefined && last.element === 'text') {
-			const merged: InlineNode = { element: 'text', value: last.value + node.value }
-			const left = spans?.get(last)
-			const right = spans?.get(node)
-			if (spans !== undefined) {
-				spans.delete(last)
-				spans.delete(node)
-				if (left !== undefined && right !== undefined)
-					spans.set(merged, { start: left.start, end: right.end })
+	return splitTextRuns(nodes)
+		.map((run): InlineNode | undefined => {
+			const first = run[0]
+			if (first === undefined || run.length === 1) return first
+			const merged: InlineNode = {
+				element: 'text',
+				value: run
+					.filter(isTextNode)
+					.map((part) => part.value)
+					.join(''),
 			}
-			out[out.length - 1] = merged
-		} else {
-			out.push(node)
-		}
-	}
-	return out
+			const last = run.at(-1)
+			const left = spans?.get(first)
+			const right = last === undefined ? undefined : spans?.get(last)
+			if (left !== undefined && right !== undefined)
+				spans?.set(merged, { start: left.start, end: right.end })
+			return merged
+		})
+		.filter((node) => node !== undefined)
 }
 
 /**
@@ -805,28 +792,30 @@ export function coalesceText(
  * ```
  */
 export function scanCode(source: string, start: number, to: number): CodeSpanMatch | undefined {
-	let run = 0
-	while (start + run < to && source[start + run] === '`') run += 1
+	const run = source[start] === '`' ? countMarkdownRun(source, start, to) : 0
 	const open = '`'.repeat(run)
-	let search = start + run
-	for (;;) {
-		const closeAt = source.indexOf(open, search)
-		if (closeAt === -1 || closeAt + run > to) return undefined
-		// The closer must be exactly `run` backticks (not bordered by another backtick).
-		if (source[closeAt - 1] !== '`' && source[closeAt + run] !== '`') {
-			let value = source.slice(start + run, closeAt)
-			if (
-				value.length > 2 &&
-				value.startsWith(' ') &&
-				value.endsWith(' ') &&
-				value.trim().length > 0
-			) {
-				value = value.slice(1, -1)
+	const attempts = walkMarkdownCharacters(source, 0, source.length + 2)
+	const [, result] = attempts.reduce<readonly [number, CodeSpanMatch | undefined]>(
+		([search]) => {
+			const closeAt = source.indexOf(open, search)
+			if (closeAt === -1 || closeAt + run > to) {
+				attempts.return(undefined)
+				return [search, undefined]
 			}
-			return { value, end: closeAt + run }
-		}
-		search = closeAt + 1
-	}
+			if (source[closeAt - 1] !== '`' && source[closeAt + run] !== '`') {
+				attempts.return(undefined)
+				const raw = source.slice(start + run, closeAt)
+				const value =
+					raw.length > 2 && raw.startsWith(' ') && raw.endsWith(' ') && raw.trim().length > 0
+						? raw.slice(1, -1)
+						: raw
+				return [search, { value, end: closeAt + run }]
+			}
+			return [closeAt + 1, undefined]
+		},
+		[start + run, undefined],
+	)
+	return result
 }
 
 /**
@@ -846,43 +835,10 @@ export function scanCode(source: string, start: number, to: number): CodeSpanMat
  * ```
  */
 export function locateLink(source: string, start: number, to: number): LinkBounds | undefined {
-	let bracketDepth = 0
-	let close = -1
-	for (let index = start; index < to; index += 1) {
-		const character = source[index] ?? ''
-		if (character === '\\') {
-			index += 1
-			continue
-		}
-		if (character === '[') bracketDepth += 1
-		else if (character === ']') {
-			bracketDepth -= 1
-			if (bracketDepth === 0) {
-				close = index
-				break
-			}
-		}
-	}
-	if (close === -1 || source[close + 1] !== '(') return undefined
-	let parenDepth = 0
-	let parenClose = -1
-	for (let index = close + 1; index < to; index += 1) {
-		const character = source[index] ?? ''
-		if (character === '\\') {
-			index += 1
-			continue
-		}
-		if (character === '(') parenDepth += 1
-		else if (character === ')') {
-			parenDepth -= 1
-			if (parenDepth === 0) {
-				parenClose = index
-				break
-			}
-		}
-	}
-	if (parenClose === -1) return undefined
-	return { close, end: parenClose + 1 }
+	const close = locateMarkdownDelimiter(source, start, to, '[', ']')
+	if (close === undefined || source[close + 1] !== '(') return undefined
+	const end = locateMarkdownDelimiter(source, close + 1, to, '(', ')')
+	return end === undefined ? undefined : { close, end: end + 1 }
 }
 
 /**
@@ -943,47 +899,36 @@ export function locateEmphasis(
 	to: number,
 ): EmphasisBounds | undefined {
 	const marker = source[start] ?? ''
-	let run = 0
-	while (start + run < to && source[start + run] === marker && run < 2) run += 1
+	const run = Math.min(2, countMarkdownRun(source, start, to))
 	const strong = run === 2
 	const openEnd = start + run
 	if (openEnd >= to || isFlankingWhitespace(source[openEnd] ?? '')) return undefined
-	let index = openEnd
-	while (index < to) {
-		const character = source[index] ?? ''
-		if (character === '\\') {
-			index += 2
-			continue
-		}
-		if (character === '`') {
-			const span = scanCode(source, index, to)
-			index = span ? span.end : index + 1
-			continue
-		}
-		if ((character === '*' || character === '_') && character !== marker) {
-			const nested = locateEmphasis(source, index, to)
-			if (nested !== undefined) {
-				index = nested.end
-				continue
+	const characters = walkMarkdownCharacters(source, openEnd, to)
+	const [, result] = characters.reduce<readonly [number, EmphasisBounds | undefined]>(
+		([next], [index, character]) => {
+			if (index < next) return [next, undefined]
+			if (character === '\\') return [index + 2, undefined]
+			if (character === '`') {
+				const span = scanCode(source, index, to)
+				return [span ? span.end : index + 1, undefined]
 			}
-		}
-		if (character === marker) {
-			let closeRun = 0
-			while (index + closeRun < to && source[index + closeRun] === marker) closeRun += 1
-			if (closeRun >= run && !isFlankingWhitespace(source[index - 1] ?? '')) {
-				return {
-					strong,
-					open: openEnd,
-					close: index,
-					end: index + run,
+			if ((character === '*' || character === '_') && character !== marker) {
+				const nested = locateEmphasis(source, index, to)
+				if (nested !== undefined) return [nested.end, undefined]
+			}
+			if (character === marker) {
+				const closeRun = countMarkdownRun(source, index, to)
+				if (closeRun >= run && !isFlankingWhitespace(source[index - 1] ?? '')) {
+					characters.return(undefined)
+					return [index + run, { strong, open: openEnd, close: index, end: index + run }]
 				}
+				return [index + closeRun, undefined]
 			}
-			index += closeRun
-			continue
-		}
-		index += 1
-	}
-	return undefined
+			return [index + 1, undefined]
+		},
+		[openEnd, undefined],
+	)
+	return result
 }
 
 /**
@@ -1106,113 +1051,30 @@ export function scanInlineSource(
 			return [node]
 		} else return []
 	const nodes: InlineNode[] = []
-	let index = from
-	let pending = ''
-	let pendingStart = from
-	while (index < to) {
-		const character = source.text[index] ?? ''
-		if (character === '\\' && index + 1 < to && isEscapable(source.text[index + 1] ?? '')) {
-			if (pending.length === 0) pendingStart = index
-			pending += source.text[index + 1] ?? ''
-			index += 2
-			continue
-		}
-		if (character === ' ') {
-			let spaceEnd = index
-			while (spaceEnd < to && source.text[spaceEnd] === ' ') spaceEnd += 1
-			if (spaceEnd - index >= 2 && source.text[spaceEnd] === '\n') {
-				if (pending.length > 0) {
-					const node: InlineNode = { element: 'text', value: pending }
-					const span = projectSpan(source, pendingStart, index)
-					if (span !== undefined) spans.set(node, span)
-					nodes.push(node)
-					pending = ''
-				}
-				const node: InlineNode = { element: 'break' }
-				const span = projectSpan(source, index, spaceEnd + 1)
-				if (span !== undefined) spans.set(node, span)
-				nodes.push(node)
-				index = spaceEnd + 1
-				pendingStart = index
-				continue
+	const parts: string[] = []
+	const [end, pendingStart, partOffset] = walkMarkdownCharacters(source.text, from, to).reduce<
+		readonly [number, number, number]
+	>(
+		([next, start, offset], [index, character]) => {
+			if (index < next) return [next, start, offset]
+			if (character === '\\' && index + 1 < to && isEscapable(source.text[index + 1] ?? '')) {
+				parts.push(source.text[index + 1] ?? '')
+				return [index + 2, start, offset]
 			}
-		}
-		let scanned: InlineNode | undefined
-		let end = index
-		if (character === '`') {
-			const span = scanCode(source.text, index, to)
-			if (span) {
-				scanned = { element: 'codeSpan', value: span.value }
-				end = span.end
+			const scanned = scanMarkdownInline(source, index, to, spans, depth)
+			if (scanned !== undefined) {
+				recordMarkdownText(source, parts.slice(offset).join(''), start, index, spans, nodes)
+				const span = projectSpan(source, index, scanned.end)
+				if (span !== undefined) spans.set(scanned.node, span)
+				nodes.push(scanned.node)
+				return [scanned.end, scanned.end, parts.length]
 			}
-		}
-		if (character === '!' && source.text[index + 1] === '[') {
-			const link = locateLink(source.text, index + 1, to)
-			if (link !== undefined) {
-				scanned = {
-					element: 'image',
-					src: unescapeText(source.text.slice(link.close + 2, link.end - 1).trim()),
-					children: coalesceText(
-						scanInlineSource(source, index + 2, link.close, spans, depth + 1),
-						spans,
-					),
-				}
-				end = link.end
-			}
-		}
-		if (character === '[') {
-			const link = locateLink(source.text, index, to)
-			if (link !== undefined) {
-				scanned = {
-					element: 'link',
-					href: unescapeText(source.text.slice(link.close + 2, link.end - 1).trim()),
-					children: coalesceText(
-						scanInlineSource(source, index + 1, link.close, spans, depth + 1),
-						spans,
-					),
-				}
-				end = link.end
-			}
-		}
-		if (character === '*' || character === '_') {
-			const emphasis = locateEmphasis(source.text, index, to)
-			if (emphasis !== undefined) {
-				scanned = {
-					element: 'emphasis',
-					strong: emphasis.strong,
-					children: coalesceText(
-						scanInlineSource(source, emphasis.open, emphasis.close, spans, depth + 1),
-						spans,
-					),
-				}
-				end = emphasis.end
-			}
-		}
-		if (scanned !== undefined) {
-			if (pending.length > 0) {
-				const node: InlineNode = { element: 'text', value: pending }
-				const span = projectSpan(source, pendingStart, index)
-				if (span !== undefined) spans.set(node, span)
-				nodes.push(node)
-				pending = ''
-			}
-			const span = projectSpan(source, index, end)
-			if (span !== undefined) spans.set(scanned, span)
-			nodes.push(scanned)
-			index = end
-			pendingStart = index
-			continue
-		}
-		if (pending.length === 0) pendingStart = index
-		pending += character
-		index += 1
-	}
-	if (pending.length > 0) {
-		const node: InlineNode = { element: 'text', value: pending }
-		const span = projectSpan(source, pendingStart, index)
-		if (span !== undefined) spans.set(node, span)
-		nodes.push(node)
-	}
+			parts.push(character)
+			return [index + 1, start, offset]
+		},
+		[from, from, 0],
+	)
+	recordMarkdownText(source, parts.slice(partOffset).join(''), pendingStart, end, spans, nodes)
 	return nodes
 }
 
@@ -1242,24 +1104,19 @@ export function collectTable(
 		return coalesceText(scanInlineSource(source, 0, source.text.length, spans), spans)
 	})
 	const align = delimiterToAlignments(lines[start + 1]?.text ?? '')
-	const padded: Array<TableAlign | null> = []
-	for (let column = 0; column < columns; column += 1) padded.push(align[column] ?? null)
-	const rows: Array<Array<readonly InlineNode[]>> = []
-	let index = start + 2
-	while (
-		index < lines.length &&
-		!isBlankLine(lines[index]?.text ?? '') &&
-		(lines[index]?.text ?? '').includes('|')
-	) {
+	const padded = Array.from({ length: columns }, (_, column) => align[column] ?? null)
+	const entries: Array<readonly [number, ReadonlyArray<readonly InlineNode[]>]> = []
+	for (const index of walkMarkdownLines(lines, start + 2)) {
+		if (isBlankLine(lines[index]?.text ?? '') || !(lines[index]?.text ?? '').includes('|')) break
 		const cells = splitTableSources(lines[index] ?? { text: '', segments: [] })
-		const row: Array<readonly InlineNode[]> = []
-		for (let column = 0; column < columns; column += 1) {
+		const row = Array.from({ length: columns }, (_, column) => {
 			const source = trimSource(cells[column] ?? { text: '', segments: [] })
-			row.push(coalesceText(scanInlineSource(source, 0, source.text.length, spans), spans))
-		}
-		rows.push(row)
-		index += 1
+			return coalesceText(scanInlineSource(source, 0, source.text.length, spans), spans)
+		})
+		entries.push([index, row])
 	}
+	const index = entries.length === 0 ? start + 2 : (entries.at(-1)?.[0] ?? start + 1) + 1
+	const rows = entries.map(([, row]) => row)
 	const node: TableNode = { element: 'table', header, rows, align: padded }
 	const source = joinSources(lines.slice(start, index), '\n')
 	const span = projectSpan(source, 0, source.text.length)
@@ -1300,19 +1157,18 @@ export function collectList(
 	// once per level before reaching the cap. Recognize that shape in one pass and
 	// build the same bounded AST bottom-up.
 	const chain: ListItemMatch[] = []
-	let nested = true
-	for (let cursor = start; cursor < lines.length; cursor += 1) {
+	const nested = walkMarkdownLines(lines, start).every((cursor) => {
 		const parsed = extractListItem(text[cursor] ?? '')
 		const previous = chain[chain.length - 1]
 		if (
 			parsed === undefined ||
 			(previous !== undefined && (previous.content.length > 0 || parsed.indent !== previous.marker))
 		) {
-			nested = false
-			break
+			return false
 		}
 		chain.push(parsed)
-	}
+		return true
+	})
 	const remaining = MAX_DEPTH - depth
 	if (nested && remaining > 0 && chain.length > remaining) {
 		const terminal = chain[remaining - 1]
@@ -1321,7 +1177,7 @@ export function collectList(
 			const sources: MarkdownSource[] = [
 				sliceSource(terminalLine, terminal.marker, terminalLine.text.length),
 			]
-			for (let cursor = start + remaining; cursor < lines.length; cursor += 1) {
+			for (const cursor of walkMarkdownLines(lines, start + remaining)) {
 				const line = lines[cursor]
 				if (line !== undefined) sources.push(sliceSource(line, terminal.marker, line.text.length))
 			}
@@ -1333,13 +1189,14 @@ export function collectList(
 				spans.set(textNode, residualSpan)
 				spans.set(paragraph, residualSpan)
 			}
-			let children: readonly BlockNode[] = [paragraph]
-			let node: ListNode | undefined
-			for (let cursor = remaining - 1; cursor >= 0; cursor -= 1) {
+			const levels = Array.from({ length: Math.ceil(remaining) }, (_, step) => step)
+			const node = levels.reduce<ListNode | undefined>((child, step) => {
+				const cursor = remaining - 1 - step
+				const children: readonly BlockNode[] = child === undefined ? [paragraph] : [child]
 				const parsed = chain[cursor]
-				if (parsed === undefined) continue
+				if (parsed === undefined) return child
 				const item: ListItemNode = { element: 'listItem', children }
-				node = {
+				const parent: ListNode = {
 					element: 'list',
 					ordered: parsed.ordered,
 					start: parsed.start,
@@ -1354,64 +1211,76 @@ export function collectList(
 				const span = projectSpan(region, 0, region.text.length)
 				if (span !== undefined) {
 					spans.set(item, span)
-					spans.set(node, span)
+					spans.set(parent, span)
 				}
-				children = [node]
-			}
+				return parent
+			}, undefined)
 			if (node !== undefined) return { node, next: lines.length }
 		}
 	}
-	let index = start
-	while (index < lines.length) {
+	const positions = walkMarkdownLines(lines, start)
+	const finish = positions.reduce((index, position) => {
+		if (position < index) return index
 		const parsed = extractListItem(text[index] ?? '')
 		// A sibling item shares the list's (top) indent + ordering; anything else stops
 		// the top loop (a deeper item is a nested list, gathered as continuation below).
-		if (!parsed || parsed.indent > topIndent || parsed.ordered !== ordered) break
+		if (!parsed || parsed.indent > topIndent || parsed.ordered !== ordered) {
+			positions.return(undefined)
+			return index
+		}
 		const itemStart = index
 		const itemLine = lines[index]
-		if (itemLine === undefined) break
-		const itemLines: MarkdownSource[] = [sliceSource(itemLine, parsed.marker, itemLine.text.length)]
+		if (itemLine === undefined) {
+			positions.return(undefined)
+			return index
+		}
+		const entries: Array<readonly [number, MarkdownSource]> = [
+			[index, sliceSource(itemLine, parsed.marker, itemLine.text.length)],
+		]
 		const continuation = parsed.marker
-		index += 1
-		while (index < lines.length) {
-			const nextSource = lines[index]
+		for (const cursor of walkMarkdownLines(lines, index + 1)) {
+			const nextSource = lines[cursor]
 			if (nextSource === undefined) break
 			const next = nextSource.text
 			if (isBlankLine(next)) {
-				const after = lines[index + 1]?.text ?? ''
-				if (index + 1 < lines.length && !isBlankLine(after) && countIndent(after) >= continuation) {
-					itemLines.push(sliceSource(nextSource, 0, 0))
-					index += 1
+				const after = lines[cursor + 1]?.text ?? ''
+				if (
+					cursor + 1 < lines.length &&
+					!isBlankLine(after) &&
+					countIndent(after) >= continuation
+				) {
+					entries.push([cursor, sliceSource(nextSource, 0, 0)])
 					continue
 				}
 				break
 			}
 			if (countIndent(next) >= continuation) {
-				itemLines.push(sliceSource(nextSource, continuation, next.length))
-				index += 1
+				entries.push([cursor, sliceSource(nextSource, continuation, next.length)])
 				continue
 			}
-			if (extractListItem(next) || startsBlock(text, index)) break
-			itemLines.push(trimSource(nextSource)) // a lazy paragraph-continuation line
-			index += 1
+			if (extractListItem(next) || startsBlock(text, cursor)) break
+			entries.push([cursor, trimSource(nextSource)]) // a lazy paragraph-continuation line
 		}
+		const next = (entries.at(-1)?.[0] ?? index) + 1
+		const itemLines = entries.map(([, line]) => line)
 		const tail = itemLines[itemLines.length - 1]
 		const segment = tail?.segments[tail.segments.length - 1]
-		const itemEnd = index === lines.length && end !== undefined ? end : segment?.end
+		const itemEnd = next === lines.length && end !== undefined ? end : segment?.end
 		const item: ListItemNode = {
 			element: 'listItem',
 			children: parseBlocks(itemLines, depth + 1, spans, itemEnd),
 		}
-		const source = joinSources(lines.slice(itemStart, index), '\n')
+		const source = joinSources(lines.slice(itemStart, next), '\n')
 		const span = projectSpan(source, 0, source.text.length)
 		if (span !== undefined) spans.set(item, span)
 		items.push(item)
-	}
+		return next
+	}, start)
 	const node: ListNode = { element: 'list', ordered, start: startOrdinal, items }
-	const source = joinSources(lines.slice(start, index), '\n')
+	const source = joinSources(lines.slice(start, finish), '\n')
 	const span = projectSpan(source, 0, source.text.length)
 	if (span !== undefined) spans.set(node, span)
-	return { node, next: index }
+	return { node, next: finish }
 }
 
 //  Rendering (Markdown AST → HTML AST → sanitized HTML string)
@@ -1457,7 +1326,8 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 				continue
 			}
 			const children: MarkdownNode[] = []
-			let depth = frame.depth
+			const depth =
+				frame.depth + (current.element === 'document' ? 0 : current.element === 'table' ? 4 : 1)
 			switch (current.element) {
 				case 'document':
 					for (const child of current.children) if (child !== undefined) children.push(child)
@@ -1466,7 +1336,6 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 				case 'paragraph':
 				case 'blockquote':
 					for (const child of current.children) if (child !== undefined) children.push(child)
-					depth += 1
 					break
 				case 'listItem': {
 					const only = current.children[0]
@@ -1475,17 +1344,14 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 					} else {
 						for (const child of current.children) if (child !== undefined) children.push(child)
 					}
-					depth += 1
 					break
 				}
 				case 'emphasis':
 				case 'link':
 					for (const child of current.children) if (child !== undefined) children.push(child)
-					depth += 1
 					break
 				case 'list':
 					for (const child of current.items) if (child !== undefined) children.push(child)
-					depth += 1
 					break
 				case 'table':
 					if (frame.depth + 4 > MAX_DEPTH) {
@@ -1500,7 +1366,6 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 							for (const cell of row)
 								if (cell !== undefined)
 									for (const child of cell) if (child !== undefined) children.push(child)
-					depth += 4
 					break
 			}
 			if (current.element === 'codeBlock' && frame.depth + 2 > MAX_DEPTH) {
@@ -1508,7 +1373,7 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 				continue
 			}
 			stack.push({ ...frame, expanded: true, count: children.length })
-			for (let index = children.length - 1; index >= 0; index -= 1) {
+			for (const index of children.keys().toArray().toReversed()) {
 				const child = children[index]
 				if (child !== undefined) stack.push({ node: child, depth, expanded: false, count: 0 })
 			}
@@ -1516,196 +1381,7 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 		}
 		const children =
 			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
-		const projected: HTMLNode[] = []
-		for (const child of children) if (child !== undefined) projected.push(child)
-		let value: HTMLNode | undefined
-		switch (current.element) {
-			case 'document':
-				value = { category: 'document', children: projected }
-				break
-			case 'heading':
-				value = {
-					category: 'element',
-					name: `h${current.level}`,
-					attributes: [],
-					children: projected,
-				}
-				break
-			case 'paragraph':
-				value = { category: 'element', name: 'p', attributes: [], children: projected }
-				break
-			case 'thematicBreak':
-				value = { category: 'element', name: 'hr', attributes: [], children: [] }
-				break
-			case 'blockquote':
-				value = {
-					category: 'element',
-					name: 'blockquote',
-					attributes: [],
-					children: projected,
-				}
-				break
-			case 'codeBlock':
-				value = {
-					category: 'element',
-					name: 'pre',
-					attributes: [],
-					children: [
-						{
-							category: 'element',
-							name: 'code',
-							attributes:
-								current.lang === undefined
-									? []
-									: [{ name: 'class', value: `language-${current.lang}` }],
-							children: [{ category: 'text', value: current.code }],
-						},
-					],
-				}
-				break
-			case 'list':
-				value = {
-					category: 'element',
-					name: current.ordered ? 'ol' : 'ul',
-					attributes:
-						current.ordered && current.start !== 1
-							? [{ name: 'start', value: String(current.start) }]
-							: [],
-					children: projected,
-				}
-				break
-			case 'listItem':
-				value = { category: 'element', name: 'li', attributes: [], children: projected }
-				break
-			case 'table': {
-				let offset = 0
-				const header: HTMLNode[] = []
-				for (const [column, cell] of current.header.entries()) {
-					if (cell === undefined) continue
-					const align = current.align[column]
-					const attributes =
-						align === 'left' || align === 'right' || align === 'center'
-							? [{ name: 'align', value: align }]
-							: []
-					let count = 0
-					for (const child of cell) if (child !== undefined) count += 1
-					const cellChildren: HTMLNode[] = []
-					for (const child of children.slice(offset, offset + count))
-						if (child !== undefined) cellChildren.push(child)
-					header.push({
-						category: 'element',
-						name: 'th',
-						attributes,
-						children: cellChildren,
-					})
-					offset += count
-				}
-				const rows: HTMLNode[] = []
-				for (const row of current.rows) {
-					const cells: HTMLNode[] = []
-					for (const [column, cell] of row.entries()) {
-						if (cell === undefined) continue
-						const align = current.align[column]
-						const attributes =
-							align === 'left' || align === 'right' || align === 'center'
-								? [{ name: 'align', value: align }]
-								: []
-						let count = 0
-						for (const child of cell) if (child !== undefined) count += 1
-						const cellChildren: HTMLNode[] = []
-						for (const child of children.slice(offset, offset + count))
-							if (child !== undefined) cellChildren.push(child)
-						cells.push({
-							category: 'element',
-							name: 'td',
-							attributes,
-							children: cellChildren,
-						})
-						offset += count
-					}
-					rows.push({
-						category: 'element',
-						name: 'tr',
-						attributes: [],
-						children: cells,
-					})
-				}
-				const tableChildren: HTMLNode[] = [
-					{
-						category: 'element',
-						name: 'thead',
-						attributes: [],
-						children: [
-							{
-								category: 'element',
-								name: 'tr',
-								attributes: [],
-								children: header,
-							},
-						],
-					},
-				]
-				if (isNonEmptyArray(current.rows)) {
-					tableChildren.push({
-						category: 'element',
-						name: 'tbody',
-						attributes: [],
-						children: rows,
-					})
-				}
-				value = {
-					category: 'element',
-					name: 'table',
-					attributes: [],
-					children: tableChildren,
-				}
-				break
-			}
-			case 'text':
-				value = { category: 'text', value: current.value }
-				break
-			case 'emphasis':
-				value = {
-					category: 'element',
-					name: current.strong ? 'strong' : 'em',
-					attributes: [],
-					children: projected,
-				}
-				break
-			case 'codeSpan':
-				value = {
-					category: 'element',
-					name: 'code',
-					attributes: [],
-					children: [{ category: 'text', value: current.value }],
-				}
-				break
-			case 'link':
-				value = {
-					category: 'element',
-					name: 'a',
-					attributes: [{ name: 'href', value: current.href }],
-					children: projected,
-				}
-				break
-			case 'image':
-				value = {
-					category: 'element',
-					name: 'img',
-					attributes: [
-						{ name: 'src', value: current.src },
-						{ name: 'alt', value: flattenText(current) },
-					],
-					children: [],
-				}
-				break
-			case 'break':
-				value = { category: 'element', name: 'br', attributes: [], children: [] }
-				break
-			default:
-				value = undefined
-				break
-		}
+		const value = projectMarkdownNode(current, children)
 		values.push(value)
 	}
 	const projected = values[0]
@@ -1713,6 +1389,193 @@ export function markdownToHTML(node: MarkdownNode): HTMLDocument {
 	return {
 		category: 'document',
 		children: projected === undefined ? [] : [projected],
+	}
+}
+
+/**
+ * Projects one markdown node from its already projected children.
+ *
+ * @example
+ * ```ts
+ * projectMarkdownNode({ element: 'text', value: 'hi' }, []) // { category: 'text', value: 'hi' }
+ * ```
+ */
+export function projectMarkdownNode(
+	current: MarkdownNode,
+	children: ReadonlyArray<HTMLNode | undefined>,
+): HTMLNode | undefined {
+	const projected: HTMLNode[] = []
+	for (const child of children) if (child !== undefined) projected.push(child)
+	switch (current.element) {
+		case 'document':
+			return { category: 'document', children: projected }
+		case 'heading':
+			return {
+				category: 'element',
+				name: `h${current.level}`,
+				attributes: [],
+				children: projected,
+			}
+		case 'paragraph':
+			return { category: 'element', name: 'p', attributes: [], children: projected }
+		case 'thematicBreak':
+			return { category: 'element', name: 'hr', attributes: [], children: [] }
+		case 'blockquote':
+			return {
+				category: 'element',
+				name: 'blockquote',
+				attributes: [],
+				children: projected,
+			}
+		case 'codeBlock':
+			return {
+				category: 'element',
+				name: 'pre',
+				attributes: [],
+				children: [
+					{
+						category: 'element',
+						name: 'code',
+						attributes:
+							current.lang === undefined
+								? []
+								: [{ name: 'class', value: `language-${current.lang}` }],
+						children: [{ category: 'text', value: current.code }],
+					},
+				],
+			}
+		case 'list':
+			return {
+				category: 'element',
+				name: current.ordered ? 'ol' : 'ul',
+				attributes:
+					current.ordered && current.start !== 1
+						? [{ name: 'start', value: String(current.start) }]
+						: [],
+				children: projected,
+			}
+		case 'listItem':
+			return { category: 'element', name: 'li', attributes: [], children: projected }
+		case 'table': {
+			const outputs = children.values()
+			const header: HTMLNode[] = []
+			for (const [column, cell] of current.header.entries()) {
+				if (cell === undefined) continue
+				const align = current.align[column]
+				const attributes =
+					align === 'left' || align === 'right' || align === 'center'
+						? [{ name: 'align', value: align }]
+						: []
+				const count = Iterator.from(cell)
+					.filter((child) => child !== undefined)
+					.reduce((sum) => sum + 1, 0)
+				const cellChildren: HTMLNode[] = []
+				for (const child of outputs.take(count).toArray())
+					if (child !== undefined) cellChildren.push(child)
+				header.push({
+					category: 'element',
+					name: 'th',
+					attributes,
+					children: cellChildren,
+				})
+			}
+			const rows: HTMLNode[] = []
+			for (const row of current.rows) {
+				const cells: HTMLNode[] = []
+				for (const [column, cell] of row.entries()) {
+					if (cell === undefined) continue
+					const align = current.align[column]
+					const attributes =
+						align === 'left' || align === 'right' || align === 'center'
+							? [{ name: 'align', value: align }]
+							: []
+					const count = Iterator.from(cell)
+						.filter((child) => child !== undefined)
+						.reduce((sum) => sum + 1, 0)
+					const cellChildren: HTMLNode[] = []
+					for (const child of outputs.take(count).toArray())
+						if (child !== undefined) cellChildren.push(child)
+					cells.push({
+						category: 'element',
+						name: 'td',
+						attributes,
+						children: cellChildren,
+					})
+				}
+				rows.push({
+					category: 'element',
+					name: 'tr',
+					attributes: [],
+					children: cells,
+				})
+			}
+			const tableChildren: HTMLNode[] = [
+				{
+					category: 'element',
+					name: 'thead',
+					attributes: [],
+					children: [
+						{
+							category: 'element',
+							name: 'tr',
+							attributes: [],
+							children: header,
+						},
+					],
+				},
+			]
+			if (isNonEmptyArray(current.rows)) {
+				tableChildren.push({
+					category: 'element',
+					name: 'tbody',
+					attributes: [],
+					children: rows,
+				})
+			}
+			return {
+				category: 'element',
+				name: 'table',
+				attributes: [],
+				children: tableChildren,
+			}
+		}
+		case 'text':
+			return { category: 'text', value: current.value }
+		case 'emphasis':
+			return {
+				category: 'element',
+				name: current.strong ? 'strong' : 'em',
+				attributes: [],
+				children: projected,
+			}
+		case 'codeSpan':
+			return {
+				category: 'element',
+				name: 'code',
+				attributes: [],
+				children: [{ category: 'text', value: current.value }],
+			}
+		case 'link':
+			return {
+				category: 'element',
+				name: 'a',
+				attributes: [{ name: 'href', value: current.href }],
+				children: projected,
+			}
+		case 'image':
+			return {
+				category: 'element',
+				name: 'img',
+				attributes: [
+					{ name: 'src', value: current.src },
+					{ name: 'alt', value: flattenText(current) },
+				],
+				children: [],
+			}
+		case 'break':
+			return { category: 'element', name: 'br', attributes: [], children: [] }
+		default:
+			return undefined
 	}
 }
 
@@ -1753,7 +1616,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 		readonly count: number
 		readonly escaped: string
 		readonly escapeBang: boolean
-		readonly nesting: number
+		readonly emphasis: number
 	}> = [
 		{
 			node,
@@ -1762,7 +1625,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 			count: 0,
 			escaped: '',
 			escapeBang: false,
-			nesting: 0,
+			emphasis: 0,
 		},
 	]
 	const values: string[] = []
@@ -1771,76 +1634,19 @@ export function renderMarkdown(node: MarkdownNode): string {
 		if (frame === undefined) continue
 		const current = frame.node
 		if (!frame.expanded) {
-			let escaped = ''
-			if (
+			const escaped =
 				(frame.depth >= MAX_DEPTH || current.element === 'text') &&
 				'value' in current &&
 				isString(current.value)
-			) {
-				for (let index = 0; index < current.value.length; index += 1) {
-					const character = current.value[index] ?? ''
-					const atLineStart = index === 0 || current.value[index - 1] === '\n'
-					if (
-						current.element === 'text' &&
-						character === '!' &&
-						index === current.value.length - 1 &&
-						frame.escapeBang
-					) {
-						escaped += '\\!'
-						continue
-					}
-					if (
-						character === '\\' ||
-						character === '*' ||
-						character === '_' ||
-						character === '`' ||
-						character === '[' ||
-						character === ']'
-					) {
-						escaped += `\\${character}`
-						continue
-					}
-					if (atLineStart) {
-						if (character === '#' || character === '>') {
-							escaped += `\\${character}`
-							continue
-						}
-						if (
-							(character === '-' || character === '~') &&
-							current.value[index + 1] === character &&
-							current.value[index + 2] === character
-						) {
-							escaped += `\\${character}`
-							continue
-						}
-						if (
-							(character === '-' || character === '+') &&
-							(current.value[index + 1] ?? ' ') === ' '
-						) {
-							escaped += `\\${character}`
-							continue
-						}
-						if (/[0-9]/.test(character)) {
-							let end = index
-							while (end < current.value.length && /[0-9]/.test(current.value[end] ?? '')) end += 1
-							const marker = current.value[end]
-							if ((marker === '.' || marker === ')') && current.value[end + 1] === ' ') {
-								escaped += `${current.value.slice(index, end)}\\${marker}`
-								index = end
-								continue
-							}
-						}
-					}
-					escaped += character
-				}
-			}
+					? escapeMarkdownText(current.value, current.element === 'text' && frame.escapeBang)
+					: ''
 			if (frame.depth >= MAX_DEPTH) {
 				values.push(escaped)
 				continue
 			}
 			const groups: Array<readonly MarkdownNode[]> = []
 			const adjacent: boolean[] = []
-			let depth = frame.depth + 1
+			const depth = frame.depth + (current.element === 'table' ? 2 : 1)
 			switch (current.element) {
 				case 'document':
 				case 'blockquote':
@@ -1868,7 +1674,7 @@ export function renderMarkdown(node: MarkdownNode): string {
 						}
 					for (const row of current.rows) {
 						if (row === undefined) continue
-						for (let column = 0; column < current.header.length; column += 1) {
+						for (const column of current.header.keys()) {
 							const cell = row[column]
 							if (cell !== undefined) {
 								groups.push(cell)
@@ -1876,34 +1682,26 @@ export function renderMarkdown(node: MarkdownNode): string {
 							}
 						}
 					}
-					depth += 1
 					break
 			}
 			const children: MarkdownNode[] = []
 			const escapeBangs: boolean[] = []
-			for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+			for (const groupIndex of groups.keys()) {
 				const group = groups[groupIndex]
 				if (group === undefined) continue
-				for (let position = 0; position < group.length; position += 1) {
+				for (const position of group.keys()) {
 					const child = group[position]
 					if (child === undefined) continue
-					let escapeBang = false
-					if (adjacent[groupIndex] === true) {
-						let nextPosition = position + 1
-						let next = group[nextPosition]
-						while (next === undefined && nextPosition < group.length) {
-							nextPosition += 1
-							next = group[nextPosition]
-						}
-						escapeBang = next?.element === 'link'
-					}
+					const following =
+						adjacent[groupIndex] === true ? findFollowingNode(group, position + 1) : undefined
+					const escapeBang = following?.element === 'link'
 					children.push(child)
 					escapeBangs.push(escapeBang)
 				}
 			}
 			stack.push({ ...frame, expanded: true, count: children.length, escaped })
-			const nesting = current.element === 'emphasis' ? frame.nesting + 1 : frame.nesting
-			for (let index = children.length - 1; index >= 0; index -= 1) {
+			const emphasis = current.element === 'emphasis' ? frame.emphasis + 1 : frame.emphasis
+			for (const index of children.keys().toArray().toReversed()) {
 				const child = children[index]
 				if (child !== undefined)
 					stack.push({
@@ -1913,169 +1711,153 @@ export function renderMarkdown(node: MarkdownNode): string {
 						count: 0,
 						escaped: '',
 						escapeBang: escapeBangs[index] === true && depth < MAX_DEPTH,
-						nesting,
+						emphasis,
 					})
 			}
 			continue
 		}
 		const children =
 			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
-		let value = ''
-		switch (current.element) {
-			case 'codeBlock':
-			case 'codeSpan': {
-				const body = current.element === 'codeBlock' ? current.code : current.value
-				let longest = 0
-				let run = 0
-				for (const character of body) {
-					if (character === '`') {
-						run += 1
-						longest = Math.max(longest, run)
-					} else {
-						run = 0
-					}
-				}
-				const fence = '`'.repeat(Math.max(current.element === 'codeBlock' ? 3 : 1, longest + 1))
-				if (current.element === 'codeBlock') {
-					const lang = current.lang === undefined ? '' : current.lang
-					value = `${fence}${lang}\n${current.code}\n${fence}`
-					break
-				}
-				const pad = current.value.startsWith('`') || current.value.endsWith('`') ? ' ' : ''
-				value = `${fence}${pad}${current.value}${pad}${fence}`
-				break
-			}
-			case 'break':
-				value = '  \n'
-				break
-			case 'document':
-				value = children.join('\n\n')
-				break
-			case 'heading': {
-				const text = children.join('')
-				const escaped = text.replace(/(^|[^\\])(#+)$/, (_match, before: string, hashes: string) => {
-					const first = hashes[0] ?? ''
-					return `${before}\\${first}${hashes.slice(1)}`
-				})
-				value = `${'#'.repeat(current.level)} ${escaped}`
-				break
-			}
-			case 'paragraph':
-				value = children.join('')
-				break
-			case 'thematicBreak':
-				value = '---'
-				break
-			case 'blockquote':
-				value = children
-					.join('\n\n')
-					.split('\n')
-					.map((line) => (line === '' ? '>' : `> ${line}`))
-					.join('\n')
-				break
-			case 'list': {
-				const items: string[] = []
-				let ordinal = current.start
-				for (const [position, body] of children.entries()) {
-					const marker = current.ordered ? `${ordinal}. ` : '- '
-					ordinal += 1
-					const pad = ' '.repeat(marker.length)
-					if (current.items[position]?.children[0]?.element === 'table') {
-						items.push(
-							`${marker}\n${body
-								.split('\n')
-								.map((line) => pad + line)
-								.join('\n')}`,
-						)
-						continue
-					}
-					items.push(
-						body
-							.split('\n')
-							.map((line, index) => (index === 0 ? marker + line : line === '' ? '' : pad + line))
-							.join('\n'),
-					)
-				}
-				value = items.join('\n')
-				break
-			}
-			case 'listItem':
-				value = children.join('\n\n')
-				break
-			case 'table': {
-				let offset = 0
-				const header: string[] = []
-				for (const cell of current.header) {
-					if (cell === undefined) {
-						header.push('')
-						continue
-					}
-					let count = 0
-					for (const child of cell) if (child !== undefined) count += 1
-					header.push(
-						children
-							.slice(offset, offset + count)
-							.join('')
-							.replace(/\|/g, '\\|'),
-					)
-					offset += count
-				}
-				const delimiter = current.align.map((align) => {
-					if (align === null) return '---'
-					if (align === 'left') return ':---'
-					if (align === 'right') return '---:'
-					if (align === 'center') return ':---:'
-					return '---'
-				})
-				const rows: string[] = []
-				for (const row of current.rows) {
-					const cells: string[] = []
-					for (let column = 0; column < current.header.length; column += 1) {
-						const cell = row[column]
-						if (cell === undefined) {
-							cells.push('')
-							continue
-						}
-						let count = 0
-						for (const child of cell) if (child !== undefined) count += 1
-						cells.push(
-							children
-								.slice(offset, offset + count)
-								.join('')
-								.replace(/\|/g, '\\|'),
-						)
-						offset += count
-					}
-					rows.push(`| ${cells.join(' | ')} |`)
-				}
-				value = [`| ${header.join(' | ')} |`, `| ${delimiter.join(' | ')} |`, ...rows].join('\n')
-				break
-			}
-			case 'text':
-				value = frame.escaped
-				break
-			case 'emphasis': {
-				const marker =
-					frame.nesting % 2 === 0 ? (current.strong ? '**' : '*') : current.strong ? '__' : '_'
-				value = `${marker}${children.join('')}${marker}`
-				break
-			}
-			case 'link':
-			case 'image': {
-				const destination = current.element === 'link' ? current.href : current.src
-				const escaped = destination.replace(/[\\()]/g, (character) => `\\${character}`)
-				const prefix = current.element === 'image' ? '!' : ''
-				value = `${prefix}[${children.join('')}](${escaped})`
-				break
-			}
-			default:
-				value = ''
-				break
-		}
+		const value = renderMarkdownNode(current, children, frame.escaped, frame.emphasis)
 		if (stack.length === 0) return value
 		values.push(value)
 	}
 	return ''
+}
+
+/**
+ * Renders one markdown node from its rendered children and escaped literal text.
+ *
+ * @example
+ * ```ts
+ * renderMarkdownNode({ element: 'thematicBreak' }, [], '', 0) // '---'
+ * ```
+ */
+export function renderMarkdownNode(
+	current: MarkdownNode,
+	children: readonly string[],
+	literal: string,
+	emphasis: number,
+): string {
+	switch (current.element) {
+		case 'codeBlock':
+		case 'codeSpan': {
+			const body = current.element === 'codeBlock' ? current.code : current.value
+			const longest = Iterator.from(body.matchAll(/`+/g)).reduce(
+				(maximum, match) => Math.max(maximum, match[0].length),
+				0,
+			)
+			const fence = '`'.repeat(Math.max(current.element === 'codeBlock' ? 3 : 1, longest + 1))
+			if (current.element === 'codeBlock') {
+				const lang = current.lang === undefined ? '' : current.lang
+				return `${fence}${lang}\n${current.code}\n${fence}`
+			}
+			const pad = current.value.startsWith('`') || current.value.endsWith('`') ? ' ' : ''
+			return `${fence}${pad}${current.value}${pad}${fence}`
+		}
+		case 'break':
+			return '  \n'
+		case 'document':
+			return children.join('\n\n')
+		case 'heading': {
+			const text = children.join('')
+			const escaped = text.replace(/(^|[^\\])(#+)$/, (_match, before: string, hashes: string) => {
+				const first = hashes[0] ?? ''
+				return `${before}\\${first}${hashes.slice(1)}`
+			})
+			return `${'#'.repeat(current.level)} ${escaped}`
+		}
+		case 'paragraph':
+			return children.join('')
+		case 'thematicBreak':
+			return '---'
+		case 'blockquote':
+			return children
+				.join('\n\n')
+				.split('\n')
+				.map((line) => (line === '' ? '>' : `> ${line}`))
+				.join('\n')
+		case 'list': {
+			const items: string[] = []
+			children.entries().reduce((ordinal, [position, body]) => {
+				const marker = current.ordered ? `${ordinal}. ` : '- '
+				const pad = ' '.repeat(marker.length)
+				if (current.items[position]?.children[0]?.element === 'table') {
+					items.push(
+						`${marker}\n${body
+							.split('\n')
+							.map((line) => pad + line)
+							.join('\n')}`,
+					)
+					return ordinal + 1
+				}
+				items.push(
+					body
+						.split('\n')
+						.map((line, index) => (index === 0 ? marker + line : line === '' ? '' : pad + line))
+						.join('\n'),
+				)
+				return ordinal + 1
+			}, current.start)
+			return items.join('\n')
+		}
+		case 'listItem':
+			return children.join('\n\n')
+		case 'table': {
+			const outputs = children.values()
+			const header: string[] = []
+			for (const cell of current.header) {
+				if (cell === undefined) {
+					header.push('')
+					continue
+				}
+				const count = Iterator.from(cell)
+					.filter((child) => child !== undefined)
+					.reduce((sum) => sum + 1, 0)
+				header.push(outputs.take(count).toArray().join('').replace(/\|/g, '\\|'))
+			}
+			const delimiter = current.align.map((align) => {
+				if (align === null) return '---'
+				if (align === 'left') return ':---'
+				if (align === 'right') return '---:'
+				if (align === 'center') return ':---:'
+				return '---'
+			})
+			const rows: string[] = []
+			for (const row of current.rows) {
+				const cells: string[] = []
+				for (const column of current.header.keys()) {
+					const cell = row[column]
+					if (cell === undefined) {
+						cells.push('')
+						continue
+					}
+					const count = Iterator.from(cell)
+						.filter((child) => child !== undefined)
+						.reduce((sum) => sum + 1, 0)
+					cells.push(outputs.take(count).toArray().join('').replace(/\|/g, '\\|'))
+				}
+				rows.push(`| ${cells.join(' | ')} |`)
+			}
+			return [`| ${header.join(' | ')} |`, `| ${delimiter.join(' | ')} |`, ...rows].join('\n')
+		}
+		case 'text':
+			return literal
+		case 'emphasis': {
+			const marker =
+				emphasis % 2 === 0 ? (current.strong ? '**' : '*') : current.strong ? '__' : '_'
+			return `${marker}${children.join('')}${marker}`
+		}
+		case 'link':
+		case 'image': {
+			const destination = current.element === 'link' ? current.href : current.src
+			const escaped = destination.replace(/[\\()]/g, (character) => `\\${character}`)
+			const prefix = current.element === 'image' ? '!' : ''
+			return `${prefix}[${children.join('')}](${escaped})`
+		}
+		default:
+			return ''
+	}
 }
 
 //  Projection (HTML AST → Markdown AST)
@@ -2144,21 +1926,7 @@ export function createProjection(parts: Partial<MarkdownProjection> = {}): Markd
  * ```
  */
 export function trimInlines(nodes: readonly InlineNode[]): readonly InlineNode[] {
-	const out: InlineNode[] = []
-	for (const node of nodes) if (node !== undefined) out.push(node)
-	const first = out[0]
-	if (first !== undefined && first.element === 'text') {
-		const value = first.value.replace(/^\s+/, '')
-		if (isEmptyString(value)) out.shift()
-		else out[0] = { element: 'text', value }
-	}
-	const last = out[out.length - 1]
-	if (last !== undefined && last.element === 'text') {
-		const value = last.value.replace(/\s+$/, '')
-		if (isEmptyString(value)) out.pop()
-		else out[out.length - 1] = { element: 'text', value }
-	}
-	return out
+	return trimTrailing(trimLeading(nodes))
 }
 
 /**
@@ -2189,36 +1957,34 @@ export function normalizeInlines(
 	nodes: readonly InlineNode[],
 	breaks: boolean,
 ): readonly InlineNode[] {
-	const spent: InlineNode[] = []
-	for (const node of nodes) {
-		if (node === undefined) continue
-		if (node.element === 'break' && !breaks) spent.push({ element: 'text', value: ' ' })
-		else spent.push(node)
-	}
-	const out: InlineNode[] = []
-	for (const node of coalesceText(spent)) {
-		if (node === undefined) continue
-		const previous = out[out.length - 1]
-		if (node.element === 'text') {
-			const value = previous?.element === 'break' ? node.value.replace(/^\s+/, '') : node.value
-			if (!isEmptyString(value)) out.push({ element: 'text', value })
-			continue
-		}
-		if (node.element === 'break') {
-			if (previous === undefined || previous.element === 'break') continue
-			if (previous.element === 'text') {
-				const value = previous.value.replace(/\s+$/, '')
-				if (isEmptyString(value)) out.pop()
-				else out[out.length - 1] = { element: 'text', value }
-			}
-			if (out.length === 0) continue
-			out.push(node)
-			continue
-		}
-		out.push(node)
-	}
-	while (out.length > 0 && out[out.length - 1]?.element === 'break') out.pop()
-	return coalesceText(out)
+	const spent = coalesceText(
+		Iterator.from(nodes)
+			.filter((node) => node !== undefined)
+			.map((node): InlineNode =>
+				node.element === 'break' && !breaks ? { element: 'text', value: ' ' } : node,
+			)
+			.toArray(),
+	)
+	const starts = [
+		0,
+		...spent.entries().flatMap(([index, node]) => (node.element === 'break' ? [index + 1] : [])),
+	]
+	const segments = starts.map((start, index) => {
+		const end = starts[index + 1]
+		const segment = spent
+			.slice(start, end === undefined ? spent.length : end - 1)
+			.filter((node) => node.element !== 'text' || !isEmptyString(node.value))
+		return index < starts.length - 1 ? trimTrailing(segment) : segment
+	})
+	const first = segments.findIndex((segment) => segment.length > 0)
+	const kept = segments
+		.map((segment, index) => (index > first ? trimLeading(segment) : segment))
+		.filter((segment) => segment.length > 0)
+	return coalesceText(
+		kept.flatMap((segment, index): readonly InlineNode[] =>
+			index === 0 ? segment : [{ element: 'break' }, ...segment],
+		),
+	)
 }
 
 /**
@@ -2249,51 +2015,65 @@ export function normalizeInlines(
  */
 export function mergeProjections(children: readonly MarkdownProjection[]): MarkdownProjection {
 	const blocks: BlockNode[] = []
-	const cells: MarkdownCell[] = []
-	const rows: Array<readonly MarkdownCell[]> = []
-	let pending: InlineNode[] = []
-	let text = ''
-	for (const child of children) {
-		if (child === undefined) continue
-		text += child.text
-		if (isNonEmptyArray(child.blocks)) {
-			const flushed = trimInlines(normalizeInlines(pending, true))
-			if (isNonEmptyArray(flushed)) blocks.push({ element: 'paragraph', children: flushed })
-			pending = []
-			for (const row of rows) {
-				for (const cell of row) {
+	const text: string[] = []
+	const [tail, remainingCells, remainingRows] = Iterator.from(children).reduce<
+		readonly [
+			readonly InlineNode[],
+			readonly MarkdownCell[],
+			ReadonlyArray<readonly MarkdownCell[]>,
+		]
+	>(
+		([pending, cells, rows], child) => {
+			if (child === undefined) return [pending, cells, rows]
+			text.push(child.text)
+			if (isNonEmptyArray(child.blocks)) {
+				const flushed = trimInlines(normalizeInlines(pending, true))
+				if (isNonEmptyArray(flushed)) blocks.push({ element: 'paragraph', children: flushed })
+				for (const row of rows)
+					for (const cell of row)
+						if (cell !== undefined && isNonEmptyArray(cell.inlines))
+							blocks.push({ element: 'paragraph', children: cell.inlines })
+				for (const cell of cells)
 					if (cell !== undefined && isNonEmptyArray(cell.inlines))
 						blocks.push({ element: 'paragraph', children: cell.inlines })
-				}
+				for (const block of projectionToBlocks(child)) blocks.push(block)
+				return [[], [], []]
 			}
-			rows.length = 0
-			for (const cell of cells) {
-				if (cell !== undefined && isNonEmptyArray(cell.inlines))
-					blocks.push({ element: 'paragraph', children: cell.inlines })
-			}
-			cells.length = 0
-			for (const block of projectionToBlocks(child)) blocks.push(block)
-			continue
-		}
-		if (isNonEmptyArray(child.rows)) {
-			if (isNonEmptyArray(cells)) {
-				rows.push([...cells])
-				cells.length = 0
-			}
-			for (const row of child.rows) if (row !== undefined) rows.push(row)
-		}
-		for (const cell of child.cells) if (cell !== undefined) cells.push(cell)
-		for (const inline of child.inlines) if (inline !== undefined) pending.push(inline)
-	}
-	if (isNonEmptyArray(rows) && isNonEmptyArray(cells)) {
-		rows.push([...cells])
-		cells.length = 0
-	}
+			const rowed = isNonEmptyArray<readonly MarkdownCell[]>(child.rows)
+			const nextRows = rowed
+				? [
+						...rows,
+						...(isNonEmptyArray<MarkdownCell>(cells) ? [[...cells]] : []),
+						...Iterator.from(child.rows).filter((row) => row !== undefined),
+					]
+				: rows
+			const nextCells = [
+				...(rowed ? [] : cells),
+				...Iterator.from(child.cells).filter((cell) => cell !== undefined),
+			]
+			const nextPending = [
+				...pending,
+				...Iterator.from(child.inlines).filter((inline) => inline !== undefined),
+			]
+			return [nextPending, nextCells, nextRows]
+		},
+		[[], [], []],
+	)
+	const rowed =
+		isNonEmptyArray<readonly MarkdownCell[]>(remainingRows) &&
+		isNonEmptyArray<MarkdownCell>(remainingCells)
+	const finalRows = rowed ? [...remainingRows, [...remainingCells]] : remainingRows
+	const finalCells = rowed ? [] : remainingCells
 	if (!isNonEmptyArray(blocks))
-		return createProjection({ inlines: coalesceText(pending), text, cells, rows })
-	const flushed = trimInlines(normalizeInlines(pending, true))
+		return createProjection({
+			inlines: coalesceText(tail),
+			text: text.join(''),
+			cells: finalCells,
+			rows: finalRows,
+		})
+	const flushed = trimInlines(normalizeInlines(tail, true))
 	if (isNonEmptyArray(flushed)) blocks.push({ element: 'paragraph', children: flushed })
-	return createProjection({ blocks, text, cells, rows })
+	return createProjection({ blocks, text: text.join(''), cells: finalCells, rows: finalRows })
 }
 
 /**
@@ -2506,21 +2286,18 @@ export function projectHTMLNode(
 			})
 		}
 		case 'pre': {
-			let position = -1
-			for (const [index, child] of node.children.entries()) {
-				if (child?.category !== 'element') continue
-				position = index
-				break
-			}
-			const source = position === -1 ? undefined : node.children[position]
-			const projected = position === -1 ? undefined : children[position]
+			const position = node.children
+				.entries()
+				.find(([, child]) => child?.category === 'element')?.[0]
+			const source = position === undefined ? undefined : node.children[position]
+			const projected = position === undefined ? undefined : children[position]
 			if (source?.category === 'element' && source.name === 'code' && projected !== undefined) {
-				let lang: string | undefined
-				for (const token of (attributeOf(source, 'class') ?? '').split(/\s+/)) {
-					if (!token.startsWith('language-') || token.length <= 9 || token.includes('`')) continue
-					lang = token.slice(9)
-					break
-				}
+				const lang = (attributeOf(source, 'class') ?? '')
+					.split(/\s+/)
+					.find(
+						(token) => token.startsWith('language-') && token.length > 9 && !token.includes('`'),
+					)
+					?.slice(9)
 				return createProjection({
 					blocks: [
 						{
@@ -2627,35 +2404,35 @@ export function projectHTMLNode(
 			const headings: boolean[] = []
 			const rowed: boolean[] = []
 			const sources: Array<{
-				children: readonly HTMLNode[]
-				index: number
-				direct: boolean
+				readonly children: readonly HTMLNode[]
+				readonly index: number
+				readonly direct: boolean
 			}> = [{ children: node.children, index: 0, direct: false }]
 			while (sources.length > 0) {
 				const source = sources.pop()
 				if (source === undefined) continue
 				if (source.index >= source.children.length) continue
 				const child = source.children[source.index]
-				source.index += 1
-				sources.push(source)
+				sources.push({
+					...source,
+					index: source.index + 1,
+					direct:
+						child?.category === 'element'
+							? child.name === 'th' || child.name === 'td'
+							: source.direct,
+				})
 				if (child?.category !== 'element') continue
 				if (child.name === 'th' || child.name === 'td') {
 					if (!source.direct) {
 						headings.push(false)
 						rowed.push(false)
 					}
-					source.direct = true
 					continue
 				}
-				source.direct = false
 				if (child.name === 'tr') {
-					let heading = false
-					for (const cell of child.children) {
-						if (cell?.category === 'element' && cell.name === 'th') {
-							heading = true
-							break
-						}
-					}
+					const heading = Iterator.from(child.children).some(
+						(cell) => cell?.category === 'element' && cell.name === 'th',
+					)
 					headings.push(heading)
 					rowed.push(true)
 					continue
@@ -2664,19 +2441,9 @@ export function projectHTMLNode(
 			}
 			// The header is the first structurally th-bearing row, then the first explicit
 			// row; a table made only of direct cells receives an empty synthetic header.
-			let position: number | undefined
-			for (const [index, heading] of headings.entries()) {
-				if (!heading) continue
-				position = index
-				break
-			}
-			if (position === undefined) {
-				for (const [index, structural] of rowed.entries()) {
-					if (!structural) continue
-					position = index
-					break
-				}
-			}
+			const position =
+				headings.entries().find(([, heading]) => heading)?.[0] ??
+				rowed.entries().find(([, structural]) => structural)?.[0]
 			const headerRow = position === undefined ? undefined : rows[position]
 			const columns = headerRow?.length ?? rows[0]?.length ?? 0
 			if (columns === 0) {
@@ -2685,19 +2452,14 @@ export function projectHTMLNode(
 					text: merged.text,
 				})
 			}
-			const header: Array<readonly InlineNode[]> = []
-			const align: Array<TableAlign | null> = []
-			for (let column = 0; column < columns; column += 1) {
-				const cell = headerRow?.[column]
-				header.push(cell?.inlines ?? [])
-				align.push(cell?.align ?? null)
-			}
+			const headerCells = Array.from({ length: columns }, (_, column) => headerRow?.[column])
+			const header = headerCells.map((cell) => cell?.inlines ?? [])
+			const align = headerCells.map((cell) => cell?.align ?? null)
 			const body: Array<ReadonlyArray<readonly InlineNode[]>> = []
 			for (const [index, row] of rows.entries()) {
 				if (row === undefined || index === position) continue
 				const cells: Array<readonly InlineNode[]> = []
-				for (let column = 0; column < header.length; column += 1)
-					cells.push(row[column]?.inlines ?? [])
+				for (const column of header.keys()) cells.push(row[column]?.inlines ?? [])
 				body.push(cells)
 			}
 			return createProjection({
@@ -2794,33 +2556,8 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
 		if (frame === undefined) continue
 		yield frame.node
 		if (frame.depth >= MAX_DEPTH) continue
-		const children: MarkdownNode[] = []
-		switch (frame.node.element) {
-			case 'document':
-			case 'heading':
-			case 'paragraph':
-			case 'blockquote':
-			case 'listItem':
-			case 'emphasis':
-			case 'link':
-			case 'image':
-				for (const child of frame.node.children) if (child !== undefined) children.push(child)
-				break
-			case 'list':
-				for (const child of frame.node.items) if (child !== undefined) children.push(child)
-				break
-			case 'table':
-				for (const cell of frame.node.header)
-					if (cell !== undefined)
-						for (const child of cell) if (child !== undefined) children.push(child)
-				for (const row of frame.node.rows)
-					if (row !== undefined)
-						for (const cell of row)
-							if (cell !== undefined)
-								for (const child of cell) if (child !== undefined) children.push(child)
-				break
-		}
-		for (let index = children.length - 1; index >= 0; index -= 1) {
+		const children = listChildren(frame.node)
+		for (const index of children.keys().toArray().toReversed()) {
 			const child = children[index]
 			if (child !== undefined) stack.push({ node: child, depth: frame.depth + 1 })
 		}
@@ -2899,7 +2636,7 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlerMap<T>,
 				}
 			}
 			stack.push({ ...frame, expanded: true, count: children.length })
-			for (let index = children.length - 1; index >= 0; index -= 1) {
+			for (const index of children.keys().toArray().toReversed()) {
 				const child = children[index]
 				if (child !== undefined) {
 					stack.push({
@@ -2914,88 +2651,57 @@ export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlerMap<T>,
 		}
 		const children =
 			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
-		let value: T
-		switch (frame.node.element) {
-			case 'document':
-				value = handlers.document(frame.node, children)
-				break
-			case 'heading':
-				value = handlers.heading(frame.node, children)
-				break
-			case 'paragraph':
-				value = handlers.paragraph(frame.node, children)
-				break
-			case 'thematicBreak':
-				value = handlers.thematicBreak(frame.node, children)
-				break
-			case 'blockquote':
-				value = handlers.blockquote(frame.node, children)
-				break
-			case 'codeBlock':
-				value = handlers.codeBlock(frame.node, children)
-				break
-			case 'list':
-				value = handlers.list(frame.node, children)
-				break
-			case 'listItem':
-				value = handlers.listItem(frame.node, children)
-				break
-			case 'table':
-				value = handlers.table(frame.node, children)
-				break
-			case 'text':
-				value = handlers.text(frame.node, children)
-				break
-			case 'emphasis':
-				value = handlers.emphasis(frame.node, children)
-				break
-			case 'codeSpan':
-				value = handlers.codeSpan(frame.node, children)
-				break
-			case 'break':
-				value = handlers.break(frame.node, children)
-				break
-			case 'link':
-				value = handlers.link(frame.node, children)
-				break
-			case 'image':
-				value = handlers.image(frame.node, children)
-				break
-		}
+		const value = foldMarkdownNode(frame.node, handlers, children)
 		if (stack.length === 0) return value
 		values.push(value)
 	}
+	return foldMarkdownNode(node, handlers, [])
+}
+
+/**
+ * Dispatches one markdown node and its folded children to the matching handler.
+ *
+ * @example
+ * ```ts
+ * foldMarkdownNode({ element: 'text', value: 'hi' }, countHandlers, []) // 1
+ * ```
+ */
+export function foldMarkdownNode<T>(
+	node: MarkdownNode,
+	handlers: MarkdownHandlerMap<T>,
+	children: readonly T[],
+): T {
 	switch (node.element) {
 		case 'document':
-			return handlers.document(node, [])
+			return handlers.document(node, children)
 		case 'heading':
-			return handlers.heading(node, [])
+			return handlers.heading(node, children)
 		case 'paragraph':
-			return handlers.paragraph(node, [])
+			return handlers.paragraph(node, children)
 		case 'thematicBreak':
-			return handlers.thematicBreak(node, [])
+			return handlers.thematicBreak(node, children)
 		case 'blockquote':
-			return handlers.blockquote(node, [])
+			return handlers.blockquote(node, children)
 		case 'codeBlock':
-			return handlers.codeBlock(node, [])
+			return handlers.codeBlock(node, children)
 		case 'list':
-			return handlers.list(node, [])
+			return handlers.list(node, children)
 		case 'listItem':
-			return handlers.listItem(node, [])
+			return handlers.listItem(node, children)
 		case 'table':
-			return handlers.table(node, [])
+			return handlers.table(node, children)
 		case 'text':
-			return handlers.text(node, [])
+			return handlers.text(node, children)
 		case 'emphasis':
-			return handlers.emphasis(node, [])
+			return handlers.emphasis(node, children)
 		case 'codeSpan':
-			return handlers.codeSpan(node, [])
+			return handlers.codeSpan(node, children)
 		case 'break':
-			return handlers.break(node, [])
+			return handlers.break(node, children)
 		case 'link':
-			return handlers.link(node, [])
+			return handlers.link(node, children)
 		case 'image':
-			return handlers.image(node, [])
+			return handlers.image(node, children)
 	}
 }
 
@@ -3043,7 +2749,7 @@ export function rewriteDocument(
 		readonly count: number
 	}> = [{ node: document, depth: -1, expanded: false, count: 0 }]
 	const values: MarkdownNode[] = []
-	const derivations = new Map<MarkdownNode, MarkdownNode | undefined>()
+	const derivations: Array<readonly [MarkdownNode, MarkdownNode, boolean]> = []
 	while (stack.length > 0) {
 		const frame = stack.pop()
 		if (frame === undefined) continue
@@ -3081,7 +2787,7 @@ export function rewriteDocument(
 			}
 			stack.push({ ...frame, expanded: true, count: children.length })
 			const depth = current.element === 'document' ? 0 : frame.depth + 1
-			for (let index = children.length - 1; index >= 0; index -= 1) {
+			for (const index of children.keys().toArray().toReversed()) {
 				const child = children[index]
 				if (child !== undefined) stack.push({ node: child, depth, expanded: false, count: 0 })
 			}
@@ -3089,175 +2795,174 @@ export function rewriteDocument(
 		}
 		const children =
 			frame.count === 0 ? [] : values.splice(values.length - frame.count, frame.count)
-		let rebuilt: MarkdownNode = current
-		let changed = false
-		switch (current.element) {
-			case 'document': {
-				const blocks: BlockNode[] = []
-				let offset = 0
-				for (const block of current.children) {
-					if (block === undefined) continue
-					const child = children[offset]
-					const accepted = child !== undefined && isBlockNode(child) ? child : block
-					blocks.push(accepted)
-					if (accepted !== block) changed = true
-					offset += 1
-				}
-				if (changed) rebuilt = { element: 'document', children: blocks }
-				break
-			}
-			case 'heading':
-			case 'paragraph': {
-				const inlines: InlineNode[] = []
-				let offset = 0
-				for (const inline of current.children) {
-					if (inline === undefined) continue
-					const child = children[offset]
-					const accepted = child !== undefined && isInlineNode(child) ? child : inline
-					inlines.push(accepted)
-					if (accepted !== inline) changed = true
-					offset += 1
-				}
-				if (changed) rebuilt = { ...current, children: inlines }
-				break
-			}
-			case 'blockquote': {
-				const blocks: BlockNode[] = []
-				let offset = 0
-				for (const block of current.children) {
-					if (block === undefined) continue
-					const child = children[offset]
-					const accepted = child !== undefined && isBlockNode(child) ? child : block
-					blocks.push(accepted)
-					if (accepted !== block) changed = true
-					offset += 1
-				}
-				if (changed) rebuilt = { ...current, children: blocks }
-				break
-			}
-			case 'listItem': {
-				const blocks: BlockNode[] = []
-				let offset = 0
-				for (const block of current.children) {
-					if (block === undefined) continue
-					const child = children[offset]
-					const accepted = child !== undefined && isBlockNode(child) ? child : block
-					blocks.push(accepted)
-					if (accepted !== block) changed = true
-					offset += 1
-				}
-				if (changed) rebuilt = { element: 'listItem', children: blocks }
-				break
-			}
-			case 'emphasis':
-			case 'link':
-			case 'image': {
-				const inlines: InlineNode[] = []
-				let offset = 0
-				for (const inline of current.children) {
-					if (inline === undefined) continue
-					const child = children[offset]
-					const accepted = child !== undefined && isInlineNode(child) ? child : inline
-					inlines.push(accepted)
-					if (accepted !== inline) changed = true
-					offset += 1
-				}
-				if (changed) rebuilt = { ...current, children: inlines }
-				break
-			}
-			case 'list': {
-				const items: ListItemNode[] = []
-				let offset = 0
-				for (const item of current.items) {
-					if (item === undefined) continue
-					const child = children[offset]
-					const accepted = child?.element === 'listItem' ? child : item
-					items.push(accepted)
-					if (accepted !== item) changed = true
-					offset += 1
-				}
-				if (changed) rebuilt = { ...current, items }
-				break
-			}
-			case 'table': {
-				let offset = 0
-				const header: Array<readonly InlineNode[]> = []
-				for (const cell of current.header) {
-					if (cell === undefined) continue
-					const inlines: InlineNode[] = []
-					for (const inline of cell) {
-						if (inline === undefined) continue
-						const child = children[offset]
-						const accepted = child !== undefined && isInlineNode(child) ? child : inline
-						inlines.push(accepted)
-						if (accepted !== inline) changed = true
-						offset += 1
-					}
-					header.push(inlines)
-				}
-				const rows: Array<ReadonlyArray<readonly InlineNode[]>> = []
-				for (const row of current.rows) {
-					if (row === undefined) continue
-					const cells: Array<readonly InlineNode[]> = []
-					for (const cell of row) {
-						if (cell === undefined) continue
-						const inlines: InlineNode[] = []
-						for (const inline of cell) {
-							if (inline === undefined) continue
-							const child = children[offset]
-							const accepted = child !== undefined && isInlineNode(child) ? child : inline
-							inlines.push(accepted)
-							if (accepted !== inline) changed = true
-							offset += 1
-						}
-						cells.push(inlines)
-					}
-					rows.push(cells)
-				}
-				if (changed) rebuilt = { ...current, header, rows }
-				break
-			}
-		}
-		if (rebuilt !== current) derivations.set(rebuilt, current)
+		const rebuilt = rebuildMarkdownNode(current, children)
+		if (rebuilt !== current) derivations.push([rebuilt, current, true])
 		if (current.element === 'document') {
 			const result = rebuilt.element === 'document' ? rebuilt : current
 			const output = new Set(walkNodes(result))
-			const retained = new Map<MarkdownNode, MarkdownNode | undefined>()
-			for (const [node, source] of derivations) if (output.has(node)) retained.set(node, source)
+			const retained = new Map(
+				Map.groupBy(derivations, ([node]) => node)
+					.entries()
+					.filter(([node]) => output.has(node))
+					.map(([node, steps]): readonly [MarkdownNode, MarkdownNode | undefined] => [
+						node,
+						steps.reduce<MarkdownNode | undefined>(
+							(source, [, input, direct], index) =>
+								index === 0 || direct || source === input ? input : undefined,
+							undefined,
+						),
+					]),
+			)
 			return [result, retained]
 		}
 		const result = rewrite(rebuilt)
-		let accepted = rebuilt
-		switch (current.element) {
-			case 'text':
-			case 'emphasis':
-			case 'codeSpan':
-			case 'break':
-			case 'link':
-			case 'image':
-				if (isInlineNode(result)) accepted = result
-				break
-			case 'heading':
-			case 'paragraph':
-			case 'list':
-			case 'table':
-			case 'codeBlock':
-			case 'blockquote':
-			case 'thematicBreak':
-				if (isBlockNode(result)) accepted = result
-				break
-			case 'listItem':
-				if (result.element === 'listItem') accepted = result
-				break
-		}
-		if (accepted !== rebuilt && accepted !== current) {
-			if (derivations.has(accepted) && derivations.get(accepted) !== current)
-				derivations.set(accepted, undefined)
-			else derivations.set(accepted, current)
-		}
+		const accepted = acceptMarkdownNode(current, rebuilt, result)
+		if (accepted !== rebuilt && accepted !== current) derivations.push([accepted, current, false])
 		values.push(accepted)
 	}
 	return [document, new Map()]
+}
+
+/**
+ * Rebuilds one markdown node when accepted child replacements change its identity.
+ *
+ * @example
+ * ```ts
+ * const original: ParagraphNode = { element: 'paragraph', children: [] }
+ * rebuildMarkdownNode(original, []) === original // true
+ * ```
+ */
+export function rebuildMarkdownNode(
+	current: MarkdownNode,
+	children: readonly MarkdownNode[],
+): MarkdownNode {
+	const outputs = children.values()
+	switch (current.element) {
+		case 'document':
+		case 'blockquote':
+		case 'listItem': {
+			const pairs = Iterator.from(current.children)
+				.filter((child) => child !== undefined)
+				.map((block): readonly [BlockNode, BlockNode] => {
+					const child = outputs.next().value
+					return [block, child !== undefined && isBlockNode(child) ? child : block]
+				})
+				.toArray()
+			if (!pairs.some(([input, output]) => input !== output)) return current
+			const blocks = pairs.map(([, output]) => output)
+			return current.element === 'blockquote'
+				? { ...current, children: blocks }
+				: { element: current.element, children: blocks }
+		}
+		case 'heading':
+		case 'paragraph':
+		case 'emphasis':
+		case 'link':
+		case 'image': {
+			const pairs = Iterator.from(current.children)
+				.filter((child) => child !== undefined)
+				.map((inline): readonly [InlineNode, InlineNode] => {
+					const child = outputs.next().value
+					return [inline, child !== undefined && isInlineNode(child) ? child : inline]
+				})
+				.toArray()
+			return pairs.some(([input, output]) => input !== output)
+				? { ...current, children: pairs.map(([, output]) => output) }
+				: current
+		}
+		case 'list': {
+			const pairs = Iterator.from(current.items)
+				.filter((item) => item !== undefined)
+				.map((item): readonly [ListItemNode, ListItemNode] => {
+					const child = outputs.next().value
+					return [item, child?.element === 'listItem' ? child : item]
+				})
+				.toArray()
+			return pairs.some(([input, output]) => input !== output)
+				? { ...current, items: pairs.map(([, output]) => output) }
+				: current
+		}
+		case 'table': {
+			const pairs: Array<readonly [InlineNode, InlineNode]> = []
+			const header = Iterator.from(current.header)
+				.filter((cell) => cell !== undefined)
+				.map((cell) => rebuildMarkdownCell(cell, outputs, pairs))
+				.toArray()
+			const rows = Iterator.from(current.rows)
+				.filter((row) => row !== undefined)
+				.map((row) =>
+					Iterator.from(row)
+						.filter((cell) => cell !== undefined)
+						.map((cell) => rebuildMarkdownCell(cell, outputs, pairs))
+						.toArray(),
+				)
+				.toArray()
+			return pairs.some(([input, output]) => input !== output)
+				? { ...current, header, rows }
+				: current
+		}
+	}
+	return current
+}
+
+/**
+ * Rebuilds a table cell and records each input and accepted output pair.
+ *
+ * @example
+ * ```ts
+ * rebuildMarkdownCell([], [].values(), []) // []
+ * ```
+ */
+export function rebuildMarkdownCell(
+	cell: readonly InlineNode[],
+	outputs: Iterator<MarkdownNode, undefined>,
+	pairs: Array<readonly [InlineNode, InlineNode]>,
+): readonly InlineNode[] {
+	return Iterator.from(cell)
+		.filter((inline) => inline !== undefined)
+		.map((inline) => {
+			const child = outputs.next().value
+			const accepted = child !== undefined && isInlineNode(child) ? child : inline
+			pairs.push([inline, accepted])
+			return accepted
+		})
+		.toArray()
+}
+
+/**
+ * Accepts a rewritten node only when it fits the original node slot.
+ *
+ * @example
+ * ```ts
+ * const original: TextNode = { element: 'text', value: 'hi' }
+ * acceptMarkdownNode(original, original, { element: 'thematicBreak' }) === original // true
+ * ```
+ */
+export function acceptMarkdownNode(
+	current: MarkdownNode,
+	rebuilt: MarkdownNode,
+	result: MarkdownNode,
+): MarkdownNode {
+	switch (current.element) {
+		case 'text':
+		case 'emphasis':
+		case 'codeSpan':
+		case 'break':
+		case 'link':
+		case 'image':
+			return isInlineNode(result) ? result : rebuilt
+		case 'heading':
+		case 'paragraph':
+		case 'list':
+		case 'table':
+		case 'codeBlock':
+		case 'blockquote':
+		case 'thematicBreak':
+			return isBlockNode(result) ? result : rebuilt
+		case 'listItem':
+			return result.element === 'listItem' ? result : rebuilt
+	}
+	return rebuilt
 }
 
 /**
@@ -3284,47 +2989,379 @@ export function rewriteDocument(
  */
 export function flattenText(node: MarkdownNode): string {
 	const stack: Array<{ readonly node: MarkdownNode; readonly depth: number }> = [{ node, depth: 0 }]
-	let value = ''
+	const parts: string[] = []
 	while (stack.length > 0) {
 		const frame = stack.pop()
 		if (frame === undefined || frame.depth >= MAX_DEPTH) continue
-		const children: MarkdownNode[] = []
 		switch (frame.node.element) {
 			case 'text':
 			case 'codeSpan':
-				value += frame.node.value
+				parts.push(frame.node.value)
 				break
 			case 'codeBlock':
-				value += frame.node.code
-				break
-			case 'document':
-			case 'heading':
-			case 'paragraph':
-			case 'blockquote':
-			case 'listItem':
-			case 'emphasis':
-			case 'link':
-			case 'image':
-				for (const child of frame.node.children) if (child !== undefined) children.push(child)
-				break
-			case 'list':
-				for (const child of frame.node.items) if (child !== undefined) children.push(child)
-				break
-			case 'table':
-				for (const cell of frame.node.header)
-					if (cell !== undefined)
-						for (const child of cell) if (child !== undefined) children.push(child)
-				for (const row of frame.node.rows)
-					if (row !== undefined)
-						for (const cell of row)
-							if (cell !== undefined)
-								for (const child of cell) if (child !== undefined) children.push(child)
+				parts.push(frame.node.code)
 				break
 		}
-		for (let index = children.length - 1; index >= 0; index -= 1) {
+		const children = listChildren(frame.node)
+		for (const index of children.keys().toArray().toReversed()) {
 			const child = children[index]
 			if (child !== undefined) stack.push({ node: child, depth: frame.depth + 1 })
 		}
 	}
-	return value
+	return parts.join('')
+}
+
+/**
+ * Yields UTF-16 offsets and characters within a markdown scan window.
+ *
+ * @example
+ * ```ts
+ * Array.from(walkMarkdownCharacters('ab', 0, 2)) // [[0, 'a'], [1, 'b']]
+ * ```
+ */
+export function* walkMarkdownCharacters(
+	source: string,
+	from: number,
+	to: number,
+): Generator<readonly [number, string], void, unknown> {
+	const positions = Array.prototype.keys.call({ length: Math.max(0, Math.ceil(to - from)) })
+	for (const position of positions) {
+		const index = from + position
+		yield [index, source[index] ?? '']
+	}
+}
+
+/**
+ * Counts consecutive copies of the character at the start of a scan window.
+ *
+ * @example
+ * ```ts
+ * countMarkdownRun('***x', 0, 4) // 3
+ * ```
+ */
+export function countMarkdownRun(source: string, start: number, to: number): number {
+	if (start >= to || source[start] === undefined) return 0
+	return /^([\s\S])\1*/.exec(source.slice(start, Math.ceil(to)))?.[0].length ?? 0
+}
+
+/**
+ * Finds the next defined markdown node at or after an array offset.
+ *
+ * @example
+ * ```ts
+ * findFollowingNode([], 0) // undefined
+ * ```
+ */
+export function findFollowingNode(
+	nodes: readonly MarkdownNode[],
+	start: number,
+): MarkdownNode | undefined {
+	const found = nodes
+		.keys()
+		.drop(start)
+		.map((index) => nodes[index])
+		.find((node) => node !== undefined)
+	return found ?? nodes[Math.max(start, nodes.length)]
+}
+
+/**
+ * Escapes literal text so markdown syntax remains literal when rendered.
+ *
+ * @example
+ * ```ts
+ * escapeMarkdownText('*hi*', false) // '\\*hi\\*'
+ * ```
+ */
+export function escapeMarkdownText(value: string, bang: boolean): string {
+	const parts: string[] = []
+	walkMarkdownCharacters(value, 0, value.length).reduce((next, [index, character]) => {
+		if (index < next) return next
+		const atLineStart = index === 0 || value[index - 1] === '\n'
+		if (character === '!' && index === value.length - 1 && bang) {
+			parts.push('\\!')
+			return index + 1
+		}
+		if (
+			'\\*_`[]'.includes(character) ||
+			(atLineStart && (character === '#' || character === '>')) ||
+			(atLineStart &&
+				(character === '-' || character === '~') &&
+				value[index + 1] === character &&
+				value[index + 2] === character) ||
+			(atLineStart && (character === '-' || character === '+') && (value[index + 1] ?? ' ') === ' ')
+		) {
+			parts.push('\\' + character)
+			return index + 1
+		}
+		if (atLineStart && /[0-9]/.test(character)) {
+			const end = index + (/^[0-9]+/.exec(value.slice(index))?.[0].length ?? 0)
+			const marker = value[end]
+			if ((marker === '.' || marker === ')') && value[end + 1] === ' ') {
+				parts.push(value.slice(index, end) + '\\' + marker)
+				return end + 1
+			}
+		}
+		parts.push(character)
+		return index + 1
+	}, 0)
+	return parts.join('')
+}
+
+/**
+ * Locates a balanced closing delimiter while skipping backslash escapes.
+ *
+ * @example
+ * ```ts
+ * locateMarkdownDelimiter('[a]', 0, 3, '[', ']') // 2
+ * ```
+ */
+export function locateMarkdownDelimiter(
+	source: string,
+	start: number,
+	to: number,
+	open: string,
+	close: string,
+): number | undefined {
+	const characters = walkMarkdownCharacters(source, start, to)
+	const [, , result] = characters.reduce<readonly [number, number, number | undefined]>(
+		([depth, next], [index, character]) => {
+			if (index < next) return [depth, next, undefined]
+			if (character === '\\') return [depth, index + 2, undefined]
+			if (character === open) return [depth + 1, index + 1, undefined]
+			if (character !== close) return [depth, index + 1, undefined]
+			if (depth === 1) {
+				characters.return(undefined)
+				return [0, index + 1, index]
+			}
+			return [depth - 1, index + 1, undefined]
+		},
+		[0, start, undefined],
+	)
+	return result
+}
+
+/**
+ * Appends a nonempty text node and records its original source span.
+ *
+ * @example
+ * ```ts
+ * const nodes: InlineNode[] = []
+ * recordMarkdownText({ text: 'a', segments: [] }, 'a', 0, 1, new Map(), nodes)
+ * nodes // [{ element: 'text', value: 'a' }]
+ * ```
+ */
+export function recordMarkdownText(
+	source: MarkdownSource,
+	value: string,
+	start: number,
+	end: number,
+	spans: Map<MarkdownNode, MarkdownSpan>,
+	nodes: InlineNode[],
+): void {
+	if (value.length === 0) return
+	const node: InlineNode = { element: 'text', value }
+	const span = projectSpan(source, start, end)
+	if (span !== undefined) spans.set(node, span)
+	nodes.push(node)
+}
+
+/**
+ * Scans one inline construct and records the spans of its nested children.
+ *
+ * @example
+ * ```ts
+ * scanMarkdownInline({ text: '`x`', segments: [] }, 0, 3, new Map(), 0)?.end // 3
+ * ```
+ */
+export function scanMarkdownInline(
+	source: MarkdownSource,
+	index: number,
+	to: number,
+	spans: Map<MarkdownNode, MarkdownSpan>,
+	depth: number,
+): MarkdownInlineScan | undefined {
+	const character = source.text[index] ?? ''
+	if (character === ' ') {
+		const end = index + countMarkdownRun(source.text, index, to)
+		if (end - index >= 2 && source.text[end] === '\n')
+			return { node: { element: 'break' }, end: end + 1 }
+	}
+	if (character === '`') {
+		const span = scanCode(source.text, index, to)
+		if (span) return { node: { element: 'codeSpan', value: span.value }, end: span.end }
+	}
+	if (character === '!' && source.text[index + 1] === '[') {
+		const link = locateLink(source.text, index + 1, to)
+		if (link !== undefined)
+			return {
+				node: {
+					element: 'image',
+					src: unescapeText(source.text.slice(link.close + 2, link.end - 1).trim()),
+					children: coalesceText(
+						scanInlineSource(source, index + 2, link.close, spans, depth + 1),
+						spans,
+					),
+				},
+				end: link.end,
+			}
+	}
+	if (character === '[') {
+		const link = locateLink(source.text, index, to)
+		if (link !== undefined)
+			return {
+				node: {
+					element: 'link',
+					href: unescapeText(source.text.slice(link.close + 2, link.end - 1).trim()),
+					children: coalesceText(
+						scanInlineSource(source, index + 1, link.close, spans, depth + 1),
+						spans,
+					),
+				},
+				end: link.end,
+			}
+	}
+	if (character === '*' || character === '_') {
+		const emphasis = locateEmphasis(source.text, index, to)
+		if (emphasis !== undefined)
+			return {
+				node: {
+					element: 'emphasis',
+					strong: emphasis.strong,
+					children: coalesceText(
+						scanInlineSource(source, emphasis.open, emphasis.close, spans, depth + 1),
+						spans,
+					),
+				},
+				end: emphasis.end,
+			}
+	}
+	return undefined
+}
+
+/**
+ * Yields line offsets through a closable markdown scan iterator.
+ *
+ * @example
+ * ```ts
+ * Array.from(walkMarkdownLines(splitLines('a\nb'), 1)) // [1]
+ * ```
+ */
+export function* walkMarkdownLines(
+	lines: readonly MarkdownSource[],
+	start: number,
+): Generator<number, void, unknown> {
+	const positions = Array.prototype.keys.call({
+		get length(): number {
+			return Math.max(0, Math.ceil(lines.length - start))
+		},
+	})
+	for (const position of positions) yield start + position
+}
+
+/**
+ * Splits inline nodes into adjacent text runs and singleton non-text runs.
+ *
+ * @param nodes - The inline nodes in source order
+ * @returns The runs with their original node identities
+ *
+ * @example
+ * ```ts
+ * splitTextRuns([{ element: 'text', value: 'a' }]).length // 1
+ * ```
+ */
+export function splitTextRuns(nodes: readonly InlineNode[]): ReadonlyArray<readonly InlineNode[]> {
+	const starts = nodes
+		.entries()
+		.flatMap(([index, node]) =>
+			index === 0 || node.element !== 'text' || nodes[index - 1]?.element !== 'text' ? [index] : [],
+		)
+		.toArray()
+	return starts.map((start, index) => nodes.slice(start, starts[index + 1]))
+}
+
+/**
+ * Lists the direct children of a markdown node in traversal order.
+ *
+ * @param node - The node whose direct children to list
+ * @returns The children, with table cells flattened in header then body order
+ *
+ * @example
+ * ```ts
+ * listChildren({ element: 'document', children: [] }) // []
+ * ```
+ */
+export function listChildren(node: MarkdownNode): readonly MarkdownNode[] {
+	switch (node.element) {
+		case 'document':
+		case 'heading':
+		case 'paragraph':
+		case 'blockquote':
+		case 'listItem':
+		case 'emphasis':
+		case 'link':
+		case 'image':
+			return Iterator.from<MarkdownNode>(node.children)
+				.filter((child) => child !== undefined)
+				.toArray()
+		case 'list':
+			return Iterator.from(node.items)
+				.filter((child) => child !== undefined)
+				.toArray()
+		case 'table':
+			return [
+				...Iterator.from(node.header)
+					.filter((cell) => cell !== undefined)
+					.flatMap((cell) => Iterator.from(cell).filter((child) => child !== undefined)),
+				...Iterator.from(node.rows)
+					.filter((row) => row !== undefined)
+					.flatMap((row) => Iterator.from(row).filter((cell) => cell !== undefined))
+					.flatMap((cell) => Iterator.from(cell).filter((child) => child !== undefined)),
+			]
+		default:
+			return []
+	}
+}
+
+/**
+ * Trims leading whitespace when an inline run starts with a text node.
+ *
+ * @param nodes - The inline run to trim
+ * @returns The run with its leading text trimmed or removed when empty
+ *
+ * @example
+ * ```ts
+ * trimLeading([{ element: 'text', value: ' a ' }]) // [{ element: 'text', value: 'a ' }]
+ * ```
+ */
+export function trimLeading(nodes: readonly InlineNode[]): readonly InlineNode[] {
+	const present = Iterator.from(nodes)
+		.filter((node) => node !== undefined)
+		.toArray()
+	const first = present[0]
+	if (first?.element !== 'text') return present
+	const value = first.value.replace(/^\s+/, '')
+	return isEmptyString(value) ? present.slice(1) : [{ element: 'text', value }, ...present.slice(1)]
+}
+
+/**
+ * Trims trailing whitespace when an inline run ends with a text node.
+ *
+ * @param nodes - The inline run to trim
+ * @returns The run with its trailing text trimmed or removed when empty
+ *
+ * @example
+ * ```ts
+ * trimTrailing([{ element: 'text', value: ' a ' }]) // [{ element: 'text', value: ' a' }]
+ * ```
+ */
+export function trimTrailing(nodes: readonly InlineNode[]): readonly InlineNode[] {
+	const present = Iterator.from(nodes)
+		.filter((node) => node !== undefined)
+		.toArray()
+	const last = present.at(-1)
+	if (last?.element !== 'text') return present
+	const value = last.value.replace(/\s+$/, '')
+	return isEmptyString(value)
+		? present.slice(0, -1)
+		: [...present.slice(0, -1), { element: 'text', value }]
 }

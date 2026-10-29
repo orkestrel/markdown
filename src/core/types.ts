@@ -124,6 +124,12 @@ export interface EmphasisScan {
 	readonly end: number
 }
 
+/** Represents an inline construct and the source offset where scanning resumes. */
+export interface MarkdownInlineScan {
+	readonly node: InlineNode
+	readonly end: number
+}
+
 /**
  * Represents the result of collecting one GFM table — the node the construct scanner built and
  * where the block phase resumes.

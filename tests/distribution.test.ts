@@ -31,7 +31,10 @@ const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 // compiler majors this toolchain supports, and its in-process API is not. It is
 // resolved from the workspace under proof, so a consumer of the packed artifact is
 // checked by the same compiler that workspace's own `check` script runs.
-const TSC = createRequire(join(ROOT, 'package.json')).resolve('typescript/bin/tsc')
+const TSC = join(
+	dirname(createRequire(join(ROOT, 'package.json')).resolve('typescript/package.json')),
+	'bin/tsc',
+)
 // Windows needs a shell to launch a `.cmd`: Node refuses one directly since the
 // batch-argument hardening, and `spawnSync` returns `EINVAL` with a null status
 // rather than an exit code a caller can read. Every following argument is a literal or
@@ -193,14 +196,18 @@ function isNames(value: unknown): value is readonly string[] {
 function isPackageTarget(target: string): boolean {
 	if (!target.startsWith('./')) return false
 	for (const segment of target.slice(2).split(/[\\/]/u)) {
-		let decoded = segment
-		try {
-			decoded = decodeURIComponent(segment)
-		} catch {}
-		const normalized = decoded.toLowerCase()
+		const normalized = decodeSegment(segment).toLowerCase()
 		if (normalized === '.' || normalized === '..' || normalized === 'node_modules') return false
 	}
 	return true
+}
+
+function decodeSegment(segment: string): string {
+	try {
+		return decodeURIComponent(segment)
+	} catch {
+		return segment
+	}
 }
 
 function readJson(path: string): unknown {
@@ -284,11 +291,16 @@ function matchesFile(path: string): boolean {
 // the containing condition or fallback list unresolved, so the walk continues.
 function targetToDeclaration(target: string, installed: string): string | undefined {
 	if (!isPackageTarget(target)) return undefined
-	let declaration = target
-	if (target.endsWith('.cjs')) declaration = `${target.slice(0, -4)}.d.cts`
-	else if (target.endsWith('.mjs')) declaration = `${target.slice(0, -4)}.d.mts`
-	else if (target.endsWith('.js')) declaration = `${target.slice(0, -3)}.d.ts`
-	else if (!isDeclaration(target)) return undefined
+	const declaration = target.endsWith('.cjs')
+		? `${target.slice(0, -4)}.d.cts`
+		: target.endsWith('.mjs')
+			? `${target.slice(0, -4)}.d.mts`
+			: target.endsWith('.js')
+				? `${target.slice(0, -3)}.d.ts`
+				: isDeclaration(target)
+					? target
+					: undefined
+	if (declaration === undefined) return undefined
 	return matchesFile(join(installed, declaration)) ? declaration : undefined
 }
 
@@ -320,22 +332,22 @@ function resolveDeclaration(
 // physical nested manifest starts a scope even when it omits `type` or cannot be
 // parsed. A directory at that spelling is not a manifest, so the walk continues.
 function readPackageType(installed: string, target: string): unknown {
-	let directory = dirname(join(installed, target))
-	while (true) {
-		const path = join(directory, 'package.json')
-		if (matchesFile(path)) {
-			try {
-				const manifest = readJson(path)
-				return isRecord(manifest) ? manifest.type : undefined
-			} catch {
-				return undefined
-			}
+	return readScopeType(installed, dirname(join(installed, target)))
+}
+
+function readScopeType(installed: string, directory: string): unknown {
+	const path = join(directory, 'package.json')
+	if (matchesFile(path)) {
+		try {
+			const manifest = readJson(path)
+			return isRecord(manifest) ? manifest.type : undefined
+		} catch {
+			return undefined
 		}
-		if (directory === installed) return undefined
-		const parent = dirname(directory)
-		if (parent === directory) return undefined
-		directory = parent
 	}
+	if (directory === installed) return undefined
+	const parent = dirname(directory)
+	return parent === directory ? undefined : readScopeType(installed, parent)
 }
 
 function resolvesBrowser(entry: unknown): boolean {

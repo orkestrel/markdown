@@ -1,26 +1,29 @@
-import type { BlockNode, InlineNode, MarkdownProjection } from '@src/core'
 import { createProjection, flattenText, htmlToMarkdown } from '@src/core'
 import { parseDocument as parseHTML } from '@orkestrel/html'
-import { seededRandom } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
 import {
+	collectTags,
+	collectUnclosedTags,
+	readElement,
+	readFirstChild,
+	measureChainDepth,
+	readChainLeaf,
+	countToken,
+	measureIndent,
+	drawStream,
+	BLOCK_CASES,
+	INLINE_CASES,
+	OPTIONAL_CASES,
+	CHAIN_CASES,
+	PROJECTION_PARTS,
+	PROJECTION_CONSTRUCT_TAGS,
 	MARKDOWN_FIXPOINT_CORPUS,
 	PROJECTION_CORPUS,
 	TEST_SEED,
-	assertBlockquoteNode,
-	assertCodeBlockNode,
-	assertCodeSpanNode,
-	assertEmphasisNode,
-	assertHeadingNode,
 	assertInlineNode,
-	assertLinkNode,
-	assertListNode,
 	assertParagraphNode,
-	assertTableNode,
 	buildCyclicNode,
-	buildDeepBlockNode,
 	buildDeepEmphasisInput,
-	buildDeepInlineNode,
 	buildDeepListInput,
 	buildDeepQuoteInput,
 	buildHostileNode,
@@ -39,171 +42,8 @@ import {
 //
 // Every expectation is derived by a route the module cannot share — string scanning over a
 // builder's output, tag scanning over a corpus entry, parity arithmetic over a requested
-// depth, or the production call the wrapper is claimed to compose. The case matrices sit at
-// module scope here rather than in a setup module because the setup module is the subject.
-
-// ── Derivation helpers ────────────────────────────────────────────────────────
-// The second route each expectation is measured by. None of them import the module
-// under proof, and none of them reproduce its implementation.
-
-/** HTML element names that carry no closing tag, excluded from the balance scan. */
-const VOID_TAGS: ReadonlySet<string> = new Set(['br', 'hr', 'img'])
-
-/** Every element name opened anywhere in `html`, in no particular order. */
-function collectTags(html: string): ReadonlySet<string> {
-	const tags = new Set<string>()
-	for (const match of html.matchAll(/<([a-z][a-z0-9]*)\b/g)) {
-		const [, tag] = match
-		if (tag !== undefined) tags.add(tag)
-	}
-	return tags
-}
-
-/** Element names left open (or closed out of order) at the end of `html`. */
-function collectUnclosedTags(html: string): readonly string[] {
-	const open: string[] = []
-	for (const match of html.matchAll(/<(\/?)([a-z][a-z0-9]*)\b[^>]*>/g)) {
-		const [, slash, tag] = match
-		if (tag === undefined || VOID_TAGS.has(tag)) continue
-		if (slash === '') open.push(tag)
-		else if (open.pop() !== tag) return [tag]
-	}
-	return open
-}
-
-function isUnknownArray(value: unknown): value is readonly unknown[] {
-	return Array.isArray(value)
-}
-
-function isRecordLike(
-	value: unknown,
-): value is { readonly element: unknown; readonly children: unknown } {
-	return typeof value === 'object' && value !== null
-}
-
-/** The `element` discriminant of a node-like value, or `undefined` when it carries none. */
-function readElement(value: unknown): string | undefined {
-	if (!isRecordLike(value)) return undefined
-	const { element } = value
-	return typeof element === 'string' ? element : undefined
-}
-
-/** The first entry of a node-like value's `children`, or `undefined` when it has none. */
-function readFirstChild(value: unknown): unknown {
-	if (!isRecordLike(value)) return undefined
-	const { children } = value
-	return isUnknownArray(children) ? children[0] : undefined
-}
-
-/** How many `wrapper`-element hops separate `value` from the first node that is not one. */
-function measureChainDepth(value: unknown, wrapper: string): number {
-	let node = value
-	let depth = 0
-	while (readElement(node) === wrapper) {
-		node = readFirstChild(node)
-		depth += 1
-	}
-	return depth
-}
-
-/** The innermost node of a `wrapper`-element chain. */
-function readChainLeaf(value: unknown, wrapper: string): unknown {
-	let node = value
-	while (readElement(node) === wrapper) node = readFirstChild(node)
-	return node
-}
-
-/** Count non-overlapping occurrences of `token` in `text`. */
-function countToken(text: string, token: string): number {
-	return text.split(token).length - 1
-}
-
-/** The leading spaces of `line`. */
-function measureIndent(line: string): number {
-	return line.length - line.trimStart().length
-}
-
-/** Three consecutive draws from a fresh generator seeded with `seed`. */
-function drawStream(seed: number): readonly number[] {
-	const random = seededRandom(seed)
-	return [random(), random(), random()]
-}
-
-// ── Case matrices ─────────────────────────────────────────────────────────────
-
-/** One markdown source per block element the `assert{Element}Node` family narrows to. */
-const BLOCK_CASES: ReadonlyArray<{
-	readonly element: string
-	readonly source: string
-	readonly narrow: (block: BlockNode) => BlockNode
-}> = [
-	{ element: 'heading', source: '# h', narrow: assertHeadingNode },
-	{ element: 'list', source: '- a', narrow: assertListNode },
-	{ element: 'table', source: '| a |\n| --- |\n| 1 |', narrow: assertTableNode },
-	{ element: 'paragraph', source: 'para', narrow: assertParagraphNode },
-	{ element: 'codeBlock', source: '```\nx\n```', narrow: assertCodeBlockNode },
-	{ element: 'blockquote', source: '> q', narrow: assertBlockquoteNode },
-]
-
-/** One markdown snippet per inline element the `assert{Element}Node` family narrows to. */
-const INLINE_CASES: ReadonlyArray<{
-	readonly element: string
-	readonly source: string
-	readonly narrow: (node: InlineNode | undefined) => InlineNode
-}> = [
-	{ element: 'emphasis', source: '*e*', narrow: assertEmphasisNode },
-	{ element: 'codeSpan', source: '`c`', narrow: assertCodeSpanNode },
-	{ element: 'link', source: '[t](/u)', narrow: assertLinkNode },
-]
-
-/** The family members that accept a missing node instead of requiring one. */
-const OPTIONAL_CASES: ReadonlyArray<{
-	readonly element: string
-	readonly narrow: (node: undefined) => unknown
-}> = [
-	{ element: 'paragraph', narrow: assertParagraphNode },
-	{ element: 'emphasis', narrow: assertEmphasisNode },
-	{ element: 'codeSpan', narrow: assertCodeSpanNode },
-	{ element: 'link', narrow: assertLinkNode },
-]
-
-/** The chain builders, with the element each wraps with and the element each bottoms out at. */
-const CHAIN_CASES: ReadonlyArray<{
-	readonly wrapper: string
-	readonly leaf: string
-	readonly build: (levels: number) => unknown
-}> = [
-	{ wrapper: 'emphasis', leaf: 'text', build: buildDeepInlineNode },
-	{ wrapper: 'blockquote', leaf: 'paragraph', build: buildDeepBlockNode },
-]
-
-/** A partial projection whose fields must survive the wrapper unchanged. */
-const PROJECTION_PARTS: Partial<MarkdownProjection> = {
-	text: 'raw',
-	inlines: [{ element: 'text', value: 'x' }],
-}
-
-/** Every HTML element the projection corpus must carry an entry for. */
-const PROJECTION_CONSTRUCT_TAGS: readonly string[] = [
-	'a',
-	'blockquote',
-	'br',
-	'code',
-	'em',
-	'h1',
-	'hr',
-	'img',
-	'li',
-	'ol',
-	'p',
-	'pre',
-	'strong',
-	'table',
-	'td',
-	'th',
-	'tr',
-	'ul',
-]
+// depth, or the production call the wrapper is claimed to compose. The case matrices and
+// derivation helpers are imported from the root setup module.
 
 describe('the assert{Element}Node narrowing family', () => {
 	it('hands back the very node it was given when the element matches', () => {

@@ -2,13 +2,7 @@
 // this repo's own `guides/README.md` manifest. The constants that follow are this
 // package's own, as is the executed section that closes the file.
 
-import type {
-	MarkdownDocument,
-	MarkdownHandlerMap,
-	MarkdownNode,
-	MarkdownProjection,
-	MarkdownSpan,
-} from '@src/core'
+import type { MarkdownDocument, MarkdownNode, MarkdownProjection, MarkdownSpan } from '@src/core'
 import { GuideCommand } from '@orkestrel/guide/server'
 import { readInventory } from '@orkestrel/test/server'
 import { createVitest } from 'vitest/node'
@@ -71,7 +65,8 @@ await new GuideCommand({
 		splitLines,
 		walkNodes,
 	} = await import('@src/core')
-	const { adopt, extractSurfaceNames, projectKbdNode } = await import('./setupGuides.js')
+	const { adopt, extractSurfaceNames, projectKbdNode } = await import('./setupServer.js')
+	const { toHTML, guideCountHandlers: countHandlers } = await import('./setup.js')
 	const { describe, expect, it } = await import('vitest')
 	const own = requireValue(
 		rows.find((row) => row.entry.spec === GUIDE_SPEC),
@@ -398,26 +393,6 @@ await new GuideCommand({
 		})
 
 		it('folds a document to a string through a total handler table', () => {
-			const toHTML: MarkdownHandlerMap<string> = {
-				document: (_, children) => children.join('\n'),
-				heading: (node, children) => `<h${node.level}>${children.join('')}</h${node.level}>`,
-				paragraph: (_, children) => `<p>${children.join('')}</p>`,
-				thematicBreak: () => '<hr>',
-				blockquote: (_, children) => `<blockquote>${children.join('\n')}</blockquote>`,
-				codeBlock: (node) => `<pre><code>${node.code}</code></pre>`,
-				list: (node, children) =>
-					node.ordered ? `<ol>${children.join('')}</ol>` : `<ul>${children.join('')}</ul>`,
-				listItem: (_, children) => `<li>${children.join('')}</li>`,
-				table: (_, children) => `<table>${children.join('')}</table>`,
-				text: (node) => node.value,
-				emphasis: (node, children) =>
-					node.strong ? `<strong>${children.join('')}</strong>` : `<em>${children.join('')}</em>`,
-				codeSpan: (node) => `<code>${node.value}</code>`,
-				break: () => '<br>',
-				link: (node, children) => `<a href="${node.href}">${children.join('')}</a>`,
-				image: (node, children) => `<img src="${node.src}" alt="${children.join('')}">`,
-			}
-
 			const markdown = new Markdown('# Hi')
 
 			expect(markdown.fold(toHTML)).toBe('<h1>Hi</h1>')
@@ -433,7 +408,9 @@ await new GuideCommand({
 
 			const reader = markdown.stream().getReader()
 			const tops: string[] = []
-			for (let result = await reader.read(); !result.done; result = await reader.read()) {
+			for (;;) {
+				const result = await reader.read()
+				if (result.done) break
 				tops.push(result.value.element)
 			}
 
@@ -506,24 +483,6 @@ await new GuideCommand({
 			const heading = requireValue(markdown.document.children[0], 'expected a block')
 
 			expect([...walkNodes(heading)].map((node) => node.element)).toEqual(['heading', 'text'])
-
-			const countHandlers: MarkdownHandlerMap<number> = {
-				document: (_, children) => children.reduce((a, b) => a + b, 0),
-				heading: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-				paragraph: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-				thematicBreak: () => 1,
-				blockquote: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-				codeBlock: () => 1,
-				list: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-				listItem: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-				table: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-				text: () => 1,
-				emphasis: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-				codeSpan: () => 1,
-				break: () => 1,
-				link: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-				image: (_, children) => 1 + children.reduce((a, b) => a + b, 0),
-			}
 
 			expect(foldNode(heading, countHandlers, 0)).toBe(2)
 

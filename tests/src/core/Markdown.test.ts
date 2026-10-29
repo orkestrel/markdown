@@ -2,11 +2,20 @@ import type {
 	BlockNode,
 	BlockquoteNode,
 	MarkdownDocument,
-	MarkdownHandlerMap,
 	MarkdownNode,
 	ParagraphNode,
 	TextNode,
 } from '@src/core'
+import {
+	countHandlers,
+	cellHandlers,
+	htmlLikeHandlers,
+	upper,
+	shout,
+	createCappedHandlers,
+	countNodes,
+	collectThroughHeading,
+} from '../../setup.js'
 import { describe, expect, it } from 'vitest'
 import { collectStream } from '@orkestrel/test'
 import { buildDeepQuoteInput, firstBlock, projectHTML } from '../../setup.js'
@@ -202,10 +211,6 @@ describe('Markdown — filter', () => {
 })
 
 describe('Markdown — map', () => {
-	function upper(node: MarkdownNode): MarkdownNode {
-		return isTextNode(node) ? { element: 'text', value: node.value.toUpperCase() } : node
-	}
-
 	it('an identity rewrite returns a NEW Markdown instance reusing the document tree', () => {
 		const markdown = new Markdown('# Title\n\npara')
 		const rewritten = markdown.map((node) => node)
@@ -247,9 +252,6 @@ describe('Markdown — map', () => {
 	})
 
 	it('chains — md.map(a).map(b) applies both rewrites', () => {
-		function shout(node: MarkdownNode): MarkdownNode {
-			return isTextNode(node) ? { element: 'text', value: `${node.value}!` } : node
-		}
 		const markdown = new Markdown('hi')
 		const chained = markdown.map(upper).map(shout)
 		const text = chained.filter(isTextNode)[0]
@@ -373,24 +375,6 @@ describe('Markdown — reduce', () => {
 })
 
 describe('Markdown — fold', () => {
-	const countHandlers: MarkdownHandlerMap<number> = {
-		document: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		heading: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		paragraph: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		thematicBreak: () => 1,
-		blockquote: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		codeBlock: () => 1,
-		list: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		listItem: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		table: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		text: () => 1,
-		emphasis: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		codeSpan: () => 1,
-		break: () => 1,
-		link: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-		image: (_node, children) => 1 + children.reduce((sum, value) => sum + value, 0),
-	}
-
 	it('a 15-key handler table reconstructs a total node count matching reduce', () => {
 		const markdown = new Markdown(
 			'# Title\n\npara with **bold** text, [a link](x), and ![an image](x.png).  \nNext.',
@@ -402,71 +386,18 @@ describe('Markdown — fold', () => {
 
 	it('a table handler receives folded cells as a flat readonly array (header then row cells, in walk order)', () => {
 		const markdown = new Markdown('| a | b |\n| - | - |\n| 1 | 2 |')
-		const cellHandlers: MarkdownHandlerMap<string> = {
-			document: (_node, children) => children.join(''),
-			heading: (_node, children) => children.join(''),
-			paragraph: (_node, children) => children.join(''),
-			thematicBreak: () => '',
-			blockquote: (_node, children) => children.join(''),
-			codeBlock: () => '',
-			list: (_node, children) => children.join(''),
-			listItem: (_node, children) => children.join(''),
-			table: (_node, children) => children.join(','),
-			text: (node) => node.value,
-			emphasis: (_node, children) => children.join(''),
-			codeSpan: () => '',
-			break: () => '',
-			link: (_node, children) => children.join(''),
-			image: (_node, children) => children.join(''),
-		}
 		expect(markdown.fold(cellHandlers)).toBe('a,b,1,2')
 	})
 
 	it('folds children before the parent — a fold table can reconstruct a rendered form', () => {
 		const markdown = new Markdown('# Hi')
-		const htmlLikeHandlers: MarkdownHandlerMap<string> = {
-			document: (_node, children) => children.join('\n'),
-			heading: (node, children) => `<h${node.level}>${children.join('')}</h${node.level}>`,
-			paragraph: (_node, children) => `<p>${children.join('')}</p>`,
-			thematicBreak: () => '<hr>',
-			blockquote: (_node, children) => children.join(''),
-			codeBlock: () => '',
-			list: (_node, children) => children.join(''),
-			listItem: (_node, children) => children.join(''),
-			table: (_node, children) => children.join(''),
-			text: (node) => node.value,
-			emphasis: (_node, children) => children.join(''),
-			codeSpan: () => '',
-			break: () => '<br>',
-			link: (_node, children) => children.join(''),
-			image: (_node, children) => children.join(''),
-		}
 		expect(markdown.fold(htmlLikeHandlers)).toBe('<h1>Hi</h1>')
 	})
 
 	it('does not throw over a ~70-deep valid blockquote chain, and the MAX_DEPTH cap hands the innermost handler empty children', () => {
 		const markdown = new Markdown(buildDeepQuoteInput(70, 'leaf'))
 		const seenEmptyChildren: boolean[] = []
-		const cappedHandlers: MarkdownHandlerMap<number> = {
-			document: (_node, children) => children.length,
-			heading: (_node, children) => children.length,
-			paragraph: (_node, children) => children.length,
-			thematicBreak: () => 0,
-			blockquote: (_node, children) => {
-				seenEmptyChildren.push(children.length === 0)
-				return children.length === 0 ? 0 : Math.max(...children)
-			},
-			codeBlock: () => 0,
-			list: (_node, children) => children.length,
-			listItem: (_node, children) => children.length,
-			table: (_node, children) => children.length,
-			text: () => 0,
-			emphasis: (_node, children) => children.length,
-			codeSpan: () => 0,
-			break: () => 0,
-			link: (_node, children) => children.length,
-			image: (_node, children) => children.length,
-		}
+		const cappedHandlers = createCappedHandlers(seenEmptyChildren)
 		expect(() => markdown.fold(cappedHandlers)).not.toThrow()
 		expect(seenEmptyChildren.includes(true)).toBe(true)
 	})
@@ -482,7 +413,9 @@ describe('Markdown — stream', () => {
 		const markdown = new Markdown('# Title\n\npara\n\n---')
 		const reader = markdown.stream().getReader()
 		const blocks: BlockNode[] = []
-		for (let result = await reader.read(); !result.done; result = await reader.read()) {
+		for (;;) {
+			const result = await reader.read()
+			if (result.done) break
 			blocks.push(result.value)
 		}
 		expect(blocks).toEqual(markdown.document.children)
@@ -554,7 +487,9 @@ describe('Markdown — stream', () => {
 		})
 		const reader = markdown.stream().pipeThrough(toElementName).getReader()
 		const names: string[] = []
-		for (let result = await reader.read(); !result.done; result = await reader.read()) {
+		for (;;) {
+			const result = await reader.read()
+			if (result.done) break
 			names.push(result.value)
 		}
 		expect(names).toEqual(['heading', 'paragraph', 'thematicBreak'])
@@ -617,11 +552,6 @@ describe('Markdown — async iteration', () => {
 
 	it('works inside an async pipeline — an async helper counting nodes returns the right count', async () => {
 		const markdown = new Markdown('# Title\n\npara')
-		async function countNodes(source: Iterable<MarkdownNode>): Promise<number> {
-			let count = 0
-			for await (const node of source) if (node !== undefined) count += 1
-			return count
-		}
 		expect(await countNodes(markdown.walk())).toBe([...markdown.walk()].length)
 	})
 
@@ -635,26 +565,17 @@ describe('Markdown — async iteration', () => {
 	it('an early break from for await…of does not throw and terminates cleanly', async () => {
 		const markdown = new Markdown('# Title\n\npara\n\n---')
 		const collected: MarkdownNode[] = []
-		await expect(
-			(async () => {
-				for await (const node of markdown.walk()) {
-					collected.push(node)
-					if (node.element === 'heading') break
-				}
-			})(),
-		).resolves.toBeUndefined()
+		await expect(collectThroughHeading(markdown.walk(), collected)).resolves.toBeUndefined()
 		expect(collected.map((node) => node.element)).toEqual(['document', 'heading'])
 	})
 
 	it('completes without throwing over a pathologically deep (10,000-deep) document', async () => {
 		const markdown = new Markdown(buildDeepQuoteInput(10_000))
-		let count = 0
 		await expect(
-			(async () => {
-				for await (const node of markdown.walk()) if (node !== undefined) count += 1
-			})(),
+			countNodes(markdown.walk()).then((count) => {
+				expect(count).toBeGreaterThan(0)
+			}),
 		).resolves.toBeUndefined()
-		expect(count).toBeGreaterThan(0)
 	})
 })
 
@@ -682,9 +603,10 @@ describe('Markdown — adversarial (deep input)', () => {
 			element: 'paragraph',
 			children: [{ element: 'text', value: 'leaf' }],
 		}
-		let node: BlockquoteNode | ParagraphNode = leaf
-		for (let level = 0; level < 10_000; level += 1)
-			node = { element: 'blockquote', children: [node] }
+		const node = Array.from({ length: 10_000 }).reduce<BlockquoteNode | ParagraphNode>(
+			(child) => ({ element: 'blockquote', children: [child] }),
+			leaf,
+		)
 		const document: MarkdownDocument = { element: 'document', children: [node] }
 		const markdown = new Markdown(document)
 		expect(() => markdown.map((current) => current)).not.toThrow()

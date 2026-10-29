@@ -60,6 +60,10 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 | `MarkdownDerivation<T>`     | type      | `readonly [value: T, derivations: ReadonlyMap<MarkdownNode, MarkdownNode \| undefined>]`                                                      | Pairs a rewritten value with the input node each rewritten node was produced from — what `rewriteDocument` returns, so provenance survives a rewrite instead of ending at it. `T` is the rewritten value: the document for a whole-document rewrite.                                                                                                                                             |
 | `MarkdownInterface`         | interface | `{ document } plus walk, find, filter, span, map, reduce, fold, stream`                                                                       | Represents a stateful, parsed markdown document: the typed `MarkdownDocument` AST plus the query, rewrite, and fold operations over it.                                                                                                                                                                                                                                                          |
 
+| Type                 | Kind      | Shape           | Summary                                                                      |
+| -------------------- | --------- | --------------- | ---------------------------------------------------------------------------- |
+| `MarkdownInlineScan` | interface | `{ node, end }` | Represents an inline construct and the source offset where scanning resumes. |
+
 ### Constants
 
 From [`constants.ts`](../src/core/constants.ts).
@@ -137,6 +141,29 @@ Pure, total leaves from [`helpers.ts`](../src/core/helpers.ts) — the line and 
 | `foldNode`               | function | `<T>(node: MarkdownNode, handlers: MarkdownHandlerMap<T>, depth: number) => T`                                                              | Folds a `MarkdownNode` into a `T` through a total catamorphism — children are folded first (post-order), then the node's own `MarkdownHandler` is invoked with the already-folded children.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `rewriteDocument`        | function | `(document: MarkdownDocument, rewrite: MarkdownRewriteHandler) => MarkdownDerivation<MarkdownDocument>`                                     | Rewrites a `MarkdownDocument` bottom-up (copy-on-write) — each node's children are rewritten first (post-order), then `rewrite` is applied to the node itself; the document root is never passed to `rewrite` (the `element: 'document'` invariant always holds). A table's inline cells and a list's items are rewritten too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `flattenText`            | function | `(node: MarkdownNode) => string`                                                                                                            | Concatenates the `value` / `code` content of every descendant text / code-span / code-block node under `node`, including image alternative content, in walk order — the plain-text projection of an AST (search indexing, word counts, a text-only preview).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+The iterative engines compose these node and scan operations. Child results are supplied in traversal order; span recorders and cell-pair logs belong to the operation that calls them.
+
+| Helper                    | Kind     | Signature                                                                   | Summary                                                                          |
+| ------------------------- | -------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `projectMarkdownNode`     | function | `(current, children) => HTMLNode \| undefined`                              | Projects one markdown node from its already projected children.                  |
+| `renderMarkdownNode`      | function | `(current, children, literal, emphasis) => string`                          | Renders one markdown node from its rendered children and escaped literal text.   |
+| `foldMarkdownNode`        | function | `<T>(node, handlers, children) => T`                                        | Dispatches one markdown node and its folded children to the matching handler.    |
+| `rebuildMarkdownNode`     | function | `(current, children) => MarkdownNode`                                       | Rebuilds one markdown node when accepted child replacements change its identity. |
+| `rebuildMarkdownCell`     | function | `(cell, outputs, pairs) => readonly InlineNode[]`                           | Rebuilds a table cell and records each input and accepted output pair.           |
+| `acceptMarkdownNode`      | function | `(current, rebuilt, result) => MarkdownNode`                                | Accepts a rewritten node only when it fits the original node slot.               |
+| `walkMarkdownCharacters`  | function | `(source, from, to) => Generator<readonly [number, string], void, unknown>` | Yields UTF-16 offsets and characters within a markdown scan window.              |
+| `countMarkdownRun`        | function | `(source, start, to) => number`                                             | Counts consecutive copies of the character at the start of a scan window.        |
+| `findFollowingNode`       | function | `(nodes, start) => MarkdownNode \| undefined`                               | Finds the next defined markdown node at or after an array offset.                |
+| `escapeMarkdownText`      | function | `(value, bang) => string`                                                   | Escapes literal text so markdown syntax remains literal when rendered.           |
+| `locateMarkdownDelimiter` | function | `(source, start, to, open, close) => number \| undefined`                   | Locates a balanced closing delimiter while skipping backslash escapes.           |
+| `recordMarkdownText`      | function | `(source, value, start, end, spans, nodes) => void`                         | Appends a nonempty text node and records its original source span.               |
+| `scanMarkdownInline`      | function | `(source, index, to, spans, depth) => MarkdownInlineScan \| undefined`      | Scans one inline construct and records the spans of its nested children.         |
+| `walkMarkdownLines`       | function | `(lines, start) => Generator<number, void, unknown>`                        | Yields line offsets through a closable markdown scan iterator.                   |
+| `splitTextRuns`           | function | `(nodes) => ReadonlyArray<readonly InlineNode[]>`                           | Splits inline nodes into adjacent text runs and singleton non-text runs.         |
+| `listChildren`            | function | `(node) => readonly MarkdownNode[]`                                         | Lists the direct children of a markdown node in traversal order.                 |
+| `trimLeading`             | function | `(nodes) => readonly InlineNode[]`                                          | Trims leading whitespace when an inline run starts with a text node.             |
+| `trimTrailing`            | function | `(nodes) => readonly InlineNode[]`                                          | Trims trailing whitespace when an inline run ends with a text node.              |
 
 ### Compilers
 
@@ -761,7 +788,9 @@ const markdown = new Markdown('# Title\n\nFirst.\n\nSecond.')
 // universal — a reader loop works in every ReadableStream-supporting environment
 const reader = markdown.stream().getReader()
 const tops: string[] = []
-for (let result = await reader.read(); !result.done; result = await reader.read()) {
+for (;;) {
+	const result = await reader.read()
+	if (result.done) break
 	tops.push(result.value.element) // shallow — top-level blocks only
 }
 // tops: ['heading', 'paragraph', 'paragraph']
@@ -962,3 +991,119 @@ text.is(fixture) // true — guard / generator stay in lockstep
 
 - [`AGENTS.md`](../AGENTS.md) — the repository rules, including the documentation contract every guide here is held to.
 - [`README.md`](README.md) — the guides index.
+
+## Node and scan operations
+
+These operations also accept the child results and recorders supplied by their callers. The handler example uses `countHandlers` from the traversal example above.
+
+### `projectMarkdownNode`
+
+```ts
+projectMarkdownNode({ element: 'text', value: 'hi' }, []) // { category: 'text', value: 'hi' }
+```
+
+### `renderMarkdownNode`
+
+```ts
+renderMarkdownNode({ element: 'thematicBreak' }, [], '', 0) // '---'
+```
+
+### `foldMarkdownNode`
+
+```ts
+foldMarkdownNode({ element: 'text', value: 'hi' }, countHandlers, []) // 1
+```
+
+### `rebuildMarkdownNode`
+
+```ts
+const original: ParagraphNode = { element: 'paragraph', children: [] }
+rebuildMarkdownNode(original, []) === original // true
+```
+
+### `rebuildMarkdownCell`
+
+```ts
+rebuildMarkdownCell([], [].values(), []) // []
+```
+
+### `acceptMarkdownNode`
+
+```ts
+const original: TextNode = { element: 'text', value: 'hi' }
+acceptMarkdownNode(original, original, { element: 'thematicBreak' }) === original // true
+```
+
+### `walkMarkdownCharacters`
+
+```ts
+Array.from(walkMarkdownCharacters('ab', 0, 2)) // [[0, 'a'], [1, 'b']]
+```
+
+### `countMarkdownRun`
+
+```ts
+countMarkdownRun('***x', 0, 4) // 3
+```
+
+### `findFollowingNode`
+
+```ts
+findFollowingNode([], 0) // undefined
+```
+
+### `escapeMarkdownText`
+
+```ts
+escapeMarkdownText('*hi*', false) // '\\*hi\\*'
+```
+
+### `locateMarkdownDelimiter`
+
+```ts
+locateMarkdownDelimiter('[a]', 0, 3, '[', ']') // 2
+```
+
+### `recordMarkdownText`
+
+```ts
+const nodes: InlineNode[] = []
+recordMarkdownText({ text: 'a', segments: [] }, 'a', 0, 1, new Map(), nodes)
+nodes // [{ element: 'text', value: 'a' }]
+```
+
+### `scanMarkdownInline`
+
+```ts
+scanMarkdownInline({ text: '`x`', segments: [] }, 0, 3, new Map(), 0)?.end // 3
+```
+
+### `walkMarkdownLines`
+
+```ts
+Array.from(walkMarkdownLines(splitLines('a\nb'), 1)) // [1]
+```
+
+### `splitTextRuns`
+
+```ts
+splitTextRuns([{ element: 'text', value: 'a' }]).length // 1
+```
+
+### `listChildren`
+
+```ts
+listChildren({ element: 'document', children: [] }) // []
+```
+
+### `trimLeading`
+
+```ts
+trimLeading([{ element: 'text', value: ' a ' }]) // [{ element: 'text', value: 'a ' }]
+```
+
+### `trimTrailing`
+
+```ts
+trimTrailing([{ element: 'text', value: ' a ' }]) // [{ element: 'text', value: ' a' }]
+```

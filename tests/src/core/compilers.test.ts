@@ -1,10 +1,5 @@
-import type {
-	BlockquoteNode,
-	MarkdownDocument,
-	MarkdownNode,
-	ParagraphNode,
-	TableNode,
-} from '@src/core'
+import type { BlockquoteNode, MarkdownDocument, MarkdownNode, ParagraphNode } from '@src/core'
+import { isFabricatedNode, isFabricatedTable, narrowFixture } from '../../setup.js'
 import { MAX_DEPTH, markdownToHTML, parseDocument, renderHTML } from '@src/core'
 import { HTML, SAFE_ATTRIBUTES, renderHTML as renderHTMLDocument } from '@orkestrel/html'
 import { buildDeepEmphasisInput, firstBlock } from '../../setup'
@@ -199,8 +194,10 @@ describe('renderHTML — MAX_DEPTH recursion cap + degrade arms', () => {
 			element: 'paragraph',
 			children: [{ element: 'text', value: 'leaf' }],
 		}
-		let node: BlockquoteNode | ParagraphNode = leaf
-		for (let level = 0; level < 70; level += 1) node = { element: 'blockquote', children: [node] }
+		const node = Array.from({ length: 70 }).reduce<BlockquoteNode | ParagraphNode>(
+			(child) => ({ element: 'blockquote', children: [child] }),
+			leaf,
+		)
 		const html = renderHTML(node)
 		expect(html).toBe('<blockquote>'.repeat(MAX_DEPTH) + '</blockquote>'.repeat(MAX_DEPTH))
 		const sanitized = new HTML(markdownToHTML(node)).sanitize({
@@ -217,26 +214,12 @@ describe('renderHTML — MAX_DEPTH recursion cap + degrade arms', () => {
 		// structurally-invalid node reach `renderHTML` directly, bypassing the strict
 		// `isMarkdownNode` guard — exercising the switch's default arm. Narrowing happens
 		// through the helper's return type (never a conditional `expect`).
-		function isFabricatedNode(value: unknown): value is MarkdownDocument {
-			return typeof value === 'object' && value !== null
-		}
-		function narrow<T>(value: unknown, guard: (candidate: unknown) => candidate is T): T {
-			if (!guard(value)) throw new Error('fixture did not match the expected fabricated shape')
-			return value
-		}
-		const fabricated = narrow({ element: 'bogus' }, isFabricatedNode)
+		const fabricated = narrowFixture({ element: 'bogus' }, isFabricatedNode)
 		expect(renderHTML(fabricated)).toBe('')
 	})
 
 	it('renders a fabricated TableNode with an out-of-set align without injecting a style attribute', () => {
-		function isFabricatedTable(value: unknown): value is TableNode {
-			return typeof value === 'object' && value !== null
-		}
-		function narrow<T>(value: unknown, guard: (candidate: unknown) => candidate is T): T {
-			if (!guard(value)) throw new Error('fixture did not match the expected fabricated shape')
-			return value
-		}
-		const fabricated = narrow(
+		const fabricated = narrowFixture(
 			{
 				element: 'table',
 				header: [[{ element: 'text', value: 'a' }]],

@@ -1,5 +1,6 @@
 import type { ElementNode, HTMLDocument } from '@orkestrel/html'
 import type { MarkdownProjection } from '@src/core'
+import { buildProjection } from './setup.js'
 import {
 	Markdown,
 	createProjection,
@@ -39,3 +40,31 @@ export function extractSurfaceNames(source: string): readonly string[] {
 		table.rows.map((row) => flattenText({ element: 'paragraph', children: row[0] ?? [] })),
 	)
 }
+
+export function buildElement(name: string): ElementNode {
+	return { category: 'element', name, attributes: [], children: [] }
+}
+
+export function buildText(value: string): MarkdownProjection {
+	return buildProjection({ inlines: [{ element: 'text', value }], text: value })
+}
+
+export const ADOPTION_CASES = [
+	{ label: 'a foreign root element', candidate: { element: 'bogus' } },
+	{ label: 'a document without children', candidate: { element: 'document' } },
+	{
+		label: 'a document whose nested text node lacks its value',
+		candidate: {
+			element: 'document',
+			children: [{ element: 'paragraph', children: [{ element: 'text' }] }],
+		},
+	},
+	{ label: 'a markdown source string', candidate: '# Title' },
+	{ label: 'null', candidate: null },
+]
+
+export const SURFACE_CASES = [
+	{ label: 'an empty source', source: '' },
+	{ label: 'prose without a table', source: '# Guide\n\nThe `scanLink` function reads a link.' },
+	{ label: 'a table with a header and no body row', source: '| Name |\n| --- |' },
+]

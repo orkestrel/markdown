@@ -1,5 +1,10 @@
+import { blockCases, cases as malformedCases } from '../../setup.js'
 import { describe, expect, it } from 'vitest'
 import {
+	HEADING_LEVELS,
+	countQuoteDepth,
+	readQuoteLeaf,
+	readListChain,
 	assertBlockquoteNode,
 	assertCodeBlockNode,
 	assertCodeSpanNode,
@@ -39,7 +44,7 @@ import {
 
 describe('parseDocument — headings', () => {
 	it('parses each ATX level (# … ######) to the right heading level', () => {
-		for (let level = 1; level <= 6; level += 1) {
+		for (const level of HEADING_LEVELS) {
 			const heading = assertHeadingNode(firstBlock(`${'#'.repeat(level)} Title ${level}`))
 			expect(heading.level).toBe(level)
 			expect(inlineText(heading.children)).toBe(`Title ${level}`)
@@ -84,13 +89,7 @@ describe('parseDocument — paragraphs', () => {
 	})
 
 	it('stops the paragraph at each block-starting construct without a blank line', () => {
-		const cases: ReadonlyArray<{ readonly markdown: string; readonly kinds: readonly string[] }> = [
-			{ markdown: 'para\n```\ncode\n```', kinds: ['paragraph', 'codeBlock'] },
-			{ markdown: 'para\n---', kinds: ['paragraph', 'thematicBreak'] },
-			{ markdown: 'para\n> quote', kinds: ['paragraph', 'blockquote'] },
-			{ markdown: 'para\n- item', kinds: ['paragraph', 'list'] },
-			{ markdown: 'para\n| a | b |\n| - | - |', kinds: ['paragraph', 'table'] },
-		]
+		const cases = blockCases
 		for (const { markdown, kinds } of cases) {
 			const blocks = parseDocument(markdown).children
 			expect(blocks.map((block) => block.element)).toEqual(kinds)
@@ -532,24 +531,13 @@ describe('parseDocument — MAX_DEPTH recursion cap (block phase)', () => {
 		// the remaining lines degrade to a single literal paragraph rather than recursing
 		// further, so the resulting AST never throws and stays bounded.
 		expect(document.children).toHaveLength(1)
-		let node = document.children[0]
-		let guard = 0
-		while (node !== undefined && node.element === 'blockquote' && guard < 200) {
-			const next = node.children[0]
-			node = next
-			guard += 1
-		}
+		const node = readQuoteLeaf(document.children[0], 200)
 		expect(node?.element).toBe('paragraph')
 	})
 
 	it('pins the exact blockquote nesting depth MAX_DEPTH(=64) caps at', () => {
 		const document = parseDocument(buildDeepQuoteInput(100, 'too deep'))
-		let node = document.children[0]
-		let depth = 0
-		while (node !== undefined && node.element === 'blockquote') {
-			depth += 1
-			node = node.children[0]
-		}
+		const depth = countQuoteDepth(document.children[0])
 		expect(depth).toBe(64)
 	})
 
@@ -558,16 +546,7 @@ describe('parseDocument — MAX_DEPTH recursion cap (block phase)', () => {
 	})
 
 	it('pins deep-list degradation at MAX_DEPTH and retains the residual source', () => {
-		let node = firstBlock(buildDeepListInput(100, 'leaf'))
-		let depth = 0
-		while (node.element === 'list') {
-			const item = assertListNode(node).items[0]
-			if (item === undefined) throw new Error('expected a nested list item')
-			const child = item.children[0]
-			if (child === undefined) throw new Error('expected nested list content')
-			node = child
-			depth += 1
-		}
+		const [node, depth] = readListChain(firstBlock(buildDeepListInput(100, 'leaf')))
 		const paragraph = assertParagraphNode(node)
 		const residual = inlineText(paragraph.children)
 		expect(depth).toBe(MAX_DEPTH)
@@ -577,22 +556,7 @@ describe('parseDocument — MAX_DEPTH recursion cap (block phase)', () => {
 })
 
 describe('parseDocument — total / malformed input never throws', () => {
-	const cases = [
-		'',
-		'   ',
-		'\n\n\n',
-		'**',
-		'`',
-		'[',
-		'](',
-		'| | |',
-		'```',
-		'> > > deeply nested',
-		'#'.repeat(100),
-		'*'.repeat(1000), // adversarial run — must stay linear-time (no ReDoS) and not throw
-		'[a](javascript:alert(1))',
-		'a\0b￿',
-	]
+	const cases = malformedCases
 
 	for (const markdown of cases) {
 		it(`parses ${JSON.stringify(markdown.slice(0, 24))} without throwing`, () => {
@@ -955,5 +919,22 @@ describe('parseProvenance — original-source spans', () => {
 			'{"element":"document","children":[{"element":"heading","level":1,"children":[{"element":"text","value":"Head"}]},{"element":"paragraph","children":[{"element":"text","value":"Plain *literal* "},{"element":"emphasis","strong":true,"children":[{"element":"text","value":"bold"}]},{"element":"text","value":" "},{"element":"codeSpan","value":"code"},{"element":"text","value":" "},{"element":"link","href":"target","children":[{"element":"text","value":"link"}]},{"element":"text","value":" "},{"element":"image","src":"image","children":[{"element":"text","value":"alt"}]},{"element":"break"},{"element":"text","value":"next"}]},{"element":"blockquote","children":[{"element":"paragraph","children":[{"element":"text","value":"quote"}]}]},{"element":"list","ordered":false,"start":1,"items":[{"element":"listItem","children":[{"element":"paragraph","children":[{"element":"text","value":"item\\ncontinuation"}]}]}]},{"element":"table","header":[[{"element":"text","value":"head"}]],"rows":[[[{"element":"text","value":"cell"}]]],"align":[null]},{"element":"codeBlock","lang":"ts","code":"code"},{"element":"thematicBreak"}]}',
 		)
 		for (const node of walkNodes(document)) expect(spans.has(node)).toBe(true)
+		const nodes = new Set(walkNodes(document))
+		expect([...spans.keys()].every((node) => nodes.has(node))).toBe(true)
+	})
+})
+
+describe('parseProvenance — uncapped final tree', () => {
+	it('retains the deepest text span beyond the public walk depth cap', () => {
+		const markdown = buildDeepQuoteInput(70, 'leaf')
+		const [document, spans] = parseProvenance(markdown)
+		const first = document.children[0]
+		if (first === undefined) throw new Error('expected a nested quote')
+		const leaf = readQuoteLeaf(first, 100)
+		const text = assertParagraphNode(leaf).children[0]
+		if (text?.element !== 'text') throw new Error('expected the deepest text')
+		expect([...walkNodes(document)]).not.toContain(text)
+		expect(spans.get(text)?.end).toBe(markdown.length)
+		expect(spans.has(text)).toBe(true)
 	})
 })

@@ -20,6 +20,7 @@ import {
 	isTableStart,
 	isThematicBreak,
 	joinSources,
+	listChildren,
 	normalizeParagraphLine,
 	projectSpan,
 	scanInline,
@@ -30,7 +31,6 @@ import {
 	stripQuote,
 } from './helpers.js'
 import { MAX_DEPTH } from './constants.js'
-import { isNonEmptyArray } from '@orkestrel/contract'
 
 /**
  * Parses a run of markdown lines into a block AST, recursing into nested
@@ -67,39 +67,37 @@ export function parseBlocks(
 		return [paragraph]
 	}
 	const blocks: BlockNode[] = []
-	let index = 0
-	while (index < lines.length) {
+	lines.keys().reduce((index, step) => {
+		if (step < index) return index
 		const line = text[index] ?? ''
 		if (isBlankLine(line)) {
-			index += 1
-			continue
+			return index + 1
 		}
 		const fence = extractFence(line)
 		if (fence) {
 			const start = index
-			const body: MarkdownSource[] = []
-			let closed = false
-			index += 1
-			while (index < lines.length && !isFenceClose(text[index] ?? '', fence.marker)) {
-				const bodyLine = lines[index]
-				if (bodyLine !== undefined) body.push(bodyLine)
-				index += 1
+			const body: Array<readonly [number, boolean, MarkdownSource | undefined]> = []
+			for (const cursor of lines.keys().drop(index + 1)) {
+				const closed = isFenceClose(text[cursor] ?? '', fence.marker)
+				body.push([cursor, closed, closed ? undefined : lines[cursor]])
+				if (closed) break
 			}
-			if (index < lines.length) {
-				closed = true
-				index += 1
-			}
+			const closed = body.at(-1)?.[1] ?? false
+			const next = (body.at(-1)?.[0] ?? index) + 1
 			const node: BlockNode = {
 				element: 'codeBlock',
 				...(fence.lang === undefined ? {} : { lang: fence.lang }),
-				code: joinSources(body, '\n').text,
+				code: joinSources(
+					body.flatMap(([, , source]) => (source === undefined ? [] : [source])),
+					'\n',
+				).text,
 			}
-			const source = joinSources(lines.slice(start, index), '\n')
+			const source = joinSources(lines.slice(start, next), '\n')
 			const span = projectSpan(source, 0, source.text.length)
 			if (span !== undefined)
 				spans.set(node, !closed && end !== undefined ? { start: span.start, end } : span)
 			blocks.push(node)
-			continue
+			return next
 		}
 		if (isThematicBreak(line)) {
 			const node: BlockNode = { element: 'thematicBreak' }
@@ -107,8 +105,7 @@ export function parseBlocks(
 			const span = source === undefined ? undefined : projectSpan(source, 0, source.text.length)
 			if (span !== undefined) spans.set(node, span)
 			blocks.push(node)
-			index += 1
-			continue
+			return index + 1
 		}
 		const heading = extractHeading(line)
 		if (heading) {
@@ -125,59 +122,58 @@ export function parseBlocks(
 			const span = source === undefined ? undefined : projectSpan(source, 0, source.text.length)
 			if (span !== undefined) spans.set(node, span)
 			blocks.push(node)
-			index += 1
-			continue
+			return index + 1
 		}
 		if (isQuote(line)) {
 			const start = index
-			const quoted: MarkdownSource[] = []
-			while (index < lines.length && isQuote(text[index] ?? '')) {
-				const quotedLine = lines[index]
+			const quoted: Array<readonly [number, MarkdownSource]> = []
+			for (const cursor of lines.keys().drop(index)) {
+				if (!isQuote(text[cursor] ?? '')) break
+				const quotedLine = lines[cursor]
 				if (quotedLine === undefined) break
-				quoted.push(stripQuote(quotedLine))
-				index += 1
+				quoted.push([cursor, stripQuote(quotedLine)])
 			}
-			const source = joinSources(lines.slice(start, index), '\n')
+			const next = quoted.length === 0 ? index : (quoted.at(-1)?.[0] ?? index) + 1
+			const source = joinSources(lines.slice(start, next), '\n')
 			const span = projectSpan(source, 0, source.text.length)
 			const node: BlockNode = {
 				element: 'blockquote',
 				children: parseBlocks(
-					quoted,
+					quoted.map(([, quotedLine]) => quotedLine),
 					depth + 1,
 					spans,
-					index === lines.length && end !== undefined ? end : span?.end,
+					next === lines.length && end !== undefined ? end : span?.end,
 				),
 			}
 			if (span !== undefined) spans.set(node, span)
 			blocks.push(node)
-			continue
+			return next
 		}
 		if (isTableStart(line, text[index + 1])) {
 			const table = collectTable(lines, index, spans)
 			blocks.push(table.node)
-			index = table.next
-			continue
+			return table.next
 		}
 		if (extractListItem(line)) {
 			const list = collectList(lines, index, depth, spans, end)
 			blocks.push(list.node)
-			index = list.next
-			continue
+			return list.next
 		}
 		const start = index
-		const paragraph: MarkdownSource[] = []
-		while (
-			index < lines.length &&
-			!isBlankLine(text[index] ?? '') &&
-			!(isNonEmptyArray(paragraph) && startsBlock(text, index))
-		) {
-			const paragraphLine = lines[index]
-			if (paragraphLine !== undefined) paragraph.push(paragraphLine)
-			index += 1
+		const paragraph: Array<readonly [number, MarkdownSource | undefined]> = []
+		for (const cursor of lines.keys().drop(index)) {
+			if (
+				isBlankLine(text[cursor] ?? '') ||
+				(paragraph.some(([, source]) => source !== undefined) && startsBlock(text, cursor))
+			)
+				break
+			paragraph.push([cursor, lines[cursor]])
 		}
+		const next = paragraph.length === 0 ? index : (paragraph.at(-1)?.[0] ?? index) + 1
+		const content = paragraph.flatMap(([, source]) => (source === undefined ? [] : [source]))
 		const source = joinSources(
-			paragraph.map((paragraphLine, position) =>
-				normalizeParagraphLine(paragraphLine, position < paragraph.length - 1),
+			content.map((paragraphLine, position) =>
+				normalizeParagraphLine(paragraphLine, position < content.length - 1),
 			),
 			'\n',
 		)
@@ -185,11 +181,12 @@ export function parseBlocks(
 			element: 'paragraph',
 			children: coalesceText(scanInlineSource(source, 0, source.text.length, spans), spans),
 		}
-		const region = joinSources(lines.slice(start, index), '\n')
+		const region = joinSources(lines.slice(start, next), '\n')
 		const span = projectSpan(region, 0, region.text.length)
 		if (span !== undefined) spans.set(node, span)
 		blocks.push(node)
-	}
+		return next
+	}, 0)
 	return blocks
 }
 
@@ -218,6 +215,10 @@ export function parseDocument(markdown: string): MarkdownDocument {
  * @param markdown - The markdown source to parse.
  * @returns The parsed document and its node-identity span map.
  *
+ * @remarks
+ * Parsing inserts into a scratch memo. The returned map contains only nodes of the
+ * final document, enumerated without the public walk's depth cap.
+ *
  * @example
  * ```ts
  * const [document, spans] = parseProvenance('# Hi')
@@ -225,12 +226,20 @@ export function parseDocument(markdown: string): MarkdownDocument {
  * ```
  */
 export function parseProvenance(markdown: string): MarkdownParseResult {
-	const spans = new Map<MarkdownNode, MarkdownSpan>()
+	const memo = new Map<MarkdownNode, MarkdownSpan>()
 	const document: MarkdownDocument = {
 		element: 'document',
-		children: parseBlocks(splitLines(markdown), 0, spans, markdown.length),
+		children: parseBlocks(splitLines(markdown), 0, memo, markdown.length),
 	}
-	spans.set(document, { start: 0, end: markdown.length })
+	memo.set(document, { start: 0, end: markdown.length })
+	const nodes: MarkdownNode[] = [document]
+	for (const node of nodes) for (const child of listChildren(node)) nodes.push(child)
+	const spans = new Map(
+		nodes.flatMap((node): ReadonlyArray<readonly [MarkdownNode, MarkdownSpan]> => {
+			const span = memo.get(node)
+			return span === undefined ? [] : [[node, span]]
+		}),
+	)
 	return [document, spans]
 }
 
