@@ -15,8 +15,6 @@ One parse is the whole contract: every later output is a projection of the AST i
 
 The full node shape and workspace contract, from [`types.ts`](../src/core/types.ts). `element` is the discriminant every node carries; block nodes carry document structure, inline nodes carry the inline content of a heading / paragraph / list item / table cell. `MarkdownInterface`'s call-signature members are documented under [`## Methods`](#methods).
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
-
 | Name                        | Kind      | Signature                                                                                                                                     | Summary                                                                                                                                                                                                                                                                                                                                                                                          |
 | --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `TableAlign`                | type      | `'left' \| 'right' \| 'center'`                                                                                                               | Names the horizontal alignment of a GFM table column, as declared by its delimiter row (`:---` left, `---:` right, `:---:` center). A bare `---` delimiter is represented by `null` in `TableNode.align`: the positional array requires one entry per column, JSON cannot carry `undefined` in an array, and the bare delimiter is an explicit no-alignment marker rather than an omitted value. |
@@ -67,8 +65,6 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 ### Constants
 
 From [`constants.ts`](../src/core/constants.ts).
-
-A `Shape` cell holds the constant's declared type.
 
 | Name               | Kind  | Signature            | Summary                                                                                                        |
 | ------------------ | ----- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -176,8 +172,6 @@ From [`compilers.ts`](../src/core/compilers.ts) — the class-driving half of th
 
 Declarative `ContractShape` values (from `@orkestrel/contract`) from [`shapers.ts`](../src/core/shapers.ts) — one shape compiles into a guard, coercing parser, JSON Schema, and seeded generator (the compilers live in `@orkestrel/contract`, invoked here through `createContract` in `factories.ts`). Only the non-recursive node types shape here; any type whose fields recurse into `BlockNode` / `InlineNode` / `MarkdownNode` stays guard-only (`validators.ts`, through `lazyOf`) — see [Relationship with @orkestrel/contract](#relationship-with-orkestrelcontract).
 
-A `Shape` cell holds the constant's declared type.
-
 | Name                 | Kind  | Signature                                                                                                                                                                                                                                                                                                                | Summary                                                                                                                                                                                                       |
 | -------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `textRunShape`       | const | `import("@orkestrel/contract").ObjectShape<{ element: import("@orkestrel/contract").LiteralShape<readonly ["text"]>; value: import("@orkestrel/contract").StringShape; }, false>`                                                                                                                                        | Describes the shape of a `TextRun` — a plain-text leaf inline run.                                                                                                                                            |
@@ -191,8 +185,6 @@ A `Shape` cell holds the constant's declared type.
 ### Validators
 
 Node guards, from [`validators.ts`](../src/core/validators.ts). The `is{Element}Node` guards narrow an already-parsed `MarkdownNode` by its `element` tag; the from-unknown guards (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) instead validate an arbitrary `unknown` value against the full node shape, composed from `@orkestrel/contract` combinators. Two distinct guard families: the **from-unknown boundary guards** (`isInlineNode` / `isBlockNode` / `isMarkdownNode` / `isMarkdownDocument`) take `unknown` and validate an entire untrusted value from scratch; the **narrowing guards** (`is{Element}Node`, for example `isTableNode`) take an already-typed `MarkdownNode` and narrow it to one member of the union by its `element` tag — they assume the value is already a valid node shape. The line and character structural predicates the parser tests raw strings with narrow nothing, so they are pure leaves in `helpers.ts` (§ [Helpers](#helpers)).
-
-In a guard table a `Shape` cell holds the type the guard narrows to.
 
 | Name                  | Kind     | Signature                                           | Summary                                                                                                                                                                    |
 | --------------------- | -------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
