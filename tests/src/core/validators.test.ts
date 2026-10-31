@@ -10,7 +10,7 @@ import {
 	isInlineNode,
 	isMarkdownDocument,
 	isMarkdownNode,
-	parseDocument,
+	parseMarkdown,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import {
@@ -36,7 +36,7 @@ describe('parser AST validators', () => {
 	}
 
 	it('stays total across the container nodes no guard covers', () => {
-		const document = parseDocument('# H')
+		const document = parseMarkdown('# H')
 		const item = assertListNode(firstBlock('- a')).items[0]
 		if (item === undefined) throw new Error('expected a list item')
 		for (const { guard } of samples) {
@@ -68,7 +68,7 @@ describe('from-unknown AST guards: acceptance against a real parsed document', (
 		'---',
 	].join('\n')
 
-	const document = parseDocument(richSource)
+	const document = parseMarkdown(richSource)
 
 	it('accepts the whole document as a MarkdownDocument', () => {
 		expect(isMarkdownDocument(document)).toBe(true)
@@ -304,7 +304,7 @@ describe('parse <-> guard consistency', () => {
 	})
 
 	it('the document root satisfies isMarkdownDocument and isMarkdownNode together', () => {
-		const document = parseDocument('# H\n\ntext')
+		const document = parseMarkdown('# H\n\ntext')
 		expect(isMarkdownDocument(document)).toBe(true)
 		expect(isMarkdownNode(document)).toBe(true)
 		expect(isBlockNode(document)).toBe(false)

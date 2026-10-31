@@ -37,7 +37,6 @@ import {
 	scanMarkdownInline,
 	walkMarkdownLines,
 	EMPTY_PROJECTION,
-	MAX_DEPTH,
 	coalesceText,
 	splitTextRuns,
 	listChildren,
@@ -50,7 +49,7 @@ import {
 	extractHeading,
 	extractListItem,
 	flattenText,
-	foldNode,
+	foldMarkdownTree,
 	htmlToMarkdown,
 	countIndent,
 	isBlankLine,
@@ -68,15 +67,15 @@ import {
 	mergeProjections,
 	normalizeInlines,
 	normalizeParagraphLine,
-	parseDocument,
+	parseMarkdown,
 	projectHTMLLeaf,
 	projectHTMLNode,
-	projectSpan,
+	projectMarkdownSpan,
 	projectionToBlocks,
 	projectionToInlines,
-	renderHTML,
+	renderMarkdownHTML,
 	renderMarkdown,
-	rewriteDocument,
+	rewriteMarkdownDocument,
 	scanCode,
 	scanEmphasis,
 	scanInline,
@@ -92,9 +91,9 @@ import {
 	trimInlines,
 	trimSource,
 	unescapeText,
-	walkNodes,
+	walkMarkdownNodes,
 } from '@src/core'
-import { parseDocument as parseHTMLDocument } from '@orkestrel/html'
+import { MAX_DEPTH, parseDocument as parseHTMLDocument } from '@orkestrel/html'
 import {
 	MARKDOWN_FIXPOINT_CORPUS,
 	PROJECTION_CORPUS,
@@ -110,10 +109,10 @@ import { describe, expect, it } from 'vitest'
 
 // The markdown parser's pure helper surface (line and character predicates, block
 // extractors, inline scanners, construct scanners, escaping / sanitization primitives)
-// plus the AST-level surface (markdownToHTML, renderMarkdown, walkNodes, foldNode,
-// rewriteDocument, flattenText, createProjection). Each is pure and total; malformed
+// plus the AST-level surface (markdownToHTML, renderMarkdown, walkMarkdownNodes, foldMarkdownTree,
+// rewriteMarkdownDocument, flattenText, createProjection). Each is pure and total; malformed
 // input degrades instead of throwing. parsers.test.ts covers the composed
-// parse-behavior corpus, and compilers.test.ts covers the class-driving renderHTML
+// parse-behavior corpus, and compilers.test.ts covers the class-driving renderMarkdownHTML
 // pipeline. This suite mirrors every exported helpers.ts symbol.
 
 describe('splitLines', () => {
@@ -230,7 +229,7 @@ describe('joinSources', () => {
 				{ offset: 2, start: 3, end: 4 },
 			],
 		})
-		expect(projectSpan(joined, 1, 2)).toEqual({ start: 1, end: 3 })
+		expect(projectMarkdownSpan(joined, 1, 2)).toEqual({ start: 1, end: 3 })
 	})
 
 	it('returns an empty source when no sources can contribute', () => {
@@ -261,7 +260,7 @@ describe('joinSources', () => {
 	})
 })
 
-describe('projectSpan', () => {
+describe('projectMarkdownSpan', () => {
 	it('projects a range across mapped source runs', () => {
 		const source: MarkdownSource = {
 			text: 'a\nb',
@@ -271,7 +270,7 @@ describe('projectSpan', () => {
 				{ offset: 2, start: 2, end: 3 },
 			],
 		}
-		expect(projectSpan(source, 0, 3)).toEqual({ start: 0, end: 3 })
+		expect(projectMarkdownSpan(source, 0, 3)).toEqual({ start: 0, end: 3 })
 	})
 
 	it('returns undefined when either boundary misses every segment', () => {
@@ -279,8 +278,8 @@ describe('projectSpan', () => {
 			text: '_a_',
 			segments: [{ offset: 1, start: 4, end: 5 }],
 		}
-		expect(projectSpan(source, 0, 2)).toBeUndefined()
-		expect(projectSpan(source, 1, 3)).toBeUndefined()
+		expect(projectMarkdownSpan(source, 0, 2)).toBeUndefined()
+		expect(projectMarkdownSpan(source, 1, 3)).toBeUndefined()
 	})
 
 	it('projects exact segment boundaries', () => {
@@ -288,7 +287,7 @@ describe('projectSpan', () => {
 			text: 'edge',
 			segments: [{ offset: 0, start: 4, end: 8 }],
 		}
-		expect(projectSpan(source, 0, 4)).toEqual({ start: 4, end: 8 })
+		expect(projectMarkdownSpan(source, 0, 4)).toEqual({ start: 4, end: 8 })
 	})
 
 	it('projects a zero-width abutment through the later segment', () => {
@@ -299,7 +298,7 @@ describe('projectSpan', () => {
 				{ offset: 1, start: 5, end: 6 },
 			],
 		}
-		expect(projectSpan(source, 1, 1)).toEqual({ start: 5, end: 5 })
+		expect(projectMarkdownSpan(source, 1, 1)).toEqual({ start: 5, end: 5 })
 	})
 
 	it('resolves a zero-width position shared by several segments through the last one at that offset', () => {
@@ -311,7 +310,7 @@ describe('projectSpan', () => {
 				{ offset: 1, start: 9, end: 10 },
 			],
 		}
-		expect(projectSpan(source, 1, 1)).toEqual({ start: 9, end: 9 })
+		expect(projectMarkdownSpan(source, 1, 1)).toEqual({ start: 9, end: 9 })
 	})
 
 	it('bridges an uncovered interior when both range boundaries resolve', () => {
@@ -322,13 +321,13 @@ describe('projectSpan', () => {
 				{ offset: 2, start: 1, end: 2 },
 			],
 		}
-		expect(projectSpan(source, 0, 3)).toEqual({ start: 0, end: 2 })
-		expect(projectSpan(source, 1, 2)).toBeUndefined()
-		expect(projectSpan(source, 2, 3)).toEqual({ start: 1, end: 2 })
+		expect(projectMarkdownSpan(source, 0, 3)).toEqual({ start: 0, end: 2 })
+		expect(projectMarkdownSpan(source, 1, 2)).toBeUndefined()
+		expect(projectMarkdownSpan(source, 2, 3)).toEqual({ start: 1, end: 2 })
 	})
 
 	it('returns undefined for a fabricated blank source', () => {
-		expect(projectSpan({ text: '', segments: [] }, 0, 0)).toBeUndefined()
+		expect(projectMarkdownSpan({ text: '', segments: [] }, 0, 0)).toBeUndefined()
 	})
 })
 
@@ -637,7 +636,7 @@ describe('splitTableSources', () => {
 		if (source === undefined) throw new Error('expected a table source')
 		const cell = trimSource(splitTableSources(source)[0] ?? { text: '', segments: [] })
 		expect(cell.text).toBe('a|b')
-		expect(projectSpan(cell, 0, cell.text.length)).toEqual({ start: 2, end: 6 })
+		expect(projectMarkdownSpan(cell, 0, cell.text.length)).toEqual({ start: 2, end: 6 })
 	})
 })
 
@@ -1053,40 +1052,40 @@ describe('renderMarkdown — canonical forms', () => {
 	})
 
 	it('normalizes underscore emphasis to asterisks', () => {
-		expect(renderMarkdown(parseDocument('_em_'))).toBe('*em*')
-		expect(renderMarkdown(parseDocument('__strong__'))).toBe('**strong**')
+		expect(renderMarkdown(parseMarkdown('_em_'))).toBe('*em*')
+		expect(renderMarkdown(parseMarkdown('__strong__'))).toBe('**strong**')
 	})
 
 	it('renders list markers as - and N.', () => {
-		expect(renderMarkdown(parseDocument('- a\n- b'))).toBe('- a\n- b')
-		expect(renderMarkdown(parseDocument('2. a\n3. b'))).toBe('2. a\n3. b')
+		expect(renderMarkdown(parseMarkdown('- a\n- b'))).toBe('- a\n- b')
+		expect(renderMarkdown(parseMarkdown('2. a\n3. b'))).toBe('2. a\n3. b')
 	})
 
 	it('renders a thematic break as ---', () => {
-		expect(renderMarkdown(parseDocument('***'))).toBe('---')
+		expect(renderMarkdown(parseMarkdown('***'))).toBe('---')
 	})
 
 	it('renders a fenced code block with a backtick fence', () => {
-		expect(renderMarkdown(parseDocument('```ts\nconst x = 1\n```'))).toBe('```ts\nconst x = 1\n```')
+		expect(renderMarkdown(parseMarkdown('```ts\nconst x = 1\n```'))).toBe('```ts\nconst x = 1\n```')
 	})
 
 	it('renders an ATX heading with # repeated per level', () => {
-		expect(renderMarkdown(parseDocument('### Title'))).toBe('### Title')
+		expect(renderMarkdown(parseMarkdown('### Title'))).toBe('### Title')
 	})
 
 	it('renders a blockquote with > -prefixed lines', () => {
-		expect(renderMarkdown(parseDocument('> hi'))).toBe('> hi')
+		expect(renderMarkdown(parseMarkdown('> hi'))).toBe('> hi')
 	})
 
 	it('renders a table alignment row with :---/---:/:---: delimiters', () => {
 		const markdown = renderMarkdown(
-			parseDocument('| l | c | r |\n| :- | :-: | -: |\n| 1 | 2 | 3 |'),
+			parseMarkdown('| l | c | r |\n| :- | :-: | -: |\n| 1 | 2 | 3 |'),
 		)
 		expect(markdown).toContain('| :--- | :---: | ---: |')
 	})
 
 	it('renders a link as [text](href) with the raw href', () => {
-		expect(renderMarkdown(parseDocument('[a](https://x.dev)'))).toBe('[a](https://x.dev)')
+		expect(renderMarkdown(parseMarkdown('[a](https://x.dev)'))).toBe('[a](https://x.dev)')
 	})
 
 	it('renders an image as ![alt](src)', () => {
@@ -1166,7 +1165,7 @@ describe('renderMarkdown — canonical forms', () => {
 		}
 		const rendered = renderMarkdown(document)
 		expect(rendered).toBe('\\*\\[x\\]\\*')
-		expect(parseDocument(rendered)).toEqual(document)
+		expect(parseMarkdown(rendered)).toEqual(document)
 	})
 })
 
@@ -1200,17 +1199,17 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 	].join('\n')
 
 	it('round-trips a rich combined document (parse(render(doc)) deep-equals doc)', () => {
-		const document = parseDocument(composite)
-		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+		const document = parseMarkdown(composite)
+		expect(parseMarkdown(renderMarkdown(document))).toEqual(document)
 	})
 
 	for (const entry of MARKDOWN_FIXPOINT_CORPUS) {
 		it(`alternates emphasis markers by nesting parity: ${entry.name}`, () => {
-			const document = parseDocument(entry.source)
+			const document = parseMarkdown(entry.source)
 			const rendered = renderMarkdown(document)
 
 			expect(rendered).toBe(entry.rendered)
-			expect(parseDocument(rendered)).toEqual(document)
+			expect(parseMarkdown(rendered)).toEqual(document)
 		})
 	}
 
@@ -1240,7 +1239,7 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		const rendered = renderMarkdown(document)
 
 		expect(rendered).toBe('**b _c_**')
-		expect(parseDocument(rendered)).toEqual(document)
+		expect(parseMarkdown(rendered)).toEqual(document)
 	})
 
 	it('round-trips the exact triple-nested HTML emphasis projection', () => {
@@ -1248,11 +1247,11 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		const rendered = renderMarkdown(projected)
 
 		expect(rendered).toBe('*x _a **c** b_ y*')
-		expect(parseDocument(rendered)).toEqual(projected)
+		expect(parseMarkdown(rendered)).toEqual(projected)
 	})
 
 	it('escapes line-start dash and tilde runs that would become block syntax', () => {
-		const dash = parseDocument('\\---')
+		const dash = parseMarkdown('\\---')
 		const tilde: MarkdownDocument = {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: '~~~' }] }],
@@ -1263,20 +1262,20 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		}
 
 		expect(renderMarkdown(dash)).toBe('\\---')
-		expect(parseDocument(renderMarkdown(dash))).toEqual(dash)
+		expect(parseMarkdown(renderMarkdown(dash))).toEqual(dash)
 		expect(renderMarkdown(tilde)).toBe('\\~~~')
-		expect(parseDocument(renderMarkdown(tilde))).toEqual(tilde)
+		expect(parseMarkdown(renderMarkdown(tilde))).toEqual(tilde)
 		expect(renderMarkdown(stars)).toBe('\\*\\*\\*')
-		expect(parseDocument(renderMarkdown(stars))).toEqual(stars)
+		expect(parseMarkdown(renderMarkdown(stars))).toEqual(stars)
 	})
 
 	it('keeps a table-first list item unambiguous', () => {
 		const source = '- \n  | h |\n  | --- |\n  | x |'
-		const document = parseDocument(source)
+		const document = parseMarkdown(source)
 		const rendered = renderMarkdown(document)
 
 		expect(rendered).toBe(source)
-		expect(parseDocument(rendered)).toEqual(document)
+		expect(parseMarkdown(rendered)).toEqual(document)
 	})
 
 	it('round-trips awkward text carrying literal markup characters (* _ ` [ x ])', () => {
@@ -1286,7 +1285,7 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 				{ element: 'paragraph', children: [{ element: 'text', value: 'a * b _ c ` d [ e ] f' }] },
 			],
 		}
-		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+		expect(parseMarkdown(renderMarkdown(document))).toEqual(document)
 	})
 
 	it('round-trips images, hard breaks, and prose containing literal ![not an image]', () => {
@@ -1318,16 +1317,16 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		}
 		const rendered = renderMarkdown(document)
 		expect(rendered).toContain('literal !\\[not an image\\]')
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('escapes the image-adjacent bang in the exact parser-produced counterexample', () => {
 		const source = 'prose with \\![not an image](x) stays text'
-		const document = parseDocument(source)
+		const document = parseMarkdown(source)
 		const rendered = renderMarkdown(document)
 		expect(rendered).toBe(source)
-		expect(parseDocument(rendered)).toEqual(document)
+		expect(parseMarkdown(rendered)).toEqual(document)
 	})
 
 	it('pins the bang adjacency matrix without unnecessary or double escaping', () => {
@@ -1385,14 +1384,14 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		}
 
 		expect(renderMarkdown(beforeImage)).toBe('!![alt](x)')
-		expect(parseDocument(renderMarkdown(beforeImage))).toEqual(beforeImage)
+		expect(parseMarkdown(renderMarkdown(beforeImage))).toEqual(beforeImage)
 		expect(renderMarkdown(atEnd)).toBe('!')
-		expect(parseDocument(renderMarkdown(atEnd))).toEqual(atEnd)
+		expect(parseMarkdown(renderMarkdown(atEnd))).toEqual(atEnd)
 		expect(renderMarkdown(midText)).toBe('mid!text[link](x)')
-		expect(parseDocument(renderMarkdown(midText))).toEqual(midText)
+		expect(parseMarkdown(renderMarkdown(midText))).toEqual(midText)
 		expect(renderMarkdown(escaped)).toBe(`${'\\'.repeat(3)}![link](x)`)
-		expect(parseDocument(renderMarkdown(escaped))).toEqual(escaped)
-		expect(renderMarkdown(parseDocument(renderMarkdown(escaped)))).toBe(renderMarkdown(escaped))
+		expect(parseMarkdown(renderMarkdown(escaped))).toEqual(escaped)
+		expect(renderMarkdown(parseMarkdown(renderMarkdown(escaped)))).toBe(renderMarkdown(escaped))
 	})
 
 	it('round-trips a hand-built text-ending-bang directly before a link', () => {
@@ -1414,7 +1413,7 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 		}
 		const rendered = renderMarkdown(document)
 		expect(rendered).toBe('\\![link](x)')
-		expect(parseDocument(rendered)).toEqual(document)
+		expect(parseMarkdown(rendered)).toEqual(document)
 	})
 
 	it('round-trips a text line that starts with #, >, or 1. as literal text (not markup)', () => {
@@ -1426,7 +1425,7 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 				{ element: 'paragraph', children: [{ element: 'text', value: '1. not a list' }] },
 			],
 		}
-		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+		expect(parseMarkdown(renderMarkdown(document))).toEqual(document)
 	})
 
 	it('round-trips a table cell containing a literal pipe', () => {
@@ -1441,18 +1440,18 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 				},
 			],
 		}
-		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+		expect(parseMarkdown(renderMarkdown(document))).toEqual(document)
 	})
 
 	it('round-trips an absent table alignment through parse, render, and parse', () => {
 		const source = '| a |\n| --- |'
-		const document = parseDocument(source)
+		const document = parseMarkdown(source)
 		const table = assertTableNode(firstBlock(source))
 
 		expect(table.align).toEqual([null])
 		const rendered = renderMarkdown(document)
 		expect(rendered).toBe('| a |\n| --- |')
-		expect(parseDocument(rendered)).toEqual(document)
+		expect(parseMarkdown(rendered)).toEqual(document)
 	})
 
 	it('round-trips inline code containing backticks', () => {
@@ -1460,100 +1459,100 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'codeSpan', value: 'a`b' }] }],
 		}
-		expect(parseDocument(renderMarkdown(document))).toEqual(document)
+		expect(parseMarkdown(renderMarkdown(document))).toEqual(document)
 	})
 
 	it('round-trips a single-space code span without growing on reparse', () => {
-		const document = parseDocument('` `')
+		const document = parseMarkdown('` `')
 		expect(document).toEqual({
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'codeSpan', value: ' ' }] }],
 		})
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('round-trips a multi-space code span without growing on reparse', () => {
-		const document = parseDocument('`   `')
+		const document = parseMarkdown('`   `')
 		expect(document).toEqual({
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'codeSpan', value: '   ' }] }],
 		})
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('round-trips a heading whose inline text ends in a `#` run', () => {
-		const document = parseDocument('# foo \\#')
+		const document = parseMarkdown('# foo \\#')
 		const heading = document.children[0]
 		expect(heading?.element === 'heading' ? flattenText(heading) : undefined).toBe('foo #')
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('round-trips a heading whose inline text is a single `#`', () => {
-		const document = parseDocument('## #')
+		const document = parseMarkdown('## #')
 		const heading = document.children[0]
 		expect(heading?.element === 'heading' ? flattenText(heading) : undefined).toBe('#')
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('round-trips a heading whose inline text is a `#` run', () => {
-		const document = parseDocument('## ##')
+		const document = parseMarkdown('## ##')
 		const heading = document.children[0]
 		expect(heading?.element === 'heading' ? flattenText(heading) : undefined).toBe('##')
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('round-trips a heading with a word followed by a trailing `#` run', () => {
-		const document = parseDocument('# a \\##')
+		const document = parseMarkdown('# a \\##')
 		const heading = document.children[0]
 		expect(heading?.element === 'heading' ? flattenText(heading) : undefined).toBe('a ##')
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('round-trips a link href containing an escaped closing paren', () => {
-		const document = parseDocument('[x](a\\)b)')
+		const document = parseMarkdown('[x](a\\)b)')
 		const paragraph = document.children[0]
 		const link = paragraph?.element === 'paragraph' ? paragraph.children[0] : undefined
 		expect(link?.element === 'link' ? link.href : undefined).toBe('a)b')
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('round-trips a link href containing an escaped opening paren', () => {
-		const document = parseDocument('[x](a\\(b)')
+		const document = parseMarkdown('[x](a\\(b)')
 		const paragraph = document.children[0]
 		const link = paragraph?.element === 'paragraph' ? paragraph.children[0] : undefined
 		expect(link?.element === 'link' ? link.href : undefined).toBe('a(b')
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('round-trips a link href containing a literal backslash', () => {
-		const document = parseDocument('[x](a\\qb)')
+		const document = parseMarkdown('[x](a\\qb)')
 		const paragraph = document.children[0]
 		const link = paragraph?.element === 'paragraph' ? paragraph.children[0] : undefined
 		expect(link?.element === 'link' ? link.href : undefined).toBe('a\\qb')
 		const rendered = renderMarkdown(document)
-		expect(parseDocument(rendered)).toEqual(document)
-		expect(renderMarkdown(parseDocument(rendered))).toBe(rendered)
+		expect(parseMarkdown(rendered)).toEqual(document)
+		expect(renderMarkdown(parseMarkdown(rendered))).toBe(rendered)
 	})
 
 	it('is idempotent (rendering an already-canonical document twice yields the same source)', () => {
-		const once = renderMarkdown(parseDocument(composite))
-		const twice = renderMarkdown(parseDocument(once))
+		const once = renderMarkdown(parseMarkdown(composite))
+		const twice = renderMarkdown(parseMarkdown(once))
 		expect(once).toBe(twice)
 	})
 
@@ -1574,7 +1573,7 @@ describe('renderMarkdown — round-trip (parse ∘ render = identity)', () => {
 	})
 })
 
-describe('walkNodes', () => {
+describe('walkMarkdownNodes', () => {
 	it('yields the exact DFS pre-order sequence for a known document', () => {
 		const document: MarkdownDocument = {
 			element: 'document',
@@ -1590,19 +1589,19 @@ describe('walkNodes', () => {
 				},
 			],
 		}
-		const sequence = [...walkNodes(document)].map((node) => node.element)
+		const sequence = [...walkMarkdownNodes(document)].map((node) => node.element)
 		expect(sequence).toEqual(['document', 'thematicBreak', 'heading', 'text', 'emphasis', 'text'])
 	})
 
 	it('is root-inclusive (the first yielded node is the passed-in node itself)', () => {
 		const node = firstBlock('hello')
-		const [first] = [...walkNodes(node)]
+		const [first] = [...walkMarkdownNodes(node)]
 		expect(first).toBe(node)
 	})
 
 	it('visits table cell inline nodes header-then-rows', () => {
 		const table = firstBlock('| a | b |\n| - | - |\n| `c` | d |')
-		const sequence = [...walkNodes(table)].map((node) => node.element)
+		const sequence = [...walkMarkdownNodes(table)].map((node) => node.element)
 		expect(sequence).toEqual(['table', 'text', 'text', 'codeSpan', 'text'])
 	})
 
@@ -1625,7 +1624,7 @@ describe('walkNodes', () => {
 				},
 			],
 		}
-		expect([...walkNodes(document)].map((node) => node.element)).toEqual([
+		expect([...walkMarkdownNodes(document)].map((node) => node.element)).toEqual([
 			'document',
 			'paragraph',
 			'image',
@@ -1636,11 +1635,11 @@ describe('walkNodes', () => {
 	})
 
 	it('does not throw on a depth-capped deep block chain', () => {
-		expect(() => [...walkNodes(firstBlock(buildDeepEmphasisInput(100_000)))]).not.toThrow()
+		expect(() => [...walkMarkdownNodes(firstBlock(buildDeepEmphasisInput(100_000)))]).not.toThrow()
 	})
 })
 
-describe('foldNode', () => {
+describe('foldMarkdownTree', () => {
 	it('folds image alternative children and counts hard breaks as leaves', () => {
 		const document: MarkdownDocument = {
 			element: 'document',
@@ -1658,7 +1657,7 @@ describe('foldNode', () => {
 				},
 			],
 		}
-		expect(foldNode(document, countHandlers, 0)).toBe(5)
+		expect(foldMarkdownTree(document, countHandlers, 0)).toBe(5)
 	})
 
 	it('folds children-first (post-order) — a text-collecting fold sees leaves before their parent', () => {
@@ -1668,7 +1667,7 @@ describe('foldNode', () => {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
-		foldNode(document, handlers, 0)
+		foldMarkdownTree(document, handlers, 0)
 		expect(order).toEqual(['text', 'paragraph', 'document'])
 	})
 
@@ -1681,7 +1680,7 @@ describe('foldNode', () => {
 			align: [null, null],
 		}
 		const textHandlers = createTextHandlers(cells)
-		expect(foldNode(table, textHandlers, 0)).toBe('h1,h2,r1c1,r1c2')
+		expect(foldMarkdownTree(table, textHandlers, 0)).toBe('h1,h2,r1c1,r1c2')
 		expect(cells).toEqual(['h1', 'h2', 'r1c1', 'r1c2'])
 	})
 
@@ -1694,29 +1693,31 @@ describe('foldNode', () => {
 			(child) => ({ element: 'blockquote', children: [child] }),
 			leaf,
 		)
-		expect(() => foldNode(node, countHandlers, 0)).not.toThrow()
+		expect(() => foldMarkdownTree(node, countHandlers, 0)).not.toThrow()
 		// Below MAX_DEPTH the fold recurses fully; count is bounded by MAX_DEPTH, never
 		// unbounded by the full 70-level chain (proves the cap fired).
-		expect(foldNode(node, countHandlers, 0)).toBeLessThanOrEqual(MAX_DEPTH + 1)
+		expect(foldMarkdownTree(node, countHandlers, 0)).toBeLessThanOrEqual(MAX_DEPTH + 1)
 	})
 
-	it('a count-fold total equals the walkNodes traversal length', () => {
-		const document = parseDocument(
+	it('a count-fold total equals the walkMarkdownNodes traversal length', () => {
+		const document = parseMarkdown(
 			'# Title\n\nAn intro with **bold**, `code`, and ![alt](x.png).  \nNext.\n\n- one\n- two\n\n| a | b |\n| - | - |\n| 1 | 2 |',
 		)
-		expect(foldNode(document, countHandlers, 0)).toBe([...walkNodes(document)].length)
+		expect(foldMarkdownTree(document, countHandlers, 0)).toBe(
+			[...walkMarkdownNodes(document)].length,
+		)
 	})
 
 	it('keeps every iterative AST engine total while an identity rewrite reuses a wide document', () => {
 		const blocks = buildWideBlocks()
 		const document: MarkdownDocument = { element: 'document', children: blocks }
 
-		expect(() => renderHTML(document)).not.toThrow()
+		expect(() => renderMarkdownHTML(document)).not.toThrow()
 		expect(() => renderMarkdown(document)).not.toThrow()
-		const walked = [...walkNodes(document)].length
+		const walked = [...walkMarkdownNodes(document)].length
 		expect(walked).toBe(blocks.length + 1)
-		expect(foldNode(document, countHandlers, 0)).toBe(blocks.length + 1)
-		const [rewritten] = rewriteDocument(document, (node) => node)
+		expect(foldMarkdownTree(document, countHandlers, 0)).toBe(blocks.length + 1)
+		const [rewritten] = rewriteMarkdownDocument(document, (node) => node)
 		expect(rewritten).toBe(document)
 		expect(rewritten.children).toHaveLength(blocks.length)
 		expect(flattenText(document)).toBe('')
@@ -1731,32 +1732,32 @@ describe('foldNode', () => {
 		blocks[2] = { element: 'paragraph', children: inlines }
 		const document: MarkdownDocument = { element: 'document', children: blocks }
 
-		expect(renderHTML(document)).toBe('<h1>a</h1><p>b</p>')
+		expect(renderMarkdownHTML(document)).toBe('<h1>a</h1><p>b</p>')
 		expect(renderMarkdown(document)).toBe('# a\n\nb')
-		expect([...walkNodes(document)].map((node) => node.element)).toEqual([
+		expect([...walkMarkdownNodes(document)].map((node) => node.element)).toEqual([
 			'document',
 			'heading',
 			'text',
 			'paragraph',
 			'text',
 		])
-		expect(foldNode(document, countHandlers, 0)).toBe(5)
-		const [rewritten] = rewriteDocument(document, (node) =>
+		expect(foldMarkdownTree(document, countHandlers, 0)).toBe(5)
+		const [rewritten] = rewriteMarkdownDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
-		expect(renderHTML(rewritten)).toBe('<h1>A</h1><p>B</p>')
+		expect(renderMarkdownHTML(rewritten)).toBe('<h1>A</h1><p>B</p>')
 		expect(flattenText(document)).toBe('ab')
 	})
 })
 
-describe('rewriteDocument', () => {
+describe('rewriteMarkdownDocument', () => {
 	it('keeps the document identity and records no derivations when the rewrite changes nothing', () => {
 		const document: MarkdownDocument = {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'same' }] }],
 		}
 
-		const [rewritten, derivations] = rewriteDocument(document, (node) => node)
+		const [rewritten, derivations] = rewriteMarkdownDocument(document, (node) => node)
 
 		expect(rewritten).toBe(document)
 		expect([...derivations]).toEqual([])
@@ -1771,7 +1772,7 @@ describe('rewriteDocument', () => {
 		}
 		const document: MarkdownDocument = { element: 'document', children: [paragraph, sibling] }
 
-		const [rewritten, derivations] = rewriteDocument(document, (node) =>
+		const [rewritten, derivations] = rewriteMarkdownDocument(document, (node) =>
 			node === changed ? { element: 'text', value: 'changed' } : node,
 		)
 		const rewrittenParagraph = rewritten.children[0]
@@ -1804,7 +1805,7 @@ describe('rewriteDocument', () => {
 		const document: MarkdownDocument = { element: 'document', children: [paragraph] }
 		const replacement: InlineNode = { element: 'codeSpan', value: 'replacement' }
 
-		const [rewritten, derivations] = rewriteDocument(document, (node) =>
+		const [rewritten, derivations] = rewriteMarkdownDocument(document, (node) =>
 			node === source ? replacement : node,
 		)
 		const rewrittenParagraph = rewritten.children[0]
@@ -1847,7 +1848,7 @@ describe('rewriteDocument', () => {
 		const replacement: BlockquoteNode = { element: 'blockquote', children: projection.blocks }
 		const document: MarkdownDocument = { element: 'document', children: [source] }
 
-		const [rewritten, derivations] = rewriteDocument(document, (node) =>
+		const [rewritten, derivations] = rewriteMarkdownDocument(document, (node) =>
 			node === source ? replacement : node,
 		)
 
@@ -1863,7 +1864,7 @@ describe('rewriteDocument', () => {
 		const paragraph: ParagraphNode = { element: 'paragraph', children: [child] }
 		const document: MarkdownDocument = { element: 'document', children: [paragraph] }
 
-		const [rewritten, derivations] = rewriteDocument(document, (node) =>
+		const [rewritten, derivations] = rewriteMarkdownDocument(document, (node) =>
 			node === child ? { element: 'thematicBreak' } : node,
 		)
 
@@ -1880,7 +1881,7 @@ describe('rewriteDocument', () => {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
-		const [rewritten] = rewriteDocument(document, (node) => {
+		const [rewritten] = rewriteMarkdownDocument(document, (node) => {
 			order.push(node.element)
 			return node
 		})
@@ -1894,7 +1895,7 @@ describe('rewriteDocument', () => {
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
 		const seen: string[] = []
-		const [rewritten] = rewriteDocument(document, (node) => {
+		const [rewritten] = rewriteMarkdownDocument(document, (node) => {
 			seen.push(node.element)
 			return node
 		})
@@ -1908,7 +1909,7 @@ describe('rewriteDocument', () => {
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
 		const snapshot: unknown = JSON.parse(JSON.stringify(document))
-		const [rewritten] = rewriteDocument(document, (node) =>
+		const [rewritten] = rewriteMarkdownDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
 		expect(document).toEqual(snapshot)
@@ -1920,7 +1921,7 @@ describe('rewriteDocument', () => {
 			element: 'document',
 			children: [{ element: 'paragraph', children: [{ element: 'text', value: 'x' }] }],
 		}
-		const [rewritten] = rewriteDocument(document, (node) =>
+		const [rewritten] = rewriteMarkdownDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
 		const paragraph = rewritten.children[0]
@@ -1944,7 +1945,7 @@ describe('rewriteDocument', () => {
 				},
 			],
 		}
-		const [rewritten] = rewriteDocument(document, (node) =>
+		const [rewritten] = rewriteMarkdownDocument(document, (node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
 		)
 		expect(rewritten).toEqual({
@@ -1980,9 +1981,9 @@ describe('rewriteDocument', () => {
 		if (top === undefined) throw new Error('unreachable — chain always has 101 entries')
 		const document: MarkdownDocument = { element: 'document', children: [top] }
 
-		expect(() => rewriteDocument(document, rewrite)).not.toThrow()
+		expect(() => rewriteMarkdownDocument(document, rewrite)).not.toThrow()
 
-		const [rewritten] = rewriteDocument(document, rewrite)
+		const [rewritten] = rewriteMarkdownDocument(document, rewrite)
 		const atCap = readCapNode(rewritten.children[0])
 		// The node AT the cap (and everything below it) is the SAME reference as the
 		// original input — never rebuilt, `rewrite` never invoked on it.
@@ -2029,7 +2030,7 @@ describe('flattenText', () => {
 // `htmlToMarkdown` and the four pure leaves it folds with. The suites below cover
 // one row of the element mapping each (with the observed projected AST), the
 // adversarial inputs the fold must survive, and the round-trip anchor law
-// `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals `htmlToMarkdown(x)`
+// `parseMarkdown(renderMarkdown(htmlToMarkdown(x)))` deep-equals `htmlToMarkdown(x)`
 // over `PROJECTION_CORPUS`.
 
 describe('createProjection', () => {
@@ -2779,7 +2780,7 @@ describe('htmlToMarkdown — adversarial input', () => {
 		// total over the result rather than agreeing with it.
 		expect(depth).toBeGreaterThan(0)
 		expect(depth).toBeLessThanOrEqual(MAX_DEPTH + 2)
-		expect(() => parseDocument(renderMarkdown(projected))).not.toThrow()
+		expect(() => parseMarkdown(renderMarkdown(projected))).not.toThrow()
 	})
 
 	it('is total on a very wide document', () => {
@@ -2799,13 +2800,13 @@ describe('htmlToMarkdown — round-trip anchor law', () => {
 	for (const entry of PROJECTION_CORPUS) {
 		it(`re-parses its own rendered markdown identically: ${entry.name}`, () => {
 			const projected = projectHTML(entry.html)
-			expect(parseDocument(renderMarkdown(projected))).toEqual(projected)
+			expect(parseMarkdown(renderMarkdown(projected))).toEqual(projected)
 		})
 	}
 
 	it('holds for the whole corpus rendered as one document', () => {
 		const projected = projectHTML(PROJECTION_CORPUS.map((entry) => entry.html).join(''))
-		expect(parseDocument(renderMarkdown(projected))).toEqual(projected)
+		expect(parseMarkdown(renderMarkdown(projected))).toEqual(projected)
 	})
 })
 
@@ -2815,9 +2816,9 @@ describe('htmlToMarkdown — the grand round trip', () => {
 			'# Title\n\n_a **c** b_\n\n| Left | Right |\n| :--- | ---: |\n| ![shot](a.png) | [read](/guide) |'
 		const canonical =
 			'# Title\n\n*a __c__ b*\n\n| Left | Right |\n| :--- | ---: |\n| ![shot](a.png) | [read](/guide) |'
-		const projected = htmlToMarkdown(parseHTMLDocument(renderHTML(parseDocument(source))))
-		expect(projected).toEqual(parseDocument(source))
-		expect(parseDocument(renderMarkdown(projected))).toEqual(projected)
+		const projected = htmlToMarkdown(parseHTMLDocument(renderMarkdownHTML(parseMarkdown(source))))
+		expect(projected).toEqual(parseMarkdown(source))
+		expect(parseMarkdown(renderMarkdown(projected))).toEqual(projected)
 		expect(renderMarkdown(projected)).toBe(canonical)
 	})
 
@@ -2843,7 +2844,7 @@ describe('htmlToMarkdown — the grand round trip', () => {
 		expect(renderMarkdown(projected)).toBe('[click]()\n\n![shot]()')
 		// html's floor REMOVES a URL attribute it refuses rather than emptying it, so the
 		// emptied destination does not even reach the output as an attribute.
-		expect(renderHTML(projected)).toBe('<p><a>click</a></p><p><img alt="shot"></p>')
+		expect(renderMarkdownHTML(projected)).toBe('<p><a>click</a></p><p><img alt="shot"></p>')
 	})
 
 	it('refuses hostile destinations and unsafe text in a hand-built HTML document', () => {

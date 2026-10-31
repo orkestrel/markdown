@@ -15,7 +15,7 @@ import type {
 	MarkdownNode,
 	ParagraphNode,
 	TableNode,
-	TextNode,
+	TextRun,
 	ThematicBreakNode,
 } from './types.js'
 import {
@@ -149,14 +149,14 @@ export function isThematicBreakNode(node: MarkdownNode): node is ThematicBreakNo
  * Determines whether a node is a plain text run.
  *
  * @param node - The AST node to test
- * @returns True if the node is a {@link TextNode}; false otherwise
+ * @returns True if the node is a {@link TextRun}; false otherwise
  *
  * @example
  * ```ts
- * isTextNode({ element: 'text', value: 'hi' }) // true
+ * isTextRun({ element: 'text', value: 'hi' }) // true
  * ```
  */
-export function isTextNode(node: MarkdownNode): node is TextNode {
+export function isTextRun(node: MarkdownNode): node is TextRun {
 	return node.element === 'text'
 }
 
@@ -373,7 +373,7 @@ export const isMarkdownNode: Guard<MarkdownNode> = unionOf(
 
 /**
  * Determines whether an arbitrary value is a valid {@link MarkdownDocument} —
- * the parsed-AST root {@link parseDocument} returns, recursively
+ * the parsed-AST root {@link parseMarkdown} returns, recursively
  * validated.
  *
  * @remarks

@@ -35,7 +35,7 @@ import type {
 	TableCollection,
 	TableNode,
 } from './types.js'
-import { EMPTY_PROJECTION, MAX_DEPTH } from './constants.js'
+import { EMPTY_PROJECTION } from './constants.js'
 import { isBlockNode, isInlineNode } from './validators.js'
 import { parseBlocks } from './parsers.js'
 import {
@@ -46,6 +46,7 @@ import {
 	parseInteger,
 } from '@orkestrel/contract'
 import {
+	MAX_DEPTH,
 	SAFE_URL_SCHEMES,
 	TABLE_ALIGNMENTS,
 	UNSAFE_ELEMENTS,
@@ -58,7 +59,7 @@ import {
 
 //  Markdown parsing + rendering leaves (pure and total)
 //
-// The pure leaf primitives {@link parseDocument} composes: the line / character
+// The pure leaf primitives {@link parseMarkdown} composes: the line / character
 // structural predicates (blank lines, quotes, fence closers, thematic breaks, table
 // starts, escapable and whitespace characters), the line / block scanners (headings,
 // fences, list items, table rows), the `collect*` construct scanners (GFM tables and
@@ -215,11 +216,11 @@ export function joinSources(sources: readonly MarkdownSource[], separator: strin
  *
  * @example
  * ```ts
- * projectSpan({ text: 'a', segments: [{ offset: 0, start: 4, end: 5 }] }, 0, 1)
+ * projectMarkdownSpan({ text: 'a', segments: [{ offset: 0, start: 4, end: 5 }] }, 0, 1)
  * // { start: 4, end: 5 }
  * ```
  */
-export function projectSpan(
+export function projectMarkdownSpan(
 	source: MarkdownSource,
 	from: number,
 	to: number,
@@ -300,7 +301,7 @@ export function normalizeParagraphLine(source: MarkdownSource, breaks: boolean):
 	if (!breaks || !source.text.endsWith('  ')) return trimSource(source)
 	const contentEnd = source.text.trimEnd().length
 	const content = trimSource(sliceSource(source, 0, contentEnd))
-	const span = projectSpan(source, contentEnd, source.text.length)
+	const span = projectMarkdownSpan(source, contentEnd, source.text.length)
 	const suffix: MarkdownSource = {
 		text: '  ',
 		segments: span === undefined ? [] : [{ offset: 0, start: span.start, end: span.end }],
@@ -641,7 +642,7 @@ export function splitTableSources(row: MarkdownSource): readonly MarkdownSource[
 			const index = match.index
 			pieces.push(sliceSource(source, start, index))
 			if (match[0] === '\\|') {
-				const span = projectSpan(source, index, index + 2)
+				const span = projectMarkdownSpan(source, index, index + 2)
 				pieces.push({
 					text: '|',
 					segments: span === undefined ? [] : [{ offset: 0, start: span.start, end: span.end }],
@@ -1064,7 +1065,7 @@ export function scanInlineSource(
 	if (depth >= MAX_DEPTH)
 		if (from < to) {
 			const node: InlineNode = { element: 'text', value: source.text.slice(from, to) }
-			const span = projectSpan(source, from, to)
+			const span = projectMarkdownSpan(source, from, to)
 			if (span !== undefined) spans.set(node, span)
 			return [node]
 		} else return []
@@ -1082,7 +1083,7 @@ export function scanInlineSource(
 			const scanned = scanMarkdownInline(source, index, to, spans, depth)
 			if (scanned !== undefined) {
 				recordMarkdownText(source, parts.slice(offset).join(''), start, index, spans, nodes)
-				const span = projectSpan(source, index, scanned.end)
+				const span = projectMarkdownSpan(source, index, scanned.end)
 				if (span !== undefined) spans.set(scanned.node, span)
 				nodes.push(scanned.node)
 				return [scanned.end, scanned.end, parts.length]
@@ -1137,7 +1138,7 @@ export function collectTable(
 	const rows = entries.map(([, row]) => row)
 	const node: TableNode = { element: 'table', header, rows, align: padded }
 	const source = joinSources(lines.slice(start, index), '\n')
-	const span = projectSpan(source, 0, source.text.length)
+	const span = projectMarkdownSpan(source, 0, source.text.length)
 	if (span !== undefined) spans.set(node, span)
 	return { node, next: index }
 }
@@ -1202,7 +1203,7 @@ export function collectList(
 			const source = joinSources(sources, '\n')
 			const textNode: InlineNode = { element: 'text', value: source.text }
 			const paragraph: BlockNode = { element: 'paragraph', children: [textNode] }
-			const residualSpan = projectSpan(source, 0, source.text.length)
+			const residualSpan = projectMarkdownSpan(source, 0, source.text.length)
 			if (residualSpan !== undefined) {
 				spans.set(textNode, residualSpan)
 				spans.set(paragraph, residualSpan)
@@ -1226,7 +1227,7 @@ export function collectList(
 						.map((line) => sliceSource(line, parsed.indent, line.text.length)),
 					'\n',
 				)
-				const span = projectSpan(region, 0, region.text.length)
+				const span = projectMarkdownSpan(region, 0, region.text.length)
 				if (span !== undefined) {
 					spans.set(item, span)
 					spans.set(parent, span)
@@ -1289,14 +1290,14 @@ export function collectList(
 			children: parseBlocks(itemLines, depth + 1, spans, itemEnd),
 		}
 		const source = joinSources(lines.slice(itemStart, next), '\n')
-		const span = projectSpan(source, 0, source.text.length)
+		const span = projectMarkdownSpan(source, 0, source.text.length)
 		if (span !== undefined) spans.set(item, span)
 		items.push(item)
 		return next
 	}, start)
 	const node: ListNode = { element: 'list', ordered, start: startOrdinal, items }
 	const source = joinSources(lines.slice(start, finish), '\n')
-	const span = projectSpan(source, 0, source.text.length)
+	const span = projectMarkdownSpan(source, 0, source.text.length)
 	if (span !== undefined) spans.set(node, span)
 	return { node, next: finish }
 }
@@ -1599,7 +1600,7 @@ export function projectMarkdownNode(
 
 /**
  * Renders a {@link MarkdownNode} to its canonical markdown source — the inverse
- * projection of `renderHTML`. It is the serializer a `parse(renderMarkdown(doc))`
+ * projection of `renderMarkdownHTML`. It is the serializer a `parse(renderMarkdown(doc))`
  * round-trip is built on. Canonical forms: `*` / `**` emphasis at even emphasis
  * nesting depths and `_` / `__` at odd depths, `- ` bullets, `N. ` sequential
  * ordinals (from the list's `start`), `---` thematic breaks, fenced code blocks
@@ -2488,7 +2489,7 @@ export function projectHTMLNode(
  * rebuilt. Total: hostile, cyclic, and pathologically deep input degrades instead of
  * throwing.
  *
- * **Composed depth.** Both packages cap recursion at 64, and html's cap is reached
+ * **Composed depth.** Both packages cap recursion at {@link MAX_DEPTH}, and html's cap is reached
  * first: a document nested past it projects to a chain bounded by that cap, with the
  * content below it truncated before markdown ever sees it. Since the projected chain
  * can be a level or two deeper than {@link MAX_DEPTH}, the serializer's own cap can
@@ -2504,7 +2505,7 @@ export function projectHTMLNode(
  *
  * **The anchor law.** HTML→markdown is lossy, so the fixpoint that matters is the
  * projected AST, not the input bytes:
- * `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals `htmlToMarkdown(x)`.
+ * `parseMarkdown(renderMarkdown(htmlToMarkdown(x)))` deep-equals `htmlToMarkdown(x)`.
  * The projection therefore emits canonical markdown shapes rather than literal
  * translations — whitespace collapsed, edges trimmed, a blank paragraph dropped, a hard
  * break only where a line can end — because a shape markdown cannot write back is a
@@ -2552,10 +2553,10 @@ export function htmlToMarkdown(node: HTMLNode): MarkdownDocument {
  * @example
  * ```ts
  * const doc = { element: 'document', children: [{ element: 'thematicBreak' }] } as const
- * [...walkNodes(doc)].map((node) => node.element) // ['document', 'thematicBreak']
+ * [...walkMarkdownNodes(doc)].map((node) => node.element) // ['document', 'thematicBreak']
  * ```
  */
-export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
+export function* walkMarkdownNodes(node: MarkdownNode): Generator<MarkdownNode> {
 	const stack: Array<{ readonly node: MarkdownNode; readonly depth: number }> = [{ node, depth: 0 }]
 	while (stack.length > 0) {
 		const frame = stack.pop()
@@ -2598,10 +2599,14 @@ export function* walkNodes(node: MarkdownNode): Generator<MarkdownNode> {
  *   document: (_, children) => children.reduce((a, b) => a + b, 1),
  *   // ...one handler per element, each summing its folded children
  * }
- * foldNode(document, countHandlers, 0) // total node count
+ * foldMarkdownTree(document, countHandlers, 0) // total node count
  * ```
  */
-export function foldNode<T>(node: MarkdownNode, handlers: MarkdownHandlerMap<T>, depth: number): T {
+export function foldMarkdownTree<T>(
+	node: MarkdownNode,
+	handlers: MarkdownHandlerMap<T>,
+	depth: number,
+): T {
 	const stack: Array<{
 		readonly node: MarkdownNode
 		readonly depth: number
@@ -2724,11 +2729,11 @@ export function foldMarkdownNode<T>(
  * whose `element` does not fit the slot it was called for (a block slot handed a
  * non-{@link BlockNode}, an inline slot handed a non-{@link InlineNode}, a list-item
  * slot handed a non-`listItem`), the ill-fitting result is discarded and the accepted
- * input child is reused — `rewriteDocument` stays total and never produces a
+ * input child is reused — `rewriteMarkdownDocument` stays total and never produces a
  * structurally invalid document.
  *
- * Descent is capped at {@link MAX_DEPTH}, the same cap {@link walkNodes} and
- * {@link foldNode} observe: at `depth >= MAX_DEPTH` the subtree is passed through
+ * Descent is capped at {@link MAX_DEPTH}, the same cap {@link walkMarkdownNodes} and
+ * {@link foldMarkdownTree} observe: at `depth >= MAX_DEPTH` the subtree is passed through
  * unchanged (by reference, not rebuilt, and `rewrite` is not invoked on it) instead of
  * recursing further, so a pathologically deep adopted document cannot exhaust the
  * call stack. {@link MarkdownInterface.map} inherits this cap since it delegates here.
@@ -2739,12 +2744,12 @@ export function foldMarkdownNode<T>(
  *
  * @example
  * ```ts
- * const [rewritten, derivations] = rewriteDocument(document, (node) =>
+ * const [rewritten, derivations] = rewriteMarkdownDocument(document, (node) =>
  *   node.element === 'text' ? { element: 'text', value: node.value.toUpperCase() } : node,
  * )
  * ```
  */
-export function rewriteDocument(
+export function rewriteMarkdownDocument(
 	document: MarkdownDocument,
 	rewrite: MarkdownRewriteHandler,
 ): MarkdownDerivation<MarkdownDocument> {
@@ -2805,7 +2810,7 @@ export function rewriteDocument(
 		if (rebuilt !== current) derivations.push([rebuilt, current, true])
 		if (current.element === 'document') {
 			const result = rebuilt.element === 'document' ? rebuilt : current
-			const output = new Set(walkNodes(result))
+			const output = new Set(walkMarkdownNodes(result))
 			const retained = new Map(
 				Map.groupBy(derivations, ([node]) => node)
 					.entries()
@@ -2940,7 +2945,7 @@ export function rebuildMarkdownCell(
  *
  * @example
  * ```ts
- * const original: TextNode = { element: 'text', value: 'hi' }
+ * const original: TextRun = { element: 'text', value: 'hi' }
  * acceptMarkdownNode(original, original, { element: 'thematicBreak' }) === original // true
  * ```
  */
@@ -3166,7 +3171,7 @@ export function recordMarkdownText(
 ): void {
 	if (value.length === 0) return
 	const node: InlineNode = { element: 'text', value }
-	const span = projectSpan(source, start, end)
+	const span = projectMarkdownSpan(source, start, end)
 	if (span !== undefined) spans.set(node, span)
 	nodes.push(node)
 }

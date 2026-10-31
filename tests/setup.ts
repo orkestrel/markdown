@@ -22,7 +22,6 @@ import type {
 } from '@src/core'
 import {
 	Markdown,
-	MAX_DEPTH,
 	createProjection,
 	flattenText,
 	htmlToMarkdown,
@@ -30,7 +29,7 @@ import {
 	isThematicBreakNode,
 	isLineBreakNode,
 	isImageNode,
-	isTextNode,
+	isTextRun,
 	isListNode,
 	isTableNode,
 	isParagraphNode,
@@ -40,7 +39,7 @@ import {
 	isCodeSpanNode,
 	isLinkNode,
 } from '@src/core'
-import { parseDocument as parseHTML } from '@orkestrel/html'
+import { MAX_DEPTH, parseDocument as parseHTML } from '@orkestrel/html'
 import { seededRandom } from '@orkestrel/contract'
 import { afterEach, vi } from 'vitest'
 
@@ -154,7 +153,7 @@ export function inlineText(nodes: readonly InlineNode[]): string {
 // `htmlToMarkdown` reads an `@orkestrel/html` AST, so its tests start from HTML
 // source. `projectHTML` is the one parse-then-project step every projection test
 // shares, and `PROJECTION_CORPUS` is the document set the round-trip anchor law
-// (`parseDocument(renderMarkdown(projection))` deep-equals `projection`) is proved
+// (`parseMarkdown(renderMarkdown(projection))` deep-equals `projection`) is proved
 // over — one entry per markdown construct the projection can emit.
 
 /** Builds a {@link MarkdownProjection} with every field defaulted — the projection leaves' test input. */
@@ -369,11 +368,11 @@ export const htmlLikeHandlers: MarkdownHandlerMap<string> = {
 }
 
 export function upper(node: MarkdownNode): MarkdownNode {
-	return isTextNode(node) ? { element: 'text', value: node.value.toUpperCase() } : node
+	return isTextRun(node) ? { element: 'text', value: node.value.toUpperCase() } : node
 }
 
 export function shout(node: MarkdownNode): MarkdownNode {
-	return isTextNode(node) ? { element: 'text', value: `${node.value}!` } : node
+	return isTextRun(node) ? { element: 'text', value: `${node.value}!` } : node
 }
 
 export function createCappedHandlers(seenEmptyChildren: boolean[]): MarkdownHandlerMap<number> {
@@ -751,7 +750,7 @@ export const samples: readonly Sample[] = [
 	{ name: 'codeBlock', node: firstBlock('```\ncode\n```'), guard: isCodeBlockNode },
 	{ name: 'blockquote', node: firstBlock('> q'), guard: isBlockquoteNode },
 	{ name: 'thematicBreak', node: firstBlock('---'), guard: isThematicBreakNode },
-	{ name: 'text', node: assertInlineNode('plain'), guard: isTextNode },
+	{ name: 'text', node: assertInlineNode('plain'), guard: isTextRun },
 	{ name: 'emphasis', node: assertInlineNode('*em*'), guard: isEmphasisNode },
 	{ name: 'codeSpan', node: assertInlineNode('`code`'), guard: isCodeSpanNode },
 	{ name: 'break', node: { element: 'break' }, guard: isLineBreakNode },

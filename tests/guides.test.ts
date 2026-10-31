@@ -44,26 +44,26 @@ await new GuideCommand({
 		Markdown,
 		createTextContract,
 		flattenText,
-		foldNode,
+		foldMarkdownTree,
 		htmlToMarkdown,
 		isHeadingNode,
 		isLinkNode,
-		isTextNode,
+		isTextRun,
 		markdownToHTML,
-		parseDocument,
+		parseMarkdown,
 		parseInline,
-		parseProvenance,
+		parseMarkdownProvenance,
 		projectHTMLLeaf,
 		projectionToBlocks,
-		renderHTML,
+		renderMarkdownHTML,
 		renderMarkdown,
-		rewriteDocument,
+		rewriteMarkdownDocument,
 		scanEmphasis,
 		scanInline,
 		scanInlineSource,
 		scanLink,
 		splitLines,
-		walkNodes,
+		walkMarkdownNodes,
 	} = await import('@src/core')
 	const { adopt, extractSurfaceNames, projectKbdNode } = await import('./setupServer.js')
 	const { toHTML, guideCountHandlers: countHandlers } = await import('./setup.js')
@@ -206,7 +206,7 @@ await new GuideCommand({
 			const source = 'a \\* b *c*'
 			const markdown = new Markdown(source)
 
-			const text = requireValue(markdown.filter(isTextNode)[0], 'expected a text node')
+			const text = requireValue(markdown.filter(isTextRun)[0], 'expected a text node')
 			const region = requireValue(markdown.span(text), 'expected a region')
 
 			expect(text.value).toBe('a * b ')
@@ -221,14 +221,14 @@ await new GuideCommand({
 		})
 
 		it('returns the document and its span map together from one handle-free parse', () => {
-			const [document, spans] = parseProvenance('# Title\n\nA **bold** word.')
+			const [document, spans] = parseMarkdownProvenance('# Title\n\nA **bold** word.')
 
 			expect(spans.get(document)).toEqual({ start: 0, end: 25 })
 		})
 
-		it('carries the parseProvenance fence lines the transcription copies', () => {
+		it('carries the parseMarkdownProvenance fence lines the transcription copies', () => {
 			expect(guideText).toContain(
-				"const [document, spans] = parseProvenance('# Title\\n\\nA **bold** word.')",
+				"const [document, spans] = parseMarkdownProvenance('# Title\\n\\nA **bold** word.')",
 			)
 			expect(guideText).toContain('spans.get(document) // { start: 0, end: 25 }')
 		})
@@ -239,7 +239,7 @@ await new GuideCommand({
 				node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
 			)
 
-			const first = requireValue(lowered.filter(isTextNode)[0], 'expected a text node')
+			const first = requireValue(lowered.filter(isTextRun)[0], 'expected a text node')
 
 			expect(first.value).toBe('hi')
 			expect(lowered.span(first)).toEqual({ start: 2, end: 4 })
@@ -258,7 +258,7 @@ await new GuideCommand({
 			const markdown = new Markdown('a *b* c')
 			const joined = { element: 'text', value: 'joined' } as const
 			const merged = markdown.map((node) => (node.element === 'text' ? joined : node))
-			const text = requireValue(merged.filter(isTextNode)[0], 'expected a text node')
+			const text = requireValue(merged.filter(isTextRun)[0], 'expected a text node')
 
 			expect(merged.span(text)).toBeUndefined()
 		})
@@ -472,9 +472,9 @@ await new GuideCommand({
 		it('drives every standalone projection and traversal from a bare node', () => {
 			const markdown = new Markdown('# Hi\n\nText.')
 
-			expect(renderHTML(markdown.document)).toBe('<h1>Hi</h1><p>Text.</p>')
+			expect(renderMarkdownHTML(markdown.document)).toBe('<h1>Hi</h1><p>Text.</p>')
 			expect(markdownToHTML(markdown.document).category).toBe('document')
-			expect(parseDocument(renderMarkdown(markdown.document))).toEqual(markdown.document)
+			expect(parseMarkdown(renderMarkdown(markdown.document))).toEqual(markdown.document)
 
 			const imported = htmlToMarkdown(parseHTML('<h1>Release notes</h1><p>Ship <b>fast</b>.</p>'))
 
@@ -482,18 +482,21 @@ await new GuideCommand({
 
 			const heading = requireValue(markdown.document.children[0], 'expected a block')
 
-			expect([...walkNodes(heading)].map((node) => node.element)).toEqual(['heading', 'text'])
+			expect([...walkMarkdownNodes(heading)].map((node) => node.element)).toEqual([
+				'heading',
+				'text',
+			])
 
-			expect(foldNode(heading, countHandlers, 0)).toBe(2)
+			expect(foldMarkdownTree(heading, countHandlers, 0)).toBe(2)
 
-			const [rewritten, derivations] = rewriteDocument(markdown.document, (node) =>
+			const [rewritten, derivations] = rewriteMarkdownDocument(markdown.document, (node) =>
 				node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
 			)
 
 			expect(rewritten.children.length).toBe(markdown.document.children.length)
 			expect(derivations.size).toBeGreaterThan(0)
 
-			const [unchanged] = rewriteDocument(markdown.document, (node) => node)
+			const [unchanged] = rewriteMarkdownDocument(markdown.document, (node) => node)
 
 			expect(unchanged).toBe(markdown.document)
 			expect(parseInline('a **bold** span').map((node) => node.element)).toEqual([
@@ -504,15 +507,19 @@ await new GuideCommand({
 		})
 
 		it('carries the standalone fence lines the transcription copies', () => {
-			expect(guideText).toContain("renderHTML(markdown.document) // '<h1>Hi</h1><p>Text.</p>'")
+			expect(guideText).toContain(
+				"renderMarkdownHTML(markdown.document) // '<h1>Hi</h1><p>Text.</p>'",
+			)
 			expect(guideText).toContain('markdownToHTML(markdown.document) // { category: ')
 			expect(guideText).toContain(
 				"renderMarkdown(imported) // '# Release notes\\n\\nShip **fast**.'",
 			)
 			expect(guideText).toContain(
-				"const elements = [...walkNodes(heading)].map((node) => node.element) // ['heading', 'text']",
+				"const elements = [...walkMarkdownNodes(heading)].map((node) => node.element) // ['heading', 'text']",
 			)
-			expect(guideText).toContain('const nodeCount = foldNode(heading, countHandlers, 0) // 2')
+			expect(guideText).toContain(
+				'const nodeCount = foldMarkdownTree(heading, countHandlers, 0) // 2',
+			)
 			expect(guideText).toContain('derivations.size > 0 // true')
 			expect(guideText).toContain('unchanged === markdown.document // true')
 		})
@@ -575,7 +582,7 @@ await new GuideCommand({
 
 		it('carries the contract-fixture fence lines the transcription copies', () => {
 			expect(guideText).toContain('const text = createTextContract()')
-			expect(guideText).toContain('text.schema // the compiled JSON Schema for TextNode')
+			expect(guideText).toContain('text.schema // the compiled JSON Schema for TextRun')
 			expect(guideText).toContain(
 				'const fixture = text.generate(seededRandom(42)) // reproducible seed data',
 			)
@@ -593,7 +600,7 @@ await new GuideCommand({
 				'![alt](https://x.dev/pic.png)',
 			].join('\n')
 
-			const html = renderHTML(parseDocument(source))
+			const html = renderMarkdownHTML(parseMarkdown(source))
 
 			expect(html).toBe(
 				'<p>&lt;script&gt;alert(1)&lt;/script&gt;</p><p><a>link</a></p><p><img alt="alt"></p><p><img src="https://x.dev/pic.png" alt="alt"></p>',

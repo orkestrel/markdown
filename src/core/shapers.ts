@@ -18,18 +18,18 @@ import {
 // (validators.ts) through `lazyOf`.
 
 /**
- * Describes the shape of a {@link TextNode} — a plain-text leaf inline run.
+ * Describes the shape of a {@link TextRun} — a plain-text leaf inline run.
  *
  * @example
  * ```ts
  * import { createContract } from '@orkestrel/contract'
- * import { textShape } from '@src/core'
+ * import { textRunShape } from '@src/core'
  *
- * const text = createContract(textShape)
+ * const text = createContract(textRunShape)
  * text.is({ element: 'text', value: 'hi' }) // true
  * ```
  */
-export const textShape = objectShape({
+export const textRunShape = objectShape({
 	element: literalShape(['text']),
 	value: stringShape(),
 })

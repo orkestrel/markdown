@@ -21,16 +21,17 @@ import {
 	inlineText,
 } from '../../setup.js'
 import {
-	MAX_DEPTH,
 	parseBlocks,
-	parseDocument,
+	parseMarkdown,
 	parseInline,
-	parseProvenance,
+	parseMarkdownProvenance,
 	splitLines,
-	walkNodes,
+	walkMarkdownNodes,
 } from '@src/core'
+import * as core from '@src/core'
+import { MAX_DEPTH } from '@orkestrel/html'
 
-// The markdown parser's parse-behavior surface — parseDocument (the block phase
+// The markdown parser's parse-behavior surface — parseMarkdown (the block phase
 // entry point), parseInline (the inline phase entry point), and the block-phase
 // recursion parseBlocks. The construct scanners those compose (collectTable /
 // collectList) are helpers.ts leaves, covered in helpers.test.ts. The AST is the
@@ -39,10 +40,10 @@ import {
 // discriminated node. Pure + total: malformed markdown degrades to text, never throws,
 // and a MAX_DEPTH recursion cap degrades pathologically deep input to a single literal
 // node rather than exhausting the call stack. Render/HTML behavior lives in
-// compilers.test.ts (renderHTML). The AST narrowers and deep-input builders are
+// compilers.test.ts (renderMarkdownHTML). The AST narrowers and deep-input builders are
 // centralized in tests/setup.ts.
 
-describe('parseDocument — headings', () => {
+describe('parseMarkdown — headings', () => {
 	it('parses each ATX level (# … ######) to the right heading level', () => {
 		for (const level of HEADING_LEVELS) {
 			const heading = assertHeadingNode(firstBlock(`${'#'.repeat(level)} Title ${level}`))
@@ -69,7 +70,7 @@ describe('parseDocument — headings', () => {
 	})
 })
 
-describe('parseDocument — paragraphs', () => {
+describe('parseMarkdown — paragraphs', () => {
 	it('wraps a run of plain lines into one paragraph', () => {
 		const block = firstBlock('line one\nline two')
 		expect(block.element).toBe('paragraph')
@@ -79,19 +80,19 @@ describe('parseDocument — paragraphs', () => {
 	})
 
 	it('separates two paragraphs on a blank line', () => {
-		const blocks = parseDocument('first\n\nsecond').children
+		const blocks = parseMarkdown('first\n\nsecond').children
 		expect(blocks.map((block) => block.element)).toEqual(['paragraph', 'paragraph'])
 	})
 
 	it('starts a heading directly under a paragraph (no blank line required)', () => {
-		const blocks = parseDocument('a paragraph\n## a heading').children
+		const blocks = parseMarkdown('a paragraph\n## a heading').children
 		expect(blocks.map((block) => block.element)).toEqual(['paragraph', 'heading'])
 	})
 
 	it('stops the paragraph at each block-starting construct without a blank line', () => {
 		const cases = blockCases
 		for (const { markdown, kinds } of cases) {
-			const blocks = parseDocument(markdown).children
+			const blocks = parseMarkdown(markdown).children
 			expect(blocks.map((block) => block.element)).toEqual(kinds)
 		}
 	})
@@ -251,7 +252,7 @@ describe('parseInline — images', () => {
 	})
 })
 
-describe('parseDocument — hard breaks', () => {
+describe('parseMarkdown — hard breaks', () => {
 	it('parses two or more trailing spaces before a paragraph newline as a hard break', () => {
 		for (const spaces of ['  ', '   ', '    ']) {
 			const paragraph = assertParagraphNode(firstBlock(`first${spaces}\nsecond`))
@@ -274,7 +275,7 @@ describe('parseDocument — hard breaks', () => {
 	})
 })
 
-describe('parseDocument — lists', () => {
+describe('parseMarkdown — lists', () => {
 	it('parses a bulleted list (-, *, +) to an unordered list', () => {
 		for (const bullet of ['-', '*', '+']) {
 			const list = assertListNode(firstBlock(`${bullet} one\n${bullet} two`))
@@ -352,7 +353,7 @@ describe('parseDocument — lists', () => {
 	})
 })
 
-describe('parseDocument — GFM tables', () => {
+describe('parseMarkdown — GFM tables', () => {
 	const source = '| Name | Age |\n| :--- | ---: |\n| Ada | 36 |\n| Grace | 45 |'
 
 	it('parses a header + delimiter + rows into a table node', () => {
@@ -423,7 +424,7 @@ describe('parseDocument — GFM tables', () => {
 	})
 })
 
-describe('parseDocument — fenced code blocks', () => {
+describe('parseMarkdown — fenced code blocks', () => {
 	it('parses a ```lang block, preserving content verbatim and capturing the language', () => {
 		const block = assertCodeBlockNode(firstBlock('```ts\nconst x = *1*\nif (x) y()\n```'))
 		expect(block.lang).toBe('ts')
@@ -467,7 +468,7 @@ describe('parseDocument — fenced code blocks', () => {
 	})
 })
 
-describe('parseDocument — thematic breaks', () => {
+describe('parseMarkdown — thematic breaks', () => {
 	it('parses ---, ***, ___ as a thematic break', () => {
 		for (const rule of ['---', '***', '___']) {
 			expect(firstBlock(rule).element).toBe('thematicBreak')
@@ -487,7 +488,7 @@ describe('parseDocument — thematic breaks', () => {
 	})
 })
 
-describe('parseDocument — blockquotes', () => {
+describe('parseMarkdown — blockquotes', () => {
 	it('parses > lines into a blockquote of nested blocks', () => {
 		expect(
 			assertBlockquoteNode(firstBlock('> a quoted line\n> over two')).children[0]?.element,
@@ -519,14 +520,14 @@ describe('parseDocument — blockquotes', () => {
 	})
 
 	it('ends the blockquote when a line is no longer prefixed with >', () => {
-		const blocks = parseDocument('> quoted\nnot quoted').children
+		const blocks = parseMarkdown('> quoted\nnot quoted').children
 		expect(blocks.map((block) => block.element)).toEqual(['blockquote', 'paragraph'])
 	})
 })
 
-describe('parseDocument — MAX_DEPTH recursion cap (block phase)', () => {
+describe('parseMarkdown — MAX_DEPTH recursion cap (block phase)', () => {
 	it('degrades a blockquote nested past MAX_DEPTH to one literal paragraph', () => {
-		const document = parseDocument(buildDeepQuoteInput(100, 'too deep'))
+		const document = parseMarkdown(buildDeepQuoteInput(100, 'too deep'))
 		// The outer 63 levels still nest normally; the recursion caps at MAX_DEPTH=64 and
 		// the remaining lines degrade to a single literal paragraph rather than recursing
 		// further, so the resulting AST never throws and stays bounded.
@@ -536,13 +537,19 @@ describe('parseDocument — MAX_DEPTH recursion cap (block phase)', () => {
 	})
 
 	it('pins the exact blockquote nesting depth MAX_DEPTH(=64) caps at', () => {
-		const document = parseDocument(buildDeepQuoteInput(100, 'too deep'))
+		const document = parseMarkdown(buildDeepQuoteInput(100, 'too deep'))
 		const depth = countQuoteDepth(document.children[0])
 		expect(depth).toBe(64)
 	})
 
+	it('caps at the MAX_DEPTH @orkestrel/html declares and exports no copy of it', () => {
+		const document = parseMarkdown(buildDeepQuoteInput(MAX_DEPTH * 2, 'too deep'))
+		expect(countQuoteDepth(document.children[0])).toBe(MAX_DEPTH)
+		expect(Object.keys(core)).not.toContain('MAX_DEPTH')
+	})
+
 	it('degrades a deeply indented nested list past MAX_DEPTH without throwing', () => {
-		expect(() => parseDocument(buildDeepListInput(200, 'leaf'))).not.toThrow()
+		expect(() => parseMarkdown(buildDeepListInput(200, 'leaf'))).not.toThrow()
 	})
 
 	it('pins deep-list degradation at MAX_DEPTH and retains the residual source', () => {
@@ -555,27 +562,27 @@ describe('parseDocument — MAX_DEPTH recursion cap (block phase)', () => {
 	})
 })
 
-describe('parseDocument — total / malformed input never throws', () => {
+describe('parseMarkdown — total / malformed input never throws', () => {
 	const cases = malformedCases
 
 	for (const markdown of cases) {
 		it(`parses ${JSON.stringify(markdown.slice(0, 24))} without throwing`, () => {
-			expect(() => parseDocument(markdown)).not.toThrow()
+			expect(() => parseMarkdown(markdown)).not.toThrow()
 		})
 	}
 
 	it('produces an empty document for blank-only input (total)', () => {
-		expect(parseDocument('\n\n  \n').children).toEqual([])
+		expect(parseMarkdown('\n\n  \n').children).toEqual([])
 	})
 
 	it('returns a document whose children carry the parsed blocks', () => {
-		const document = parseDocument('# hi')
+		const document = parseMarkdown('# hi')
 		expect(document.element).toBe('document')
 		expect(document.children).toHaveLength(1)
 	})
 
 	it('dispatches each line to its block kind', () => {
-		const doc = parseDocument('# h\n\npara\n\n- item\n\n> quote')
+		const doc = parseMarkdown('# h\n\npara\n\n- item\n\n> quote')
 		expect(doc.children.map((block) => block.element)).toEqual([
 			'heading',
 			'paragraph',
@@ -586,20 +593,20 @@ describe('parseDocument — total / malformed input never throws', () => {
 
 	it('parses a long emphasis-marker run quickly (linear-time, no ReDoS)', () => {
 		const start = performance.now()
-		parseDocument('a'.repeat(20_000) + '*'.repeat(20_000))
+		parseMarkdown('a'.repeat(20_000) + '*'.repeat(20_000))
 		expect(performance.now() - start).toBeLessThan(1000)
 	})
 
 	it('parses a pathologically deep blockquote (10,000 levels) without throwing', () => {
-		expect(() => parseDocument(buildDeepQuoteInput(10_000)).children.length).not.toThrow()
+		expect(() => parseMarkdown(buildDeepQuoteInput(10_000)).children.length).not.toThrow()
 	})
 
 	it('parses a pathologically deep indented list (2,000 levels) without throwing', () => {
-		expect(() => parseDocument(buildDeepListInput(2_000)).children.length).not.toThrow()
+		expect(() => parseMarkdown(buildDeepListInput(2_000)).children.length).not.toThrow()
 	})
 
 	it('parses a pathologically deep emphasis/link chain (10,000 levels) without throwing', () => {
-		expect(() => parseDocument(buildDeepEmphasisInput(10_000)).children.length).not.toThrow()
+		expect(() => parseMarkdown(buildDeepEmphasisInput(10_000)).children.length).not.toThrow()
 	})
 })
 
@@ -629,21 +636,21 @@ describe('parseInline — MAX_DEPTH recursion cap', () => {
 	})
 })
 
-describe('parseDocument — line endings', () => {
+describe('parseMarkdown — line endings', () => {
 	const markdown = '# Title\n\n- a\n- b\n\n> quote'
 
 	it('parses CRLF input to the same AST as LF input', () => {
 		const crlf = markdown.replace(/\n/g, '\r\n')
-		expect(parseDocument(crlf)).toEqual(parseDocument(markdown))
+		expect(parseMarkdown(crlf)).toEqual(parseMarkdown(markdown))
 	})
 
 	it('parses lone-CR input to the same AST as LF input', () => {
 		const cr = markdown.replace(/\n/g, '\r')
-		expect(parseDocument(cr)).toEqual(parseDocument(markdown))
+		expect(parseMarkdown(cr)).toEqual(parseMarkdown(markdown))
 	})
 })
 
-describe('parseDocument — round-trip over a self-contained composite document', () => {
+describe('parseMarkdown — round-trip over a self-contained composite document', () => {
 	// One inline fixture exercising every construct this parser supports, proving it
 	// handles a realistic WHOLE document (not one construct at a time alone) — no disk
 	// reads.
@@ -673,7 +680,7 @@ describe('parseDocument — round-trip over a self-contained composite document'
 		'',
 		'---',
 	].join('\n')
-	const document = parseDocument(markdown)
+	const document = parseMarkdown(markdown)
 
 	it('parses the composite document into the expected ordered top-level structure', () => {
 		expect(document.element).toBe('document')
@@ -730,10 +737,10 @@ describe('parseBlocks', () => {
 	})
 })
 
-describe('parseProvenance — original-source spans', () => {
+describe('parseMarkdownProvenance — original-source spans', () => {
 	it('retains span insertion order from inline text through the document', () => {
 		// Base: cc01cc6:src/core/parsers.ts:113,126,233.
-		const [, spans] = parseProvenance('# H')
+		const [, spans] = parseMarkdownProvenance('# H')
 		expect(Array.from(spans.keys(), (node) => node.element)).toEqual([
 			'text',
 			'heading',
@@ -743,20 +750,20 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('records the document span through a trailing terminator', () => {
 		const markdown = '# Head\n'
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const span = spans.get(document)
 		if (span === undefined) throw new Error('expected a document span')
 		expect(markdown.slice(span.start, span.end)).toBe(markdown)
 	})
 
 	it('spans the whole input on the document a handle-free parse returns', () => {
-		const [document, spans] = parseProvenance('# Title\n\nA **bold** word.')
+		const [document, spans] = parseMarkdownProvenance('# Title\n\nA **bold** word.')
 		expect(spans.get(document)).toEqual({ start: 0, end: 25 })
 	})
 
 	it('records heading and heading-text spans', () => {
 		const markdown = '  ## Head ##  '
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const heading = assertHeadingNode(document.children[0])
 		const headingSpan = spans.get(heading)
 		const text = heading.children[0]
@@ -769,7 +776,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('records paragraph and coalesced text spans over consumed spelling', () => {
 		const markdown = '  escaped \\* text  '
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const paragraph = assertParagraphNode(document.children[0])
 		const text = paragraph.children[0]
 		const paragraphSpan = spans.get(paragraph)
@@ -782,7 +789,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('records blockquote and nested block spans', () => {
 		const markdown = '> quote\n> **bold**'
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const quote = assertBlockquoteNode(document.children[0])
 		const paragraph = assertParagraphNode(quote.children[0])
 		const quoteSpan = spans.get(quote)
@@ -795,7 +802,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('records list and list-item spans through indented and lazy continuations', () => {
 		const markdown = '- item\n  indented\nlazy\n- next'
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const list = assertListNode(document.children[0])
 		const first = list.items[0]
 		const second = list.items[1]
@@ -811,7 +818,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('preserves spans through nested-list and blank-continuation branches', () => {
 		const nestedMarkdown = '- parent\n  - child'
-		const [nestedDocument, nestedSpans] = parseProvenance(nestedMarkdown)
+		const [nestedDocument, nestedSpans] = parseMarkdownProvenance(nestedMarkdown)
 		const outer = assertListNode(nestedDocument.children[0])
 		const nested = assertListNode(outer.items[0]?.children[1])
 		const nestedItem = nested.items[0]
@@ -823,7 +830,7 @@ describe('parseProvenance — original-source spans', () => {
 		expect(nestedMarkdown.slice(nestedItemSpan.start, nestedItemSpan.end)).toBe('- child')
 
 		const continuationMarkdown = '- first\n\n  second'
-		const [continuationDocument, continuationSpans] = parseProvenance(continuationMarkdown)
+		const [continuationDocument, continuationSpans] = parseMarkdownProvenance(continuationMarkdown)
 		const list = assertListNode(continuationDocument.children[0])
 		const item = list.items[0]
 		const itemSpan = item === undefined ? undefined : continuationSpans.get(item)
@@ -833,7 +840,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('records table and cell-inline spans through escaped pipes', () => {
 		const markdown = '| head |\n| --- |\n| a\\|b |'
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const table = assertTableNode(document.children[0])
 		const header = table.header[0]?.[0]
 		const cell = table.rows[0]?.[0]?.[0]
@@ -849,7 +856,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('records fenced-code and thematic-break spans', () => {
 		const markdown = '```ts\ncode\n```\n---'
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const fence = assertCodeBlockNode(document.children[0])
 		const rule = document.children[1]
 		const fenceSpan = spans.get(fence)
@@ -862,7 +869,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('runs an unclosed fence span through the original input end', () => {
 		const markdown = '```ts\r\ncode\r\n'
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const fence = assertCodeBlockNode(document.children[0])
 		const span = spans.get(fence)
 		if (span === undefined) throw new Error('expected an unclosed-fence span')
@@ -871,7 +878,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('records emphasis, code-span, link, image, and descendant text spans', () => {
 		const markdown = '**bold** `code` [link](target) ![alt](image)'
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const paragraph = assertParagraphNode(document.children[0])
 		const emphasis = assertEmphasisNode(paragraph.children[0])
 		const code = assertCodeSpanNode(paragraph.children[2])
@@ -909,7 +916,7 @@ describe('parseProvenance — original-source spans', () => {
 
 	it('assigns the whole trailing-space run and CRLF terminator to a hard break', () => {
 		const markdown = 'start   \r\nend'
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const paragraph = assertParagraphNode(document.children[0])
 		const lineBreak = paragraph.children[1]
 		if (lineBreak?.element !== 'break') throw new Error('expected a hard break')
@@ -940,26 +947,26 @@ describe('parseProvenance — original-source spans', () => {
 			'',
 			'---',
 		].join('\n')
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		expect(JSON.stringify(document)).toBe(
 			'{"element":"document","children":[{"element":"heading","level":1,"children":[{"element":"text","value":"Head"}]},{"element":"paragraph","children":[{"element":"text","value":"Plain *literal* "},{"element":"emphasis","strong":true,"children":[{"element":"text","value":"bold"}]},{"element":"text","value":" "},{"element":"codeSpan","value":"code"},{"element":"text","value":" "},{"element":"link","href":"target","children":[{"element":"text","value":"link"}]},{"element":"text","value":" "},{"element":"image","src":"image","children":[{"element":"text","value":"alt"}]},{"element":"break"},{"element":"text","value":"next"}]},{"element":"blockquote","children":[{"element":"paragraph","children":[{"element":"text","value":"quote"}]}]},{"element":"list","ordered":false,"start":1,"items":[{"element":"listItem","children":[{"element":"paragraph","children":[{"element":"text","value":"item\\ncontinuation"}]}]}]},{"element":"table","header":[[{"element":"text","value":"head"}]],"rows":[[[{"element":"text","value":"cell"}]]],"align":[null]},{"element":"codeBlock","lang":"ts","code":"code"},{"element":"thematicBreak"}]}',
 		)
-		for (const node of walkNodes(document)) expect(spans.has(node)).toBe(true)
-		const nodes = new Set(walkNodes(document))
+		for (const node of walkMarkdownNodes(document)) expect(spans.has(node)).toBe(true)
+		const nodes = new Set(walkMarkdownNodes(document))
 		expect([...spans.keys()].every((node) => nodes.has(node))).toBe(true)
 	})
 })
 
-describe('parseProvenance — uncapped final tree', () => {
+describe('parseMarkdownProvenance — uncapped final tree', () => {
 	it('retains the deepest text span beyond the public walk depth cap', () => {
 		const markdown = buildDeepQuoteInput(70, 'leaf')
-		const [document, spans] = parseProvenance(markdown)
+		const [document, spans] = parseMarkdownProvenance(markdown)
 		const first = document.children[0]
 		if (first === undefined) throw new Error('expected a nested quote')
 		const leaf = readQuoteLeaf(first, 100)
 		const text = assertParagraphNode(leaf).children[0]
 		if (text?.element !== 'text') throw new Error('expected the deepest text')
-		expect([...walkNodes(document)]).not.toContain(text)
+		expect([...walkMarkdownNodes(document)]).not.toContain(text)
 		expect(spans.get(text)?.end).toBe(markdown.length)
 		expect(spans.has(text)).toBe(true)
 	})

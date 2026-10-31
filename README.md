@@ -6,7 +6,7 @@
 > sanitized HTML or canonical markdown source and carry an HTML AST back in.
 
 Parse a document with the `createMarkdown` function, query and rewrite the AST the handle holds,
-then write it back out with the `renderHTML` or `renderMarkdown` function. Where the source is
+then write it back out with the `renderMarkdownHTML` or `renderMarkdown` function. Where the source is
 HTML instead, the `htmlToMarkdown` function brings it the other way. Part of the `@orkestrel`
 line.
 
@@ -15,7 +15,7 @@ line.
 - **Each direction lives here.** `markdownToHTML` and `htmlToMarkdown` are inverse projections
   across the boundary, because what an HTML subtree means in markdown is markdown's knowledge, not
   html's.
-- **Sanitized by default, with no opt-out.** `renderHTML` takes one argument and composes
+- **Sanitized by default, with no opt-out.** `renderMarkdownHTML` takes one argument and composes
   `@orkestrel/html`'s sanitize floor, so there is no call shape that emits unsafe HTML.
 - **Bounded by design.** Every parse, traversal, and projection is iterative and depth-capped, so
   malformed or hostile input degrades to literal text instead of throwing.
@@ -35,7 +35,12 @@ npm install @orkestrel/markdown
 ## Usage
 
 ```ts
-import { createMarkdown, htmlToMarkdown, renderHTML, renderMarkdown } from '@orkestrel/markdown'
+import {
+	createMarkdown,
+	htmlToMarkdown,
+	renderMarkdownHTML,
+	renderMarkdown,
+} from '@orkestrel/markdown'
 import { parseDocument as parseHTML } from '@orkestrel/html'
 
 const markdown = createMarkdown('# Hi\n\nRead the [guide](./guide.md) for more, *thanks*.')
@@ -43,7 +48,7 @@ const markdown = createMarkdown('# Hi\n\nRead the [guide](./guide.md) for more, 
 markdown.document
 // { element: 'document', children: [...] } — the typed, render-agnostic AST
 
-renderHTML(markdown.document)
+renderMarkdownHTML(markdown.document)
 // '<h1>Hi</h1><p>Read the <a href="./guide.md">guide</a> for more, <em>thanks</em>.</p>'
 
 // …and back the other way.
@@ -53,7 +58,7 @@ renderMarkdown(htmlToMarkdown(parseHTML('<h1>Release notes</h1><p>Ship <b>fast</
 
 `createMarkdown` (or `new Markdown`) runs a two-phase parse — block phase, then inline phase — and
 holds the result as a stateful workspace exposing `find` / `filter` / `map` / `reduce` / `fold` /
-`stream` / iteration over the AST. `renderHTML` projects that AST onto html's AST, sanitizes it
+`stream` / iteration over the AST. `renderMarkdownHTML` projects that AST onto html's AST, sanitizes it
 against a floor no option can lower, and serializes it. `renderMarkdown` writes canonical markdown
 source instead. `htmlToMarkdown` folds an HTML AST back down to a `MarkdownDocument`, re-sanitizing
 every destination as it goes. Guards (`isMarkdownNode`, `isMarkdownDocument`, `isBlockNode`,
@@ -63,16 +68,17 @@ bundle of guard, parser, JSON Schema, and seeded generator.
 
 ## Laws
 
-- **Markdown fixpoint** — `parseDocument(renderMarkdown(document))` deep-equals a parser-produced
+- **Markdown fixpoint** — `parseMarkdown(renderMarkdown(document))` deep-equals a parser-produced
   `document`, and `renderMarkdown` is idempotent.
-- **Projection anchor** — `parseDocument(renderMarkdown(htmlToMarkdown(x)))` deep-equals
+- **Projection anchor** — `parseMarkdown(renderMarkdown(htmlToMarkdown(x)))` deep-equals
   `htmlToMarkdown(x)`: whatever the projection emits, markdown can write it and read it back
   unchanged.
 
-Each round-trip law holds within the depth budget — markdown's `MAX_DEPTH`, plus html's own cap on
-the inbound trip; beyond it only totality is promised.
+Each round-trip law holds within the depth budget — the `MAX_DEPTH` cap markdown imports from
+`@orkestrel/html`, applied by markdown's recursions and by html's own fold on the inbound trip;
+beyond it only totality is promised.
 
-- **Sanitized output** — `renderHTML` refuses `javascript:`, `data:`, `vbscript:`, `file:`, and
+- **Sanitized output** — `renderMarkdownHTML` refuses `javascript:`, `data:`, `vbscript:`, `file:`, and
   protocol-relative destinations, removes unsafe subtrees whole, and strips every handler and
   styling attribute, whatever the input AST claims.
 

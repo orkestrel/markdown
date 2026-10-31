@@ -22,7 +22,7 @@ import {
 	joinSources,
 	listChildren,
 	normalizeParagraphLine,
-	projectSpan,
+	projectMarkdownSpan,
 	scanInline,
 	scanInlineSource,
 	sliceSource,
@@ -30,7 +30,7 @@ import {
 	startsBlock,
 	stripQuote,
 } from './helpers.js'
-import { MAX_DEPTH } from './constants.js'
+import { MAX_DEPTH } from '@orkestrel/html'
 import { MarkdownLineIterator } from './MarkdownLineIterator.js'
 
 /**
@@ -60,7 +60,7 @@ export function parseBlocks(
 		const source = joinSources(lines, '\n')
 		const inline: InlineNode = { element: 'text', value: source.text }
 		const paragraph: BlockNode = { element: 'paragraph', children: [inline] }
-		const span = projectSpan(source, 0, source.text.length)
+		const span = projectMarkdownSpan(source, 0, source.text.length)
 		if (span !== undefined) {
 			spans.set(inline, span)
 			spans.set(paragraph, span)
@@ -95,7 +95,7 @@ export function parseBlocks(
 				).text,
 			}
 			const source = joinSources(lines.slice(start, next), '\n')
-			const span = projectSpan(source, 0, source.text.length)
+			const span = projectMarkdownSpan(source, 0, source.text.length)
 			if (span !== undefined)
 				spans.set(node, !closed && end !== undefined ? { start: span.start, end } : span)
 			blocks.push(node)
@@ -104,7 +104,8 @@ export function parseBlocks(
 		if (isThematicBreak(line)) {
 			const node: BlockNode = { element: 'thematicBreak' }
 			const source = lines[index]
-			const span = source === undefined ? undefined : projectSpan(source, 0, source.text.length)
+			const span =
+				source === undefined ? undefined : projectMarkdownSpan(source, 0, source.text.length)
 			if (span !== undefined) spans.set(node, span)
 			blocks.push(node)
 			return index + 1
@@ -121,7 +122,8 @@ export function parseBlocks(
 				level: heading.level,
 				children: coalesceText(scanInlineSource(content, 0, content.text.length, spans), spans),
 			}
-			const span = source === undefined ? undefined : projectSpan(source, 0, source.text.length)
+			const span =
+				source === undefined ? undefined : projectMarkdownSpan(source, 0, source.text.length)
 			if (span !== undefined) spans.set(node, span)
 			blocks.push(node)
 			return index + 1
@@ -140,7 +142,7 @@ export function parseBlocks(
 			}
 			const next = quoted.length === 0 ? index : (quoted.at(-1)?.[0] ?? index) + 1
 			const source = joinSources(lines.slice(start, next), '\n')
-			const span = projectSpan(source, 0, source.text.length)
+			const span = projectMarkdownSpan(source, 0, source.text.length)
 			const node: BlockNode = {
 				element: 'blockquote',
 				children: parseBlocks(
@@ -188,7 +190,7 @@ export function parseBlocks(
 			children: coalesceText(scanInlineSource(source, 0, source.text.length, spans), spans),
 		}
 		const region = joinSources(lines.slice(start, next), '\n')
-		const span = projectSpan(region, 0, region.text.length)
+		const span = projectMarkdownSpan(region, 0, region.text.length)
 		if (span !== undefined) spans.set(node, span)
 		blocks.push(node)
 		return next
@@ -198,7 +200,7 @@ export function parseBlocks(
 
 /**
  * Parses a markdown string into a typed {@link MarkdownDocument} AST through the
- * block phase — the document half of what {@link parseProvenance} returns. Malformed
+ * block phase — the document half of what {@link parseMarkdownProvenance} returns. Malformed
  * markdown degrades to literal text, so the parse never throws.
  *
  * @param markdown - The markdown source to parse.
@@ -206,11 +208,11 @@ export function parseBlocks(
  *
  * @example
  * ```ts
- * parseDocument('# Hi') // { element: 'document', children: [{ element: 'heading', ... }] }
+ * parseMarkdown('# Hi') // { element: 'document', children: [{ element: 'heading', ... }] }
  * ```
  */
-export function parseDocument(markdown: string): MarkdownDocument {
-	const [document] = parseProvenance(markdown)
+export function parseMarkdown(markdown: string): MarkdownDocument {
+	const [document] = parseMarkdownProvenance(markdown)
 	return document
 }
 
@@ -227,11 +229,11 @@ export function parseDocument(markdown: string): MarkdownDocument {
  *
  * @example
  * ```ts
- * const [document, spans] = parseProvenance('# Hi')
+ * const [document, spans] = parseMarkdownProvenance('# Hi')
  * spans.get(document) // { start: 0, end: 4 }
  * ```
  */
-export function parseProvenance(markdown: string): MarkdownParseResult {
+export function parseMarkdownProvenance(markdown: string): MarkdownParseResult {
 	const memo = new Map<MarkdownNode, MarkdownSpan>()
 	const document: MarkdownDocument = {
 		element: 'document',

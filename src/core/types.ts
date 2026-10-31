@@ -188,7 +188,7 @@ export interface MarkdownSpan {
  * normalized `\r\n` terminator is one derived code unit over a two-unit original
  * region.
  *
- * `projectSpan` resolves a derived position `p` against that shape by the following
+ * `projectMarkdownSpan` resolves a derived position `p` against that shape by the following
  * rules rather than by a single affine relation:
  *
  * - strictly inside the run, `p` projects to `start + (p - offset)`;
@@ -225,10 +225,10 @@ export interface MarkdownSegment {
  * The runs need not cover every position of `text`. `joinSources` records a segment
  * for its separator only where the two sides leave a gap in the original, so joining
  * two abutting regions with a separator leaves that separator's derived position
- * uncovered. `projectSpan` resolves a range's two boundaries against the runs
+ * uncovered. `projectMarkdownSpan` resolves a range's two boundaries against the runs
  * independently: it reports `undefined` when either boundary lands in an uncovered
  * position, and it bridges an uncovered interior when both boundaries resolve. Test
- * coverage with `projectSpan` rather than assuming it.
+ * coverage with `projectMarkdownSpan` rather than assuming it.
  */
 export interface MarkdownSource {
 	/** Holds the derived text a parser reads. */
@@ -243,7 +243,7 @@ export interface MarkdownSource {
  * html's text encoder escapes `&`, `<`, `>` on the way out; `"` and `'` stay literal
  * in character data.
  */
-export interface TextNode {
+export interface TextRun {
 	readonly element: 'text'
 	/** Holds the literal text content (escapes resolved, not yet HTML-escaped). */
 	readonly value: string
@@ -309,7 +309,7 @@ export interface ImageNode {
 
 /** Represents a node that can appear inside inline content (a heading / paragraph / cell / list item / link text). */
 export type InlineNode =
-	| TextNode
+	| TextRun
 	| EmphasisNode
 	| CodeSpanNode
 	| LineBreakNode
@@ -519,8 +519,8 @@ export interface MarkdownHandlerMap<T> {
 	 * flat `children` list.
 	 */
 	readonly table: MarkdownHandler<TableNode, T>
-	/** Folds a {@link TextNode} (leaf — always called with an empty children list). */
-	readonly text: MarkdownHandler<TextNode, T>
+	/** Folds a {@link TextRun} (leaf — always called with an empty children list). */
+	readonly text: MarkdownHandler<TextRun, T>
 	/** Folds an {@link EmphasisNode} from its already-folded inline children. */
 	readonly emphasis: MarkdownHandler<EmphasisNode, T>
 	/** Folds a {@link CodeSpanNode} (leaf — always called with an empty children list). */
@@ -542,7 +542,7 @@ export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
 
 /**
  * Pairs a parsed document with the {@link MarkdownSpan} of each of its nodes — what
- * `parseProvenance` returns, and what `parseDocument` projects the document out of.
+ * `parseMarkdownProvenance` returns, and what `parseMarkdown` projects the document out of.
  *
  * @remarks
  * `spans` is keyed by node identity, so it addresses the nodes of that document and
@@ -551,7 +551,7 @@ export type MarkdownRewriteHandler = (node: MarkdownNode) => MarkdownNode
  * the first part's `start` to the last part's `end`, which can include original text
  * lying between them. Absence means the parse recorded no region for the node, not
  * that the node was assembled from more than one region. Destructure it as
- * `const [document, spans] = parseProvenance(markdown)`.
+ * `const [document, spans] = parseMarkdownProvenance(markdown)`.
  */
 export type MarkdownParseResult = readonly [
 	document: MarkdownDocument,
@@ -560,7 +560,7 @@ export type MarkdownParseResult = readonly [
 
 /**
  * Pairs a rewritten value with the input node each rewritten node was produced from —
- * what `rewriteDocument` returns, so provenance survives a rewrite instead of ending at
+ * what `rewriteMarkdownDocument` returns, so provenance survives a rewrite instead of ending at
  * it. `T` is the rewritten value: the document for a whole-document rewrite.
  *
  * @remarks

@@ -5,7 +5,7 @@ import type {
 	LineBreakNode,
 	MarkdownDocument,
 	MarkdownInterface,
-	TextNode,
+	TextRun,
 	ThematicBreakNode,
 } from './types.js'
 import { createContract } from '@orkestrel/contract'
@@ -14,7 +14,7 @@ import {
 	codeBlockShape,
 	codeSpanShape,
 	lineBreakShape,
-	textShape,
+	textRunShape,
 	thematicBreakShape,
 } from './shapers.js'
 
@@ -49,11 +49,11 @@ export function createMarkdown(input: string | MarkdownDocument): MarkdownInterf
 }
 
 /**
- * Compiles the {@link textShape} into a {@link ContractInterface} for
- * {@link TextNode} — a guard, coercing parser, JSON Schema, and seeded
+ * Compiles the {@link textRunShape} into a {@link ContractInterface} for
+ * {@link TextRun} — a guard, coercing parser, JSON Schema, and seeded
  * generator from one shape declaration.
  *
- * @returns A `TextNode` contract bundling `schema` / `is` / `parse` / `generate`
+ * @returns A `TextRun` contract bundling `schema` / `is` / `parse` / `generate`
  *
  * @example
  * ```ts
@@ -63,8 +63,8 @@ export function createMarkdown(input: string | MarkdownDocument): MarkdownInterf
  * text.is({ element: 'text', value: 'hi' }) // true
  * ```
  */
-export function createTextContract(): ContractInterface<TextNode> {
-	return createContract(textShape)
+export function createTextContract(): ContractInterface<TextRun> {
+	return createContract(textRunShape)
 }
 
 /**

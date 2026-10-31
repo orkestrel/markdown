@@ -25,11 +25,11 @@ import { markdownToHTML } from './helpers.js'
  *
  * @example
  * ```ts
- * renderHTML({ element: 'paragraph', children: [{ element: 'text', value: 'a & b' }] })
+ * renderMarkdownHTML({ element: 'paragraph', children: [{ element: 'text', value: 'a & b' }] })
  * // '<p>a &amp; b</p>'
  * ```
  */
-export function renderHTML(node: MarkdownNode): string {
+export function renderMarkdownHTML(node: MarkdownNode): string {
 	return renderHTMLDocument(
 		new HTML(markdownToHTML(node)).sanitize({ attributes: [...SAFE_ATTRIBUTES, 'src'] }).document,
 	)

@@ -5,9 +5,9 @@ import {
 	createMarkdown,
 	createTextContract,
 	createThematicBreakContract,
-	parseDocument,
+	parseMarkdown,
 	parseInline,
-	renderHTML,
+	renderMarkdownHTML,
 } from '@src/core'
 import { seededRandom } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
@@ -37,7 +37,7 @@ describe('createMarkdown', () => {
 
 	it('renders an AST to safe HTML (text escaped, href sanitized)', () => {
 		const markdown = createMarkdown('[x](javascript:unit) <b>')
-		const html = renderHTML(markdown.document)
+		const html = renderMarkdownHTML(markdown.document)
 
 		expect(html).toContain('<a>x</a>')
 		expect(html).toContain('&lt;b&gt;')
@@ -51,18 +51,18 @@ describe('createMarkdown', () => {
 	})
 
 	it('is total — malformed markdown degrades without throwing', () => {
-		expect(() => renderHTML(createMarkdown('**[`').document)).not.toThrow()
+		expect(() => renderMarkdownHTML(createMarkdown('**[`').document)).not.toThrow()
 	})
 
 	it('hands back independent handles (stateless reuse is consistent)', () => {
 		const first = createMarkdown('# A')
 		const second = createMarkdown('# A')
 
-		expect(renderHTML(first.document)).toBe(renderHTML(second.document))
+		expect(renderMarkdownHTML(first.document)).toBe(renderMarkdownHTML(second.document))
 	})
 
 	it('accepts an already-parsed MarkdownDocument and returns independent instances', () => {
-		const document = parseDocument('# A')
+		const document = parseMarkdown('# A')
 		const first = createMarkdown(document)
 		const second = createMarkdown(document)
 
@@ -79,7 +79,7 @@ describe('createMarkdown', () => {
 // hand-built fixture).
 
 describe('createTextContract', () => {
-	it('returns a working TextNode contract', () => {
+	it('returns a working TextRun contract', () => {
 		const contract = createTextContract()
 
 		expect(contract.is({ element: 'text', value: 'hi' })).toBe(true)
@@ -91,7 +91,7 @@ describe('createTextContract', () => {
 		expect(contract.is(contract.generate(seededRandom(TEST_SEED)))).toBe(true)
 	})
 
-	it('accepts a real parser-produced TextNode', () => {
+	it('accepts a real parser-produced TextRun', () => {
 		const node = assertInlineNode('hello')
 		expect(createTextContract().is(node)).toBe(true)
 	})

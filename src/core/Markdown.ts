@@ -8,8 +8,8 @@ import type {
 	MarkdownSpan,
 } from './types.js'
 import { isString } from '@orkestrel/contract'
-import { foldNode, rewriteDocument, walkNodes } from './helpers.js'
-import { parseProvenance } from './parsers.js'
+import { foldMarkdownTree, rewriteMarkdownDocument, walkMarkdownNodes } from './helpers.js'
+import { parseMarkdownProvenance } from './parsers.js'
 
 /**
  * Wraps a typed {@link MarkdownDocument} AST as a stateful, parsed markdown document
@@ -17,7 +17,7 @@ import { parseProvenance } from './parsers.js'
  * streaming operations {@link MarkdownInterface} declares.
  *
  * @remarks
- * - **Construction.** Given a `string`, the constructor runs {@link parseProvenance} (the
+ * - **Construction.** Given a `string`, the constructor runs {@link parseMarkdownProvenance} (the
  *   block phase then the inline phase) once, keeping the AST and a copy of the span map
  *   that parse recorded. Given a {@link MarkdownDocument}, the document is adopted as-is
  *   and is not re-validated — gate an untrusted value with `isMarkdownDocument` first.
@@ -37,7 +37,7 @@ import { parseProvenance } from './parsers.js'
  *   instance; the document root invariant (`element: 'document'`) always holds. An
  *   identity rewrite still returns a new handle, over the same document tree.
  * - **Traversal order.** {@link walk} and the `find` / `filter` / `reduce` queries built
- *   on it walk the AST depth-first, pre-order, root-inclusive (through {@link walkNodes});
+ *   on it walk the AST depth-first, pre-order, root-inclusive (through {@link walkMarkdownNodes});
  *   `stream` is shallow — only the document's direct block children.
  *
  * @example Construct from a string and narrow with a guard
@@ -57,7 +57,7 @@ export class Markdown implements MarkdownInterface {
 
 	constructor(input: string | MarkdownDocument) {
 		if (isString(input)) {
-			const [document, spans] = parseProvenance(input)
+			const [document, spans] = parseMarkdownProvenance(input)
 			this.#document = document
 			this.#spans = new Map(spans)
 		} else {
@@ -111,7 +111,7 @@ export class Markdown implements MarkdownInterface {
 	 * ```
 	 */
 	*walk(): Generator<MarkdownNode> {
-		yield* walkNodes(this.#document)
+		yield* walkMarkdownNodes(this.#document)
 	}
 
 	// Finds the first node (depth-first, pre-order) narrowed by a type guard.
@@ -143,7 +143,7 @@ export class Markdown implements MarkdownInterface {
 	 * @returns A new handle over the rewritten document
 	 */
 	map(rewrite: MarkdownRewriteHandler): MarkdownInterface {
-		const [document, derivations] = rewriteDocument(this.#document, rewrite)
+		const [document, derivations] = rewriteMarkdownDocument(this.#document, rewrite)
 		return this.#derive(document, derivations)
 	}
 
@@ -154,7 +154,7 @@ export class Markdown implements MarkdownInterface {
 
 	/** Runs a total catamorphism over the document using a {@link MarkdownHandlerMap} table. */
 	fold<T>(handlers: MarkdownHandlerMap<T>): T {
-		return foldNode(this.#document, handlers, 0)
+		return foldMarkdownTree(this.#document, handlers, 0)
 	}
 
 	/**
@@ -204,7 +204,7 @@ export class Markdown implements MarkdownInterface {
 		derivations: ReadonlyMap<MarkdownNode, MarkdownNode | undefined>,
 	): Markdown {
 		const derived = new Markdown(document)
-		for (const node of walkNodes(document)) {
+		for (const node of walkMarkdownNodes(document)) {
 			const own = this.#spans.get(node)
 			if (own !== undefined) {
 				derived.#spans.set(node, own)

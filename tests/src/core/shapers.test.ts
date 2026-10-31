@@ -4,7 +4,7 @@ import type {
 	LineBreakNode,
 	ListItemMatch,
 	TableAlign,
-	TextNode,
+	TextRun,
 	ThematicBreakNode,
 } from '@src/core'
 import type { Infer } from '@orkestrel/contract'
@@ -15,7 +15,7 @@ import {
 	lineBreakShape,
 	listItemMatchShape,
 	tableAlignShape,
-	textShape,
+	textRunShape,
 	thematicBreakShape,
 } from '@src/core'
 import { arrayShape, createContract, nullableShape, seededRandom } from '@orkestrel/contract'
@@ -27,10 +27,10 @@ import { TEST_SEED } from '../../setup.js'
 // shapes are the non-recursive slice of the markdown AST (types.ts) — every
 // field shapes directly, no lazy/self-referential node.
 
-describe('textShape', () => {
-	const contract = createContract(textShape)
+describe('textRunShape', () => {
+	const contract = createContract(textRunShape)
 
-	it('is: accepts a valid TextNode', () => {
+	it('is: accepts a valid TextRun', () => {
 		expect(contract.is({ element: 'text', value: 'hi' })).toBe(true)
 	})
 
@@ -73,9 +73,9 @@ describe('textShape', () => {
 		expect(contract.parse({ element: 'paragraph', value: 'x' })).toBeUndefined()
 	})
 
-	it('type parity: Infer<typeof textShape> matches TextNode both ways', () => {
-		expectTypeOf<Infer<typeof textShape>>().toEqualTypeOf<TextNode>()
-		expectTypeOf<TextNode>().toEqualTypeOf<Infer<typeof textShape>>()
+	it('type parity: Infer<typeof textRunShape> matches TextRun both ways', () => {
+		expectTypeOf<Infer<typeof textRunShape>>().toEqualTypeOf<TextRun>()
+		expectTypeOf<TextRun>().toEqualTypeOf<Infer<typeof textRunShape>>()
 	})
 })
 

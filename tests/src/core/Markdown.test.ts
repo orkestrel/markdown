@@ -4,7 +4,7 @@ import type {
 	MarkdownDocument,
 	MarkdownNode,
 	ParagraphNode,
-	TextNode,
+	TextRun,
 } from '@src/core'
 import {
 	countHandlers,
@@ -19,7 +19,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import { collectStream } from '@orkestrel/test'
 import { buildDeepQuoteInput, firstBlock, projectHTML } from '../../setup.js'
-import { Markdown, isHeadingNode, isMarkdownDocument, isTextNode } from '@src/core'
+import { Markdown, isHeadingNode, isMarkdownDocument, isTextRun } from '@src/core'
 
 // The Markdown CLASS — the stateful wrapper around a parsed MarkdownDocument AST,
 // exposing query (find/filter/reduce/iteration), rewrite (map), fold, and streaming
@@ -85,7 +85,7 @@ describe('Markdown — span', () => {
 	it('slices the constructor string verbatim where the value decoded an escape', () => {
 		const source = 'a \\* b *c*'
 		const markdown = new Markdown(source)
-		const [text] = markdown.filter(isTextNode)
+		const [text] = markdown.filter(isTextRun)
 		expect(text?.value).toBe('a * b ')
 		const region = text === undefined ? undefined : markdown.span(text)
 		expect(region).toEqual({ start: 0, end: 7 })
@@ -96,7 +96,7 @@ describe('Markdown — span', () => {
 	it('reports the region across a trimmed trailing space, the trimmed space included', () => {
 		const source = 'a \nb'
 		const markdown = new Markdown(source)
-		const [text] = markdown.filter(isTextNode)
+		const [text] = markdown.filter(isTextRun)
 		expect(text?.value).toBe('a\nb')
 		const region = text === undefined ? undefined : markdown.span(text)
 		expect(region).toEqual({ start: 0, end: 4 })
@@ -172,7 +172,7 @@ describe('Markdown — find', () => {
 		const markdown = new Markdown('> ## nested heading\n\n## later heading')
 		const heading = markdown.find(isHeadingNode)
 		expect(
-			heading?.children.some((child) => isTextNode(child) && child.value === 'nested heading'),
+			heading?.children.some((child) => isTextRun(child) && child.value === 'nested heading'),
 		).toBe(true)
 	})
 
@@ -222,8 +222,8 @@ describe('Markdown — map', () => {
 		const markdown = new Markdown('a lowercase paragraph')
 		const rewritten = markdown.map(upper)
 		expect(firstBlock('a lowercase paragraph').element).toBe('paragraph')
-		const originalText = markdown.filter(isTextNode)[0]
-		const rewrittenText = rewritten.filter(isTextNode)[0]
+		const originalText = markdown.filter(isTextRun)[0]
+		const rewrittenText = rewritten.filter(isTextRun)[0]
 		expect(originalText?.value).toBe('a lowercase paragraph')
 		expect(rewrittenText?.value).toBe('A LOWERCASE PARAGRAPH')
 	})
@@ -234,7 +234,7 @@ describe('Markdown — map', () => {
 		markdown.map((node) => {
 			if (node.element === 'heading') {
 				const child = node.children[0]
-				if (child !== undefined && isTextNode(child)) seenAtHeadingTime.push(child.value)
+				if (child !== undefined && isTextRun(child)) seenAtHeadingTime.push(child.value)
 			}
 			return node
 		})
@@ -254,7 +254,7 @@ describe('Markdown — map', () => {
 	it('chains — md.map(a).map(b) applies both rewrites', () => {
 		const markdown = new Markdown('hi')
 		const chained = markdown.map(upper).map(shout)
-		const text = chained.filter(isTextNode)[0]
+		const text = chained.filter(isTextRun)[0]
 		expect(text?.value).toBe('HI!')
 	})
 })
@@ -271,9 +271,9 @@ describe('Markdown — map provenance', () => {
 	it('gives a one-source replacement its source region and a rebuilt ancestor its original one', () => {
 		const markdown = new Markdown('# Title\n\npara')
 		const rewritten = markdown.map((node) =>
-			isTextNode(node) && node.value === 'para' ? { element: 'text', value: 'PARA' } : node,
+			isTextRun(node) && node.value === 'para' ? { element: 'text', value: 'PARA' } : node,
 		)
-		const replaced = rewritten.find((node) => isTextNode(node) && node.value === 'PARA')
+		const replaced = rewritten.find((node) => isTextRun(node) && node.value === 'PARA')
 		if (replaced === undefined) throw new Error('expected the replacement text node')
 		expect(rewritten.span(replaced)).toEqual({ start: 9, end: 13 })
 		expect(rewritten.span(rewritten.document)).toEqual({ start: 0, end: 13 })
@@ -287,37 +287,37 @@ describe('Markdown — map provenance', () => {
 		const lowered = markdown.map((node) =>
 			node.element === 'text' ? { element: 'text', value: node.value.toLowerCase() } : node,
 		)
-		const [first] = lowered.filter(isTextNode)
+		const [first] = lowered.filter(isTextRun)
 		expect(first?.value).toBe('hi')
 		expect(first === undefined ? undefined : lowered.span(first)).toEqual({ start: 2, end: 4 })
 	})
 
 	it('keeps the own region of an already-spanned node returned for several inputs', () => {
 		const markdown = new Markdown('a *b* c')
-		const [first] = markdown.filter(isTextNode)
+		const [first] = markdown.filter(isTextRun)
 		if (first === undefined) throw new Error('expected a text node')
 		expect(markdown.span(first)).toEqual({ start: 0, end: 2 })
-		const kept = markdown.map((node) => (isTextNode(node) ? first : node))
-		expect(kept.filter(isTextNode)).toHaveLength(3)
+		const kept = markdown.map((node) => (isTextRun(node) ? first : node))
+		expect(kept.filter(isTextRun)).toHaveLength(3)
 		expect(kept.span(first)).toEqual({ start: 0, end: 2 })
 	})
 
 	it('leaves an output node assembled from separate sources without a region', () => {
-		const shared: TextNode = { element: 'text', value: 'z' }
+		const shared: TextRun = { element: 'text', value: 'z' }
 		const markdown = new Markdown('one\n\ntwo')
-		const merged = markdown.map((node) => (isTextNode(node) ? shared : node))
-		expect(merged.filter(isTextNode)).toEqual([shared, shared])
+		const merged = markdown.map((node) => (isTextRun(node) ? shared : node))
+		expect(merged.filter(isTextRun)).toEqual([shared, shared])
 		expect(merged.span(shared)).toBeUndefined()
 	})
 
 	it('resolves a moved original to its own region and its replacement to the region it vacated', () => {
 		const markdown = new Markdown('# Title\n\npara')
-		const [headingText, bodyText] = markdown.filter(isTextNode)
+		const [headingText, bodyText] = markdown.filter(isTextRun)
 		if (headingText === undefined || bodyText === undefined)
 			throw new Error('expected two text nodes')
 		expect(markdown.span(headingText)).toEqual({ start: 2, end: 7 })
 		expect(markdown.span(bodyText)).toEqual({ start: 9, end: 13 })
-		const replacement: TextNode = { element: 'text', value: 'REPLACED' }
+		const replacement: TextRun = { element: 'text', value: 'REPLACED' }
 		const swapped = markdown.map((node) =>
 			node === headingText ? replacement : node === bodyText ? headingText : node,
 		)
@@ -597,8 +597,8 @@ describe('Markdown — adversarial (deep input)', () => {
 	})
 
 	it('an identity map over an ADOPTED 10,000-deep blockquote-chain document does not throw', () => {
-		// Built directly as an AST (not through parseDocument, which caps depth during
-		// parsing) and adopted as-is, so map/rewriteDocument sees the FULL depth.
+		// Built directly as an AST (not through parseMarkdown, which caps depth during
+		// parsing) and adopted as-is, so map/rewriteMarkdownDocument sees the FULL depth.
 		const leaf: ParagraphNode = {
 			element: 'paragraph',
 			children: [{ element: 'text', value: 'leaf' }],
